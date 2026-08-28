@@ -33,6 +33,17 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [013](ADR-013-forward-schedule-completeness.md) | Forward-schedule completeness: source-declared pending is not a resolution failure | **Accepted** | A game the source publishes without teams is recorded as pending, not refused and not dropped; a pending game's `game_date` is nullable and names its cause |
 | [014](ADR-014-read-endpoints-detect-not-lock.md) | Read endpoints detect a moved cohort; they do not lock to prevent one | *Proposed* | A read must not hold a lock that can block a writer; bracket the read between two canonical releases and refuse instead |
 | [015](ADR-015-blend-recipe-durable-binding-transient.md) | The blend recipe is durable; its binding to imports is transient | *Proposed* | Owner-authored weights survive a refresh; the imports they were executed against do not, and the blend is recomputed on read rather than stored |
+| [017](ADR-017-auction-pricing-without-mock-corpus.md) | Auction pricing ships on seed AAV; empirical AAV is an enhancement | *Proposed* | `auction-values` derives dollars from our own valuation and never consumed AAV; drop the blocked dependency and show published AAV beside ours |
+| [018](ADR-018-calibration-displayed-beside-the-number.md) | `p(play)` calibration is displayed beside the number it grades | *Proposed* | Owner rejected both auto-brake and footnote; the restricted calibration figure becomes a visible, flattenable badge that blocks nothing |
+| [019](ADR-019-cohort-fingerprint-boundary.md) | The cohort fingerprint boundary is the derivation closure, and the check claims bytes, not entitlement | *Proposed* | Nothing is dropped and the set is under-inclusive by 31 files; a fingerprinted file may be edited with a leaf-diff transcript attached |
+
+**016 is unwritten and reserved.** Four coordinator-register entries (`c170`,
+`c171`, `c178`, `c179`) each name a requirement for "whenever ADR-016 is
+written" — a governance ADR about the register itself. The number is left free
+for it rather than reused, so those references keep resolving. ADR-017 was
+absent from this table until 2026-08-27 and was added by the lane that wrote
+ADR-018; until `adr-index-consistency-test` exists, nothing here notices a
+missing row.
 
 ## Accepted
 

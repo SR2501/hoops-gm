@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**57 done - 2 blocked - 93 pending - 152 total**
+**58 done - 1 blocked - 107 pending - 166 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2538,6 +2538,21 @@ SHA-256, so fixing the relabel invalidates the manifest, and regenerating the
 manifest without the fix bakes the wrong lineage in. Doing either alone is worse
 than doing neither - which is why this is one item and not two.
 
+**Unblocked 2026-08-27 by ADR-019, with a procedure.** The blocker was never the
+fix; it was that nobody had ruled whether a lane may regenerate another lane's
+fingerprinted artefact, and a belief that regeneration needed live
+`stats.nba.com` sweeps. Both are settled. Regeneration is one offline command
+against stores already on disk - driven at the unmodified tree on 2026-08-27,
+exit 0, no network, **1664 leaves, 0 added, 0 removed, 1 changed**, and the one
+change is `operator.commands[8]` echoing the `--out` path.
+
+The procedure: fix `record_refresh`, regenerate in the **same commit**, and
+attach the `scripts/manifest_leaf_diff.py` transcript. If the only moved leaves
+are under `operator.source_fingerprints` and `operator.commands`, no cohort
+number moved and the change stands. **Any other moved leaf stops for `quant`,
+pre-unblind.** `data-engineer` still owns the artefact and reviews; the leaf diff
+is what makes the regeneration reviewable rather than trusted.
+
 ### `derived-value-merge-gate-audit` - Auditing which derived values auto-merge clean with no gate
 
 - [ ] **pending**
@@ -2588,7 +2603,10 @@ default-branch head before reporting an absence.
 
 ### `fingerprint-boundary-ruling` - Ruling where the injury cohort manifest's frozen boundary sits
 
-- [ ] **blocked** - needs an architect ruling before any of the six pinned files can change
+- [x] **done** - Ruled 2026-08-27 by `architect` in
+  `docs/decisions/ADR-019-cohort-fingerprint-boundary.md` (`Proposed`), with the
+  entitlement limit written into `backend/tests/test_cohort_evidence.py` so it
+  reaches a reader of the check rather than only a reader of the ADR.
 
 Promoted from coordinator register `c283` and `c295`. Six source files are
 frozen by whole-file SHA-256 in the injury cohort manifest, so an edit to any of
@@ -2599,6 +2617,56 @@ and **what the fingerprint check is actually entitled to claim** - it passes for
 whoever ran it, so it establishes that the bytes are unchanged and not that the
 run was authorised. Blocks `record-refresh-lineage-relabel` in practice, and it
 is why the console-encoding rule exempts `backend/src/`.
+
+**What was ruled, and the measurement that reversed the premise.** The item was
+filed on the belief that the set is over-inclusive - that `db/lineage.py` is a
+general-purpose primitive with no business in injury-cohort provenance. An AST
+walk of the generator's transitive `hoops_gm` import closure says otherwise:
+**34 files in the closure, 3 of them fingerprinted**, and `db/lineage.py` is one
+of the three. It is genuinely reached. The 31 that are not fingerprinted include
+`db/models/availability.py`, `db/models/stats.py`, `db/models/identity.py` and
+`ingest/rawstore.py` - the ORM and store code every cohort row is read through.
+**The set is over-inclusive nowhere and under-inclusive by thirty-one files.**
+
+So nothing was dropped. The ruling names two membership rationales instead of
+merging them (`derivation` = the import closure; `provenance` = the store
+producers the generator does not import), permits editing a fingerprinted file
+in the same commit that regenerates the manifest with a `manifest_leaf_diff.py`
+transcript attached, and stops for `quant` on any moved leaf outside
+`operator.source_fingerprints` and `operator.commands`.
+
+**Regeneration was driven rather than assumed**: offline, no network, exit 0,
+**1664 leaves, 0 added, 0 removed, 1 changed**, and the one change is
+`operator.commands[8]` echoing the `--out` path. The widening itself is
+`cohort-fingerprint-closure-check`, filed separately because it changes the
+manifest and is `data-engineer`'s artefact.
+
+### `cohort-fingerprint-closure-check` - Checking the declared fingerprint set against the derivation closure
+
+- [ ] **pending**
+- **Depends on:** `fingerprint-boundary-ruling`
+
+**Acceptance:** a test in `backend/tests/` AST-walks the cohort generator's
+transitive `hoops_gm` import closure and fails when a closure file is absent
+from `DEFAULT_SOURCE_FINGERPRINT_PATHS`; the manifest is regenerated with the
+widened set and a `manifest_leaf_diff.py` transcript is attached showing no
+cohort number moved.
+
+Filed 2026-08-27 by `architect` under ADR-019. **Measured, not estimated:** the
+closure is 34 files and 3 are fingerprinted, so **every manifest published so
+far carries a provenance claim narrower than its own derivation.** That is true
+on `main` today and this item is the repair.
+
+The check belongs in `backend/tests/`, which is outside `backend/src/` and
+therefore outside the fingerprint set - so the check costs no regeneration and
+can land before the widening does. Land it in that order: a red check with a
+known cause is a better artefact than a widened set nobody can re-derive.
+
+**The trap in this item is its own domain.** An import-closure walk sees imports.
+A file reached by a runtime plugin lookup, an entry point, or a string-named
+module is invisible to it, and so is anything the generator shells out to. State
+that limit in the test rather than letting the next reader infer completeness
+from a green - it is the same shape as the defect the item repairs.
 
 ### `coordinator-rules-distillation` - Deciding whether the register's rules belong in gates.md
 
@@ -2617,3 +2685,358 @@ which is the register's own thesis about failures nobody thought to look for.
 
 Filed as a task rather than left as a paragraph, because that distinction is the
 finding that produced this whole group of items.
+
+### `calibration-badge` - Displaying p(play)'s calibration quality beside the number it grades
+
+- [ ] **pending**
+- **Depends on:** `injury-status-conversion`, `reliability-ui`
+
+**Acceptance:** every screen showing a `p(play)`-derived quantity shows, adjacent
+to it, the restricted calibration grade of the model version that produced it,
+carrying that version and its `n`; one control flattens it and one removes it;
+no code path refuses anything on its value.
+
+Filed 2026-08-27 by `architect` from an owner ruling of the same day, recorded in
+`docs/decisions/ADR-018-calibration-displayed-beside-the-number.md`. Asked to
+either bind preregistration v3 (a failed calibration check blocks model
+activation) or decline it (the check becomes a post-hoc footnote per v3 §7), he
+took neither: *"Why not just make a visible confidence score on your confidence
+score? If it's too complicated I'll tell you to flatten or remove it, but we get
+nothing if we don't try."*
+
+The number displayed is v3 §4 Change B's figure - CITL and the §7 binned table
+over held-out rows carrying `questionable`, `probable` or `doubtful` only. **The
+computation is unchanged and the consumer is different**: it feeds a screen
+instead of a gate. Below v3 §6's floor of 30 held-out direct outcomes for a
+status it renders as a count and a refusal, never as a grade, because a badge
+that reports a number it cannot support is worse than no badge.
+
+**The dependency on `injury-status-conversion` is honest rather than
+conservative.** The grade cannot be displayed before a grade exists, and a
+placeholder badge showing a plausible value against no fitted model is exactly
+the confident-and-wrong shape the Model gate exists to catch. There is no
+earlier half worth landing: the UI work is small and the number is the item.
+
+**What this item cannot settle.** A score the owner can ignore is what §7 calls a
+footnote; the claimed difference is that a badge beside the number is visible
+where a document is not, and nothing has tested that claim against a live
+auction. ADR-018 records what would flip it.
+
+## Named by the owner, filed 2026-08-27
+
+The eight units below come from `docs/what-draft-day-looks-like.md`, section
+*"Named by him, and not in the backlog"*. He asked for each of them; none had an
+item, which made them invisible to `scripts/backlog_graph.py` and to every agent
+that reads this file instead of that page.
+
+**Filed without priorities, deliberately.** Sequencing is the coordinator's and
+the owner's. What is recorded here is what each thing is, one acceptance
+criterion, and the honest dependency edges - including where an edge makes an
+item look further away than anyone would like.
+
+### `league-category-table` - Ranking every team 1-to-N in every category
+
+- [ ] **pending** - *in flight 2026-08-27 in a parallel lane; coordinate before starting*
+- **Depends on:** `draft-tracker`, `expected-games`, `projection-blending`, `frontend-skeleton`
+
+**Acceptance:** for every seat in a live draft, a rank 1-to-N in each of the nine
+categories on expected performance, updating as the board moves.
+
+Asked for twice - Q4 (*"visibility on other teams' positional and categorical
+needs"*) and Q9 (*"a tier list for all of the owners, based on expected
+performance, 1 to X in rebounds"*). Q9 says what it is for: *"so I can see
+categories I'm deficient in and excelling in"*, which is the input to his punt
+decision, not a scoreboard.
+
+**The `expected-games` edge is the honest one and it is the expensive one.**
+Ranking on per-game rates alone is a different quantity, and ADR-002 forbids
+conflating the two. A per-game-rate table is a legitimate intermediate and must
+be **labelled as a rate table**, never as expected performance - the moment it
+says "expected" without games fused in, it is the exact error this project
+exists to avoid.
+
+### `rival-strategy-detection` - Detecting a rival converging on the same build
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`, `punt-builds`
+
+**Acceptance:** names which rival seats overlap the owner's build, on which
+categories, from board state alone, and updates as the board moves.
+
+From Q4: *"There will be a point where I'm competing with another player who has
+stumbled into the same build strategy - this might mean we're both willing to
+overpay."* The consequence he named is a price effect, so the output is a
+warning about contested categories rather than a profile of a rival.
+
+**Read-only advisory.** It must not adjust a max bid on its own; that would move
+a number he is watching for a reason he cannot see.
+
+### `positional-scarcity-tipping-points` - Flagging when a category's supply thins
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`, `player-position-eligibility`, `zscore-engine`
+
+**Acceptance:** flags the moment remaining supply of a category-bearing position
+crosses a stated threshold, naming the category and the threshold, with the
+remaining pool visible behind it.
+
+From Q4: *"As the tier 1 point guards go off the board, it should be visible that
+top assist makers or ball stealers may be at a premium."* The unit of scarcity is
+**a category reached through a position**, not the position - centres thinning
+matters because blocks thin with them.
+
+**The threshold is the work.** A tipping point asserted without a definition is a
+number the owner cannot argue with, and Q11 says he will believe a valuation by
+observation. State the rule, show the pool.
+
+### `out-of-position-production` - Valuing production a position does not usually supply
+
+- [ ] **pending**
+- **Depends on:** `player-position-eligibility`, `zscore-engine`
+
+**Acceptance:** a per-player quantity measuring category production relative to
+positional peers, displayed distinctly from scarcity and never summed into it.
+
+Added unprompted the morning after the questionnaire: *"stats out of position are
+especially valuable. That will almost certainly be included in ADP. Not sure how
+to quantify that, but it is good to be aware of."*
+
+**He named the trap himself** - he does not know how to quantify it, and neither
+does this file. His guess that ADP already contains it is worth testing rather
+than inheriting: if it does, this is a cross-check on ADP and not a new number.
+Distinct from `positional-scarcity-tipping-points`, which is about supply over
+time; this is about one player at one moment.
+
+### `draft-conversation-agent` - An agent to talk choices through with
+
+- [ ] **pending**
+- **Depends on:** `dashboard-evidence-views`, `draft-tracker`
+
+**Acceptance:** answers a free-text question about the live board using only
+quantities the tool already computes, and names which ones it used.
+
+From Q4: *"Essentially, having an agent to talk through the choices with is
+probably ideal."* Q3 makes it affordable - two minutes a pick is enough to read,
+not just glance.
+
+**The constraint that makes this safe is the citation.** An agent that reasons
+past the computed quantities is generating a number with no model card, no
+backtest and no version, which the Model gate exists to stop. Bound it to
+retrieval and explanation over things that already passed a gate.
+
+### `over-policing-warning` - Warning on his self-named bad habit
+
+- [ ] **pending**
+- **Depends on:** `behavioural-baseline`, `auction-budget-manager`
+
+**Acceptance:** flags when defensive bidding exceeds the owner's own measured
+baseline rate, using his prior drafts as the comparison rather than a fixed
+threshold.
+
+From Q8: *"There needs to be some policing on picks going for way too cheap.
+Sometimes you bid on someone just to play defense, then win some of those bids
+accidentally. The bad habit would probably be over policing."*
+
+**Filed separately from `bias-guardrails`, which is the generic machinery, because
+this one has a definition problem the machinery does not solve.** A defensive bid
+and a real bid are the same event in `draft_events` - intent is not recorded
+anywhere and cannot be inferred from the log. Either the recorder gains a way to
+mark intent at bid time, or the warning is a guess about his state of mind
+dressed as a measurement. **That choice is the item.**
+
+### `per-team-auction-budgets` - Giving each seat its own starting budget
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker-persistence`, `draft-setup-screen`
+
+**Acceptance:** each seat's starting budget is stored on the seat, and every
+derivation reads it from there rather than from the single scalar on `Draft`.
+
+From Q8: *"I think 200, but it's slightly different per team based on last years'
+final totals."*
+
+**This is a schema gap, not a feature, and it was verified rather than
+inherited.** `DraftParticipant` carries `draft_id`, `team_slot`, `display_name`,
+`owner_draft_id` and `fantasy_team_id` - **no budget column.** `auction_budget`
+is one `Numeric(10, 2)` on `Draft` (`db/models/draft.py:120`), copied from
+`League`, and two places derive every seat's bank from it:
+`draft/state.py:671-682` for `remaining_budget`, and `draft/state.py:457` for
+`_refuse_if_over_budget`.
+
+**The second site is the one that bites.** It is not a display path - it
+**refuses a recorded bid**. Against his real league it will reject a legitimate
+bid from a seat with a larger bank, or accept one from a seat with a smaller
+bank, and either way the board is wrong about a pick that happened. Q12 names
+that class of failure as the thing that makes him close the laptop, and Q15 asks
+for *"picks and budgets tracked automatically"* as the single thing that must
+work on 18 October.
+
+### `owner-bias-feedback-loop` - Feeding his own tendencies back to him
+
+- [ ] **pending**
+- **Depends on:** `adherence-experiment`, `behavioural-baseline`
+
+**Acceptance:** after a completed draft, reports where his decisions diverged
+from the list and whether each divergence repeated a pattern from an earlier
+draft.
+
+From Q14, on what he always gets wrong: *"valuing injured and unreliable players
+too highly, not knowing when to cut someone who is proven to have been a bad
+pick, overall evaluation, and not feeding back on my own bias."*
+
+**The only requested feature that improves with use, and it cannot begin until he
+has drafted once.** It is also the one most exposed to Q7: he has said there will
+always be one or two heart picks, and they are legitimate. A loop that scores
+every deviation as an error will be wrong about the exception he explicitly
+reserved. Separate systematic deviation from the deliberate kind, or it reports
+his intent back to him as a defect.
+
+## From the Basketball Monster export analysis, filed 2026-08-27
+
+Four items from findings the coordinator derived on 2026-08-28 against the
+owner's purchased projection exports. **The source files are private and are not
+in this repository, and must not be.** What is recorded below is the shape of a
+third-party export format, which is safe to publish and which the repository
+already touches through
+`backend/tests/fixtures/projections/basketball_monster_sample.csv`.
+
+**Provenance, so the numbers are attributable:** every figure quoted below is the
+coordinator's measurement, not mine. I did not re-derive them and cannot - the
+inputs are outside the repository. Everything I *did* drive against this
+checkout is marked as such.
+
+### `projection-source-vintage-assertion` - Refusing an actuals file imported as a projection source
+
+- [ ] **pending**
+- **Depends on:** `projections-import-cli`, `participation-ledger`
+
+**Acceptance:** a test feeds a prior-season actuals file to the projection
+importer and shows it refuses, naming vintage as the reason.
+
+**The finding.** `BBM_PlayerRankings.xls` and `BBM_Projections.xls` are near
+schema-identical - both carry `Rank`, `Value`, `g`, `m/g`, `p/g` - and they
+measure different things. Against an independent input, actual 2025-26 games
+played from `player_participation`, the Rankings file's `g` reproduces the
+ledger for **438/438 players within one game, MAE 0.12**; the Projections file's
+`g` has **MAE 14.11**. The Rankings file is **last season's actuals**.
+Differencing the two looks like a dramatic one-day revision - the #1 overall
+appears to flip - and is not a revision at all.
+
+**This is the `gameEt` class in a new place.** Well-formed, type-correct, and
+lying about what it is. Nothing about the file's *form* could have caught it;
+only a check of its *meaning* against an independent source did.
+
+**Two things to build, and the second is the one that bites.** First, bind the
+vintage to the filename or to an explicit operator declaration - **never infer it
+from schema**, because the schemas do not distinguish. Second, assert it: if the
+incoming `g` column reproduces the prior season's participation ledger to within
+a game, the file is actuals and must be refused as a projection source.
+
+**The existing guard does not cover this and may make it worse.**
+`BASKETBALL_MONSTER_PROFILE` pins an exact header sequence
+(`parser.py:115` refuses when `tuple(fieldnames) != profile.expected_headers`).
+Whether the actuals file matches that sequence exactly is **unverified**, and
+both branches are bad: if it matches, the exact-header guard accepts an actuals
+file as projections; if it does not, the guard refuses it as *schema drift*,
+which invites the next reader to widen the profile and let it in. A guard that
+gives the wrong reason is worse than one that is silent.
+
+**The ledger arm must not pass vacuously.** `participation-ledger-population` has
+not run at scale, so the comparison has no data to run against yet. A check that
+reports a pass over an empty ledger is this repository's signature defect -
+report "could not compare" and fail closed, never green.
+
+### `external-games-as-class-prior` - Consuming a vendor games column as a class label, never an estimate
+
+- [ ] **pending**
+- **Depends on:** `projection-blending`, `projections-import-cli`
+
+**Acceptance:** the blend records a vendor `g` column as a prior or class label
+with its level count, and no code path multiplies a rate by it or reads it as
+expected games.
+
+**The finding.** BBM's `g` is a four-level risk class, not a per-player estimate.
+500 players hold only **35 distinct** games values, and the two dominant ones are
+BBM's own injury-risk grade exactly: **`g=73` is Inj Risk `M` for 195/195 = 100%**
+and **`g=68` is Inj Risk `H` for 105/105 = 100%**. Not a team effect (30 and 28
+teams) and not a role effect (each mixes BN/ST/mST). The entire 19 -> 27 August
+change, which superficially moved **432 of 500 players**, is BBM nudging two
+class defaults up by two games each: 71 -> 73 for 193 players, 66 -> 68 for 99.
+
+**So a games delta between two vendor exports is not new information about
+players.** It is two numbers changing. Anything that treats such a delta as
+signal - a stock-watch mover, a re-ranking, a "projection updated" notice - will
+manufacture 432 events from two.
+
+**Blending it as a per-player estimate imports four bits wearing the costume of
+five hundred.** This is the strongest external evidence yet for ADR-002.
+
+**What is already right, so nobody rebuilds it.** The importer already keeps this
+out of expected games: `ProjectionSourceRow.assumed_games_played` is documented
+as *"Not an expected-games number - that is the availability model's job"*, and
+the value is written to `source_games_played_assumptions`, a separate table,
+*"precisely so nothing downstream can reach it while reading a rate"*. This item
+is an assertion and a recorded level count, not a redesign.
+
+**No ADR-002 amendment is proposed, and that is a judgement rather than an
+omission.** ADR-002's amendment of 2026-08-23 already records the tier structure
+(`games` and minutes-per-game taking *"the same 18 distinct values"* in the
+rotation cohort) and already names the flip condition as *"a source whose games
+column carries a per-player opinion rather than a tier."* This finding
+corroborates that amendment and identifies what the tier is; it changes nothing
+an implementer builds that this item does not already state. A third governance
+document restating evidence for a `Proposed` amendment the owner has not yet
+read adds reading load and no decision. **Overturn this if you disagree - it is
+one section, and the evidence is recorded here either way.**
+
+### `evidence-panel-shows-inj-with-note` - Rendering a source's structured injury field beside its prose
+
+- [ ] **pending**
+- **Depends on:** `dashboard-evidence-views`
+
+**Acceptance:** wherever the evidence panel renders a source's prose beside its
+projection, the same source's structured injury field is rendered with it, or
+neither is.
+
+**The finding.** BBM's `Note` prose is not synchronised with its own numbers.
+Only **19 of 509** players carry a structured `Inj` entry (the form
+`Injured - torn acl (38g) - 1/10/2027`), and that entry is what moves a player
+off his class default. Jordan Miller's games were cut **71 -> 21** while the Note
+reads *"has done enough to keep earning opportunities."* **Glowing prose, fifty
+games removed.**
+
+Rendering the Note alone explains a number with text that contradicts it, which
+is worse than rendering no explanation: the owner is told *why* and told wrong,
+in a panel whose whole purpose is that he can check the reasoning. Q11 says he
+will come to believe a valuation by observation, so an evidence panel that
+misexplains one is spending the exact currency it exists to earn.
+
+### `console-safety-for-runtime-names` - Surviving a non-ASCII player name on the owner's console
+
+- [ ] **pending**
+- **Depends on:** `projections-import-cli`
+
+**Acceptance:** a refusal or report path carrying a name like `Nikola Jokic`
+spelled with its diacritics reaches a cp1252 console legibly rather than raising,
+and the guard covers runtime data rather than only source literals.
+
+**The matching half is already done and needs no work - driven against this
+checkout on 2026-08-27, not inherited.** `identity/names.py` NFKD-folds and drops
+combining marks, and `normalize_name` maps the accented and ASCII spellings of
+Jokic, Doncic, Schroder, Porzingis and Sengun to identical keys. A crosswalk item
+would have been a duplicate.
+
+**The console half is real and is a different claim.** Player names are *runtime
+data*, and `backend/tests/test_console_encoding.py` walks **string literals**
+under `scripts` and `backend/tests` only - so it cannot see a name that arrives
+from a vendor file or the ledger and is interpolated into a message.
+`import_csv.py` prints refusal text built from exception messages straight to
+`sys.stderr` with no `reconfigure`, where `backlog_graph.py` guards its own
+output with `_safe_stdout()` and `check_ci_gates.py` uses
+`reconfigure(errors="replace")` for exactly this reason - its comment already
+names the general form: *"those are not source literals, so that test cannot see
+them."* The report file itself is safe; it is written with `encoding="utf-8"`.
+
+**The prize is not the crash.** It is that a refusal is a user interface, and
+this one fires when an import has failed and the owner is reading the console to
+find out why.
