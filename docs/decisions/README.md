@@ -76,5 +76,6 @@ ADR's body rather than its amendments — so an `Accepted` row can hold a
 |---|---|---|---|
 | [002](ADR-002-production-vs-availability.md) | The decomposition is three-factor in practice; discarding a source's `games` column does not discard its games assumption | 2026-08-23 | `quant` |
 | [007](ADR-007-availability-in-spine.md) | The availability model must state an identification strategy before it fits anything | 2026-08-22 | `quant` |
+| [019](ADR-019-cohort-fingerprint-boundary.md) | The closure count is now recountable by `scripts/fingerprint_closure.py`; it was a load-bearing number nobody could check | 2026-08-28 | `architect` |
 
 Agents write `Proposed` only. Only the project owner accepts.

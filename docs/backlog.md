@@ -2736,6 +2736,23 @@ closure is 34 files and 3 are fingerprinted, so **every manifest published so
 far carries a provenance claim narrower than its own derivation.** That is true
 on `main` today and this item is the repair.
 
+**The measurement is now a committed tool, so this item starts from a report
+rather than from a number in an ADR.** `scripts/fingerprint_closure.py` recounts
+ADR-019's claim in one command and prints the 31 unfingerprinted closure files by
+name; `backend/tests/test_fingerprint_closure.py` drives its resolution rules
+against a synthetic package. **What remains here is the part the script
+deliberately does not do**: fail. The script reports and exits 0, because a gate
+that is red until the set is widened is a gate everyone learns to ignore. This
+item is (a) the failing check and (b) the widened set plus a regeneration with a
+`manifest_leaf_diff.py` transcript showing no cohort number moved.
+
+The script also surfaced something prose had only narrated: the superseded
+four-week manifest records **4** fingerprints while **6** are declared, missing
+`db/lineage.py` and `merge_stores.py`. That is the exact declared-versus-recorded
+divergence `_source_fingerprints`' docstring describes, and it is now visible
+from a tool instead of from a comment. It is **not** a defect to repair - a
+frozen manifest is supposed to describe the code that produced *it*.
+
 The check belongs in `backend/tests/`, which is outside `backend/src/` and
 therefore outside the fingerprint set - so the check costs no regeneration and
 can land before the widening does. Land it in that order: a red check with a
@@ -2743,9 +2760,10 @@ known cause is a better artefact than a widened set nobody can re-derive.
 
 **The trap in this item is its own domain.** An import-closure walk sees imports.
 A file reached by a runtime plugin lookup, an entry point, or a string-named
-module is invisible to it, and so is anything the generator shells out to. State
-that limit in the test rather than letting the next reader infer completeness
-from a green - it is the same shape as the defect the item repairs.
+module is invisible to it, and so is anything the generator shells out to. **34
+is a floor, not a count.** The script prints that limit in its own output rather
+than only in its docstring; keep that property in the test, because it is the
+same shape as the defect the item repairs.
 
 ### `coordinator-rules-distillation` - Deciding whether the register's rules belong in gates.md
 
@@ -2958,6 +2976,15 @@ inherited.** `DraftParticipant` carries `draft_id`, `team_slot`, `display_name`,
 `owner_draft_id` and `fantasy_team_id` - **no budget column.** `auction_budget`
 is one `Numeric(10, 2)` on `Draft` (`db/models/draft.py:120`), copied from
 `League` at creation.
+
+**And the scalar does not originate on `Draft` either.** `draft/formats.py:242`
+copies it from `League.auction_budget` (`db/models/league.py:85`), which is
+**also a single nullable scalar**. So the one-budget-per-league assumption is
+baked in one level above the draft, and **a fix that only adds a column to
+`DraftParticipant` leaves the league-level scalar as the only thing a seat can
+be seeded from** - correct at the seat, still wrong at the source, and
+discovered on the second pass by whoever implements it. That changes the shape
+of the migration, so it is recorded here rather than found later.
 
 #### The apply path, which is why this blocked rather than annoyed
 
