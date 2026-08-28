@@ -624,6 +624,30 @@ class TestTheCommittedManifestStillDescribesThisCode:
     files without regenerating leaves a manifest that describes code which no
     longer exists — a stale provenance claim, which is worse than none, because
     it looks checked.
+
+    **What this check is entitled to claim, and what it is not.** Ruled by
+    `architect` in ``docs/decisions/ADR-019-cohort-fingerprint-boundary.md``,
+    2026-08-27, and written here rather than only there because this is where a
+    reader meets it.
+
+    It establishes **that the recorded bytes equal today's bytes**. It does not
+    establish that the run which produced them was *authorised*, and it cannot:
+    the manifest and the tree are produced together, so the check is green for
+    whoever ran it. A lane with no claim on this artefact can regenerate it and
+    turn this test green by construction. **Green means self-consistent; it
+    never means entitled**, and no gate in this repository represents
+    entitlement at all. That is carried by the ``scripts/manifest_leaf_diff.py``
+    output attached to the change, and by review — human artefacts, not this
+    assertion.
+
+    Two further limits, so the domain is not mistaken for the hazard. The
+    declared set is **three of the generator's thirty-four transitive
+    ``hoops_gm`` import-closure files**, so a manifest can be perfectly green
+    while code its numbers were actually read through has changed underneath it
+    (filed as ``cohort-fingerprint-closure-check``). And this test iterates the
+    **recorded** fingerprints, so a path dropped before being written is
+    invisible to it — the refusal in ``_source_fingerprints`` is what covers
+    that direction, not this.
     """
 
     def test_every_recorded_source_fingerprint_matches_the_file_today(self, manifest: Any) -> None:
@@ -657,8 +681,15 @@ class TestTheCommittedManifestStillDescribesThisCode:
                 stale[path.name] = drifted
         assert not stale, (
             "a live cohort manifest fingerprints code that has since changed: "
-            f"{stale}. Regenerate it with the commands in its own operator.commands, or "
-            "the provenance it publishes is a claim about a file that no longer exists."
+            f"{stale}. This is not a refusal to edit those files. Per ADR-019, "
+            "regenerate the manifest in the same commit - one offline command, no "
+            "network, driven 2026-08-27 - and attach scripts/manifest_leaf_diff.py "
+            "output. If the only moved leaves are under operator.source_fingerprints "
+            "and operator.commands, no cohort number moved and the edit stands; any "
+            "other moved leaf stops for quant, pre-unblind. Note what a green here "
+            "does NOT say: it compares the manifest against the tree that produced "
+            "it, so it is green for whoever ran it. It attests that the bytes agree, "
+            "never that the run was authorised."
         )
 
     def test_a_superseded_manifest_is_registered_with_a_reason_and_keeps_its_fingerprints(

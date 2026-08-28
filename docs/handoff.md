@@ -29019,3 +29019,241 @@ printing `Safe to stage.` I used `mergeStateStatus: CLEAN` as a merge signal.
 
 **State the mechanism, not just the conclusion** — it is the only thing that made
 those catchable.
+
+## 2026-08-27 - architect - A ruling that lived only in a chat, a boundary nobody had ruled, and eight requests nobody had filed
+
+**Unit:** four - three set by the coordinator, one arriving mid-flight. Docs, one
+ADR index repair, and one test-file edit. No number a decision rests on.
+
+### Unit 1 - the owner's calibration ruling, which was nowhere but a chat log
+
+Preregistration v3 was put to the owner as a binary: **bind** it, so a failed
+restricted-calibration check blocks model activation, or **decline** it, so the
+same figure is computed post-hoc and gates nothing (v3 §7's own words: *"the
+second one stops being a brake and becomes a footnote"*). He took neither.
+
+> *"Why not just make a visible confidence score on your confidence score? If
+> it's too complicated I'll tell you to flatten or remove it, but we get nothing
+> if we don't try."*
+
+Landed as `ADR-018` (`Proposed`), a new §9 on the v3 document, and
+`calibration-badge` in the backlog. **v3's status is untouched** - still
+`Proposed`, v2 still governing, §8 still eight conditions - and §9 says so
+explicitly, because the risk here is a reader taking "the owner ruled" as "the
+owner bound it". He ruled on Change B's *consumer*. **Change A, the era
+sensitivity, was not ruled on and is still owed an answer.**
+
+**The caveat is in all three places and is the point of the unit.** A score the
+owner can ignore *is* what §7 calls a footnote. The claimed difference is only
+that a footnote in a document is invisible while a badge beside the number is
+not, and **nothing has tested whether that difference survives a live auction**.
+Written as a claim rather than a fact, with the flip condition stated: if he is
+observed bidding past a bad badge without pausing, the badge has been shown not
+to work and the choice returns to bind-or-footnote as an owner decision.
+
+Provenance is recorded in §9 rather than assumed: I took his words from the
+coordinator's relay. The quotation is his; the framing is mine; **nobody writing
+in this repository heard it first-hand**, and he should strike the framing if it
+misstates him.
+
+### Unit 2 - the fingerprint boundary, and the premise the measurement reversed
+
+`fingerprint-boundary-ruling` was one of two blocked items, blocked on an
+architect ruling - which is to say on nobody, since no architect had ruled.
+
+**The item's premise was that the frozen set is over-inclusive**: `db/lineage.py`
+is a general-purpose primitive with nothing injury-specific about it, so drop it
+and the coupling goes away. I nearly wrote that ADR. An AST walk of the cohort
+generator's transitive `hoops_gm` import closure says the opposite:
+
+- **34 files in the closure. 3 are fingerprinted.**
+- **`db/lineage.py` is one of the three.** It is genuinely reached through the
+  import graph, so dropping it would have narrowed a provenance claim on the
+  strength of an experiment about a different question.
+- The 31 unfingerprinted closure files include `db/models/availability.py`,
+  `db/models/stats.py`, `db/models/identity.py` and `ingest/rawstore.py` - the
+  ORM and store code every cohort row is read through.
+
+So the set is **over-inclusive nowhere and under-inclusive by thirty-one files**,
+and `_source_fingerprints` refuses a missing *declared* path while nothing checks
+the declaration against the derivation. Same shape as every other defect that
+module guards: a domain narrower than its hazard, reporting a confident green.
+
+**The regeneration cost was driven, not inherited.** Register `c294` records a
+lane discovering that `cohort_evidence` refuses only because `--raw-root`
+defaults to a directory that does not exist. I re-ran the control myself rather
+than citing it: one offline command, `--allow-fetch` off, exit 0, against
+`cohort-merged-2025-26.db` already on disk. `manifest_leaf_diff.py` against the
+committed manifest: **1664 leaves, 0 added, 0 removed, 1 changed**, and the one
+change is `operator.commands[8]` echoing the `--out` path I passed. Every
+fingerprint, count and reconciliation view byte-identical.
+
+`ADR-019` (`Proposed`) rules membership (two named rationales, nothing dropped),
+the edit procedure (regenerate in the same commit, attach the leaf diff, stop for
+`quant` on any moved leaf outside `operator.source_fingerprints` and
+`operator.commands`), and who may run it. `record-refresh-lineage-relabel` is
+unblocked and carries the procedure. The widening is filed as
+`cohort-fingerprint-closure-check`.
+
+**On entitlement, which is the half that has no gate.** The check establishes
+that the recorded bytes equal today's bytes. It cannot establish that the run
+was *authorised*, because the manifest and the tree are produced together - it is
+green for whoever ran it. That limitation is now in
+`backend/tests/test_cohort_evidence.py`, in the class docstring **and in the
+assertion message**, because the brief was to put it where a reader of the check
+meets it and a docstring is not read at 2am by someone whose build just went red.
+
+**I drove the failure rather than proofreading it.** Appended one comment line to
+`db/lineage.py`, ran the single test, read what actually came out on this
+console, restored with `git checkout` and confirmed the SHA-256 was identical.
+The message renders intact - no cp1252 mangling, because it is ASCII, which
+`test_console_encoding` enforces for `backend/tests` but not for `backend/src`.
+
+### Unit 3 - the eight things he asked for that were invisible to the graph
+
+All eight from `docs/what-draft-day-looks-like.md` are now items with honest
+`Depends on:` edges and one acceptance criterion each. No priorities invented;
+sequencing is the coordinator's.
+
+`league-category-table` is marked **in flight** rather than filed clean - a
+parallel lane was building it tonight and a duplicate item is worse than none.
+
+**`per-team-auction-budgets` was verified rather than copied, and the verification
+made it worse than the page says.** `DraftParticipant` has no budget column,
+confirmed by reading the model. `auction_budget` is one `Numeric(10, 2)` on
+`Draft` at `db/models/draft.py:120`. The page names one derivation site,
+`draft/state.py:680-682`; **there are two.** The second is
+`draft/state.py:457`, inside `_refuse_if_over_budget`, and it is not a display
+path - it **rejects a recorded bid**. Against his real league, where budgets
+differ per team, that refuses legitimate bids from richer seats and accepts
+illegitimate ones from poorer seats. Q12 names that class of failure as what
+makes him close the laptop; Q15 asks for *"picks and budgets tracked
+automatically"* as the one thing that must work on 18 October.
+
+Two items carry a definition problem in the item rather than a plan:
+`over-policing-warning` needs a way to record bid *intent*, which
+`draft_events` does not capture and which cannot be inferred from the log; and
+`owner-bias-feedback-loop` must separate systematic deviation from the one or
+two heart picks he explicitly reserved, or it reports his intent back to him as a
+defect.
+
+### Unit 4 - four items from the coordinator's Basketball Monster export analysis
+
+Arrived mid-unit. The source files are the owner's purchased exports, live in a
+private folder, and are **not** in this repository and must not be; the findings
+about the vendor's *format* are safe to publish and are quoted in the items.
+
+**Every figure in those three items is the coordinator's measurement, attributed
+as such. I did not re-derive them and cannot** - the inputs are outside the
+repository. What I drove against this checkout is marked separately, and it
+changed two of the four items.
+
+- **`projection-source-vintage-assertion`.** Two BBM exports are near
+  schema-identical and measure different things: the Rankings file's `g`
+  reproduces the participation ledger for 438/438 players (MAE 0.12), the
+  Projections file's does not (MAE 14.11). The Rankings file is **last season's
+  actuals**, and differencing the two looks like a dramatic revision. The
+  `gameEt` class again. **What I added by reading the code:**
+  `BASKETBALL_MONSTER_PROFILE` pins an exact header sequence and
+  `parser.py:115` refuses on mismatch - so the existing guard either accepts the
+  actuals file, or refuses it *as schema drift*, which invites the next reader to
+  widen the profile and let it in. **A guard that gives the wrong reason is worse
+  than one that is silent.** Also recorded: the ledger-comparison arm has no
+  populated ledger to run against and must report "could not compare" rather than
+  green.
+- **`external-games-as-class-prior`.** BBM's `g` is a four-level risk class, not
+  an estimate - `g=73` is Inj Risk `M` for 195/195, `g=68` is `H` for 105/105 -
+  and the 432-of-500 games change between exports is two class defaults moving.
+  **What I added:** the importer already keeps this out of expected games
+  (`assumed_games_played` is documented as *"Not an expected-games number"* and
+  is written to a separate table *"precisely so nothing downstream can reach it
+  while reading a rate"*), so the item is an assertion and a level count, not a
+  redesign.
+- **`evidence-panel-shows-inj-with-note`.** Only 19 of 509 rows carry the
+  structured `Inj` field that moves a player off his class default. Jordan
+  Miller: 71 games cut to 21 while the Note reads *"has done enough to keep
+  earning opportunities."* Prose alone explains a number with text that
+  contradicts it.
+- **`console-safety-for-runtime-names`** - and this one I narrowed, because half
+  of the suggestion is already built.
+
+**I declined the suggested ADR-002 amendment, and I would rather be overturned
+than have skipped it silently.** ADR-002's amendment of 2026-08-23 already
+records the tier structure - *"the same 18 distinct values"* in the rotation
+cohort - and already names its own flip condition as *"a source whose games
+column carries a per-player opinion rather than a tier."* The new finding
+corroborates that amendment and identifies what the tier is. It changes nothing
+an implementer builds that `external-games-as-class-prior` does not state, and a
+third governance document restating evidence for a `Proposed` amendment the
+owner has not yet read adds reading load and no decision. The reasoning is in the
+backlog item so it is cheap to reverse.
+
+**I also declined to file the crosswalk item, because it is already done.**
+Driven against this checkout rather than reasoned: `identity/names.py`
+NFKD-folds and drops combining marks, and `normalize_name` maps the accented and
+ASCII spellings of Jokic, Doncic, Schroder, Porzingis and Sengun to identical
+keys. What survives is the *other* half of that suggestion, and it is a
+different claim: player names are **runtime data**, and
+`test_console_encoding.py` walks **string literals** under `scripts` and
+`backend/tests` only, so it cannot see a vendor name interpolated into a refusal.
+`import_csv.py` prints refusals to `sys.stderr` with no `reconfigure`, where
+`backlog_graph.py` guards its own output and `check_ci_gates.py` already names
+the general form. Filed narrowly as that.
+
+### Verified at this commit
+
+`backlog_graph.py` **exit 0, 166 items**, recounted from the finished file and
+the header corrected to **58 done - 1 blocked - 107 pending - 166 total** rather
+than incremented. The slug-set diff against my **merge base** `d33c0d1` (not
+`origin/main`): **152 -> 166, 0 dropped, 14 added**, naming all fourteen. Both
+halves of the pair run and reported, including the half that agreed.
+
+`check_doc_terminators.py` exit 0. `check_append_only.py` exit 0 with
+containment true and both negative controls behaving. From `backend/`:
+`ruff check` and `ruff format --check` clean on the touched test module;
+`test_console_encoding.py` and `test_cohort_evidence.py` **68 passed**. One
+mutation driven red on the assertion I rewrote, file restored byte-identically
+by hash.
+
+### What I could not verify
+
+1. **That the badge in ADR-018 is not a footnote.** This is the ADR's own stated
+   claim and it is the thing the unit cannot settle. The only instrument is a
+   rehearsal with a live board and an owner who can be watched, and none exists.
+   **If the badge is ignored, the ruling bought nothing and the auto-brake
+   question was closed for no gain.**
+2. **That my import-closure walk is the right domain.** It sees `import`
+   statements. A module reached by a string name, an entry point, a plugin
+   lookup or a subprocess is invisible to it, so **34 is a floor, not a count**.
+   I wrote that limit into `cohort-fingerprint-closure-check` rather than letting
+   the next reader infer completeness from a green - it is the same defect the
+   item repairs, and I would rather name it than instantiate it.
+3. **That the widened set would leave the cohort numbers unmoved.** My control
+   regenerated at the *unmodified* tree with the *current* six paths. It says
+   regeneration is reproducible and offline. It says nothing about what a wider
+   set does, and nothing about `record_refresh` - `c294`'s "1 leaf differing"
+   result for the lineage fix is a **different lane's measurement that I did not
+   re-run**, and I have cited it as theirs.
+4. **The 1664-versus-1656 leaf count.** `c294` reports 1656 leaves for its
+   regeneration on 2026-08-26; I measured 1664 tonight. The manifest itself has
+   one commit (`1912a3d`, #92) so it did not move - the difference is in the
+   generator or in what was on disk. **I did not chase it** and it is the kind of
+   small unexplained delta this repository has twice found to be load-bearing.
+5. **Every Basketball Monster figure in Unit 4.** All of it is the coordinator's
+   measurement against files I cannot open from this worktree. I checked the
+   findings document and quoted it; I did not reproduce a single number.
+   **Specifically unverified and load-bearing: whether the actuals export matches
+   `BASKETBALL_MONSTER_2026_27_HEADERS` exactly.** Which of the two bad branches
+   the repository is currently on depends on it, and it is one comparison for
+   whoever holds the file.
+6. **The full backend suite at this commit.** Not run. I touched one test
+   module's prose and no source file; the two modules that could be affected
+   pass. Anything else is unmeasured and I am not going to state a predicted
+   total dressed as a measurement.
+7. **That `league-category-table` does not duplicate the parallel lane's work.**
+   I filed it from the owner's words, not from that lane's branch, and the two
+   have not been compared. **Coordinate before starting it.**
+
+**Next:** coordinator. Code gate only - no adapter fixture changed, no number a
+decision rests on moved, and the three new ADR-status documents are `Proposed`,
+which only the owner may change.

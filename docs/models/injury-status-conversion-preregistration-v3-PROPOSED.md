@@ -12,6 +12,10 @@ freeze id `injury-status-conversion-v2-20260821T145900Z`), if and only if bound.
 **Author:** `quant`. **Drafted:** 2026-08-23, pre-unblind.
 **Decision required from:** owner. **Recommendation:** adopt.
 
+**The owner was asked on 2026-08-27 and declined the binary. See §9.** The status
+line above is unchanged and is not changed by that ruling: this document is still
+`Proposed`, v2 still governs, and §8 still holds eight conditions.
+
 ---
 
 ## 1. Why this is a v3 and not an amendment to v2
@@ -265,3 +269,44 @@ stops being a brake and becomes a footnote.
   verified. That remains true of v2 and is unverifiable before the unblind.
 - It cannot be adopted by its author. `Proposed` is the only status `quant` may
   write on it.
+
+---
+
+## 9. The owner was asked, declined the binary, and ruled a third thing
+
+**Added 2026-08-27 by `architect`. This section changes no protocol text above
+it.** §§1-8 are as `quant` wrote them, and none of them is amended, relaxed or
+withdrawn here.
+
+**What he was asked.** The document was put to him in §7's own terms: **bind
+it**, and Change B becomes §8 condition 9, so a failed restricted-calibration
+check blocks activation; or **decline it**, and the same figure is computed
+post-hoc and gates nothing.
+
+**What he answered.**
+
+> *"Why not just make a visible confidence score on your confidence score? If
+> it's too complicated I'll tell you to flatten or remove it, but we get nothing
+> if we don't try."*
+
+**What that means for this document, precisely.**
+
+- **v3 is not bound.** It remains `Proposed`; v2 remains the governing protocol;
+  the fit proceeds under v2 exactly as §7 describes.
+- **For Change B, the operational outcome is §7's outcome plus a display
+  requirement.** The restricted calibration is still computed, still published,
+  and still gates nothing. What is added is that it must appear beside the
+  `p(play)` it grades rather than only in a document. Recorded in
+  `docs/decisions/ADR-018-calibration-displayed-beside-the-number.md`, which
+  states plainly that a score the owner can ignore is what §7 calls a footnote,
+  and that the claimed difference — visibility — is untested.
+- **Change A was not ruled on.** The era sensitivity is neither adopted nor
+  declined and is still owed an answer. Do not read this section as disposing of
+  it.
+- **Nothing here licenses reopening §4's split or §7's bands.** §2 still holds.
+
+**Provenance, so it can be checked rather than trusted.** Recorded by
+`architect` from the coordinator's relay of the owner's words on 2026-08-27. The
+quotation is his; the framing around it is mine, and nobody writing in this
+repository heard it first-hand. If the framing misstates him, he should strike
+it — the quotation is the part that must survive.
