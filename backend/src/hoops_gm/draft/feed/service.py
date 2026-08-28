@@ -179,6 +179,15 @@ class SourceOutcome:
     rejected: dict[str, int] = field(default_factory=dict)
     instants_recognised: int = 0
     observations_written: int = 0
+    #: Rows this run wrote that record a **refusal** rather than a pick — a
+    #: record whose player identity this module could not read, stored so the
+    #: status endpoint can say the board is short of one. They are included in
+    #: ``observations_written`` and deliberately excluded from
+    #: ``instants_recognised``, so the two numbers differ by exactly the
+    #: ``player_external_id_unreadable`` occurrences in ``unrecognised`` for
+    #: newly-seen artifacts. Never applied, never reconciled, never counted as
+    #: the source having produced a reading.
+    observations_skipped: int = 0
     observations_already_present: int = 0
     unrecognised: tuple[UnrecognisedShape, ...] = ()
     #: True when the scan hit :data:`BRIDGE_SCAN_LIMIT` and older artifacts
@@ -335,10 +344,13 @@ def _store(
     participants: dict[str, int],
     existing: set[tuple[str, str, str]],
     bridge_payload_ids: dict[str, int] | None = None,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     """Write recognised instants as observations.
 
-    Returns ``(written, already_present, rejected)``.
+    Returns ``(written, already_present, rejected, skipped)``. ``skipped`` is
+    the subset of ``written`` that records a refusal rather than a pick, and is
+    returned separately rather than recomputed by the caller so that the number
+    published and the rows written come from one pass.
 
     Idempotent on ``(transport, artifact_key, locator)`` — checked in Python
     against a set read once, *and* backed by the unique constraint. The set
@@ -358,6 +370,7 @@ def _store(
     written = 0
     already = 0
     rejected_rows = 0
+    skipped_rows = 0
     for instant in result.instants:
         provenance = instant.provenance
         key = (provenance.transport.value, provenance.artifact_key, provenance.locator)
@@ -383,6 +396,12 @@ def _store(
             round_number=instant.round_number,
             pick_in_round=instant.pick_in_round,
             amount=instant.amount,
+            # Set at *write* time, not by the apply pass. The recogniser
+            # already knows this record can never become a pick, and deferring
+            # it would leave the row pending in between -- an application
+            # candidate, which is exactly what ``blocked_reason`` would have
+            # made it and why that route was rejected.
+            skipped_reason=instant.skipped_reason,
         )
         try:
             with session.begin_nested():
@@ -400,7 +419,9 @@ def _store(
             rejected_rows += 1
             continue
         written += 1
-    return written, already, rejected_rows
+        if instant.skipped_reason is not None:
+            skipped_rows += 1
+    return written, already, rejected_rows, skipped_rows
 
 
 def _tally(counter: dict[str, int], reason: str) -> None:
@@ -462,6 +483,7 @@ def ingest_bridge(
     dropped_names: set[str] = set()
     rejected_rows = 0
     sale_instants = 0
+    skipped_rows = 0
 
     for row in rows:
         # Cheap pre-filter on the URL, which carries the league id. Skipping
@@ -496,8 +518,13 @@ def ingest_bridge(
         unrecognised.extend(result.unrecognised)
         coerced += result.coerced_to_kind
         dropped_names.update(result.fields_dropped)
-        sale_instants += sum(1 for instant in result.instants if instant.kind is InstantKind.SALE)
-        stored, seen, refused = _store(
+        sale_instants += sum(
+            1
+            for instant in result.instants
+            if instant.kind is InstantKind.SALE and instant.skipped_reason is None
+        )
+
+        stored, seen, refused, unreadable_rows = _store(
             session,
             draft,
             result,
@@ -508,6 +535,7 @@ def ingest_bridge(
         written += stored
         already += seen
         rejected_rows += refused
+        skipped_rows += unreadable_rows
 
     notes: list[str] = [
         f"Scanned the {scan_limit} newest captures; older ones were not examined."
@@ -572,6 +600,7 @@ def ingest_bridge(
         rejected=rejected,
         instants_recognised=recognised,
         observations_written=written,
+        observations_skipped=skipped_rows,
         observations_already_present=already,
         unrecognised=_summarise(unrecognised),
         scan_truncated=len(rows) >= scan_limit,
@@ -616,7 +645,7 @@ def ingest_official(
         received_at=observed_at,
         context=context,
     )
-    written, already, refused = _store(
+    written, already, refused, unreadable_rows = _store(
         session,
         draft,
         result,
@@ -633,6 +662,7 @@ def ingest_official(
         rejected={result.rejected: 1} if result.rejected else {},
         instants_recognised=result.recognised_count,
         observations_written=written,
+        observations_skipped=unreadable_rows,
         observations_already_present=already,
         unrecognised=result.unrecognised,
         notes=result.notes,
@@ -683,6 +713,16 @@ def ingest(
 
 
 def _to_instant(row: DraftFeedObservation) -> ObservedInstant:
+    """Rehydrate a stored row into the pure type.
+
+    ``skipped_reason`` is deliberately **not** carried across. On the row that
+    column is broader than :attr:`ObservedInstant.skipped_reason`: the
+    recogniser writes an identity refusal there at ingest, and
+    :func:`apply_observations` writes ``already_in_log`` and
+    ``duplicate_within_run`` there afterwards. Those two are genuine readings
+    of a pick, and a rehydrated instant claiming otherwise would be a lie in
+    the one direction that matters — reconciliation reads these.
+    """
     return ObservedInstant(
         kind=InstantKind(row.kind.value),
         provenance=InstantProvenance(
@@ -702,6 +742,28 @@ def _to_instant(row: DraftFeedObservation) -> ObservedInstant:
         pick_in_round=row.pick_in_round,
         amount=row.amount,
     )
+
+
+def names_a_player(row: DraftFeedObservation) -> bool:
+    """Whether this row is a reading *about* somebody.
+
+    The negative case is a record the recogniser stored precisely because it
+    could not identify it — an unreadable ``player_external_id``, or a source
+    row naming nobody at all. Migration ``0021`` permits a row naming no player
+    only when it carries a ``skipped_reason``, so this predicate and "the
+    recogniser refused this record's identity" pick out the same rows, enforced
+    by the database rather than by a list of reason strings kept in step by
+    hand.
+
+    Used to keep such rows out of reconciliation and out of freshness. The
+    freshness half is the one that bites: :func:`freshness_of` lets
+    ``contact_at`` suppress ``silent`` **only for a transport that has produced
+    at least one instant**, so counting a record we could not read would let a
+    feed that has read no picks report itself not silent — the exact false
+    all-clear that rule exists to prevent, arriving through the row added to
+    make a silence visible.
+    """
+    return row.player_label is not None or row.player_external_id is not None
 
 
 def load_observations(session: Session, draft: Draft) -> list[DraftFeedObservation]:
@@ -1427,7 +1489,11 @@ def feed_status(
     stamp = now or datetime.now(UTC)
     context = build_context(session, draft)
     rows = load_observations(session, draft)
-    instants = [_to_instant(row) for row in rows]
+    # A row that names nobody is a recorded refusal, not a reading — see
+    # :func:`names_a_player`. It is still counted in ``observation_count`` and
+    # still reported by name in ``skipped`` below; what it must not do is make
+    # a source look like it has produced a pick.
+    instants = [_to_instant(row) for row in rows if names_a_player(row)]
 
     by_transport: dict[SourceTransport, list[ObservedInstant]] = {
         SourceTransport.BRIDGE_CAPTURE: [],

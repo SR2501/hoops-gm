@@ -113,6 +113,45 @@ class ObservedInstant:
     pick_in_round: int | None = None
     #: An observed clearing price. Never a computed one.
     amount: Decimal | None = None
+    #: Set when this instant is a record of something read and **not** a claim
+    #: about a player. ``None`` for every ordinary reading.
+    #:
+    #: The recogniser sets it at read time and nothing ever clears it, which is
+    #: the point: the state it names is *"a record was here and this module
+    #: could not identify who it was about"*, and an id that cannot be read is
+    #: not going to become readable.
+    #:
+    #: **This exists because the alternative was silence.** A record whose
+    #: ``player_external_id`` was present and unreadable used to be dropped by
+    #: :func:`~hoops_gm.draft.feed.recognise._accept_list` and counted only in
+    #: the ``POST`` ingest response's ``unrecognised``. ``FeedStatus`` carries
+    #: no such field and a live board polls ``GET``, so the board was short a
+    #: player with every channel reading clean. Driven at PR #104 head
+    #: ``7a66d4e``: ``POST -> written 1, unrecognised
+    #: [('player_external_id_unreadable', 1)]``; ``GET -> observations 1
+    #: applied 1 pending 0 blocked () skipped ()``.
+    #:
+    #: Three cheaper routes were closed deliberately. ``player_external_id=None``
+    #: on an ordinary applicable row is what the round-eleven identity work
+    #: forbade, because it makes *supplied and refused* indistinguishable from
+    #: *never supplied*; this keeps them apart by naming the field.
+    #: ``blocked_reason`` leaves the row pending and therefore an application
+    #: candidate. Re-deriving the state at status time would be two paths
+    #: answering one question, which is the defect class thirteen review rounds
+    #: were spent removing.
+    #:
+    #: An instant carrying this **names no player**: the recogniser stores
+    #: neither a label nor an id on it, so it cannot be reconciled as a reading
+    #: about anybody. That is the enforcing half, and it is structural rather
+    #: than a rule — see :func:`matching_key`.
+    #:
+    #: **One direction only.** The recogniser sets it and
+    #: :func:`~hoops_gm.draft.feed.service._store` writes it to the row;
+    #: ``_to_instant`` does not read it back, because the *column* is broader
+    #: than this field. ``apply_observations`` also writes ``already_in_log``
+    #: and ``duplicate_within_run`` there, and those rows are real readings of a
+    #: pick.
+    skipped_reason: str | None = None
 
 
 def publication_order(
@@ -181,6 +220,21 @@ def matching_key(instant: ObservedInstant) -> tuple[str, str] | None:
     comparing two sources' spellings of one real player and is **not** a
     cross-source identity claim; ADR-008 and R23 are about exactly that
     laundering.
+
+    **A refused record has no key because it names nobody**, not because this
+    function checks a flag. :func:`~hoops_gm.draft.feed.recognise._instant_from`
+    stores neither a label nor an id on a record whose identity it could not
+    read, and migration ``0021`` permits a row naming no player *only* when it
+    carries a ``skipped_reason``. So "never joins identity matching" holds by
+    construction here rather than by a rule someone could later narrow.
+
+    The flag is deliberately **not** consulted: ``skipped_reason`` on a stored
+    row is broader than this type's, because
+    :func:`~hoops_gm.draft.feed.service.apply_observations` also writes
+    ``already_in_log`` and ``duplicate_within_run`` there — and those are
+    genuine readings of a pick whose whole value is being reconciled against
+    the other source. Keying off the flag would delete the corroboration signal
+    at the moment it is worth something.
     """
     if instant.player_external_id:
         return ("player_external_id", instant.player_external_id)
@@ -250,4 +304,12 @@ class RecognitionResult:
 
     @property
     def recognised_count(self) -> int:
-        return len(self.instants)
+        """Instants that are readings of a **pick**.
+
+        Excludes instants carrying a ``skipped_reason``, which are records this
+        module stored precisely because it could *not* identify them. Counting
+        those here would publish ``instants_recognised`` as evidence that a
+        record was read, on the one channel whose job is saying how much of the
+        payload we understood.
+        """
+        return sum(1 for instant in self.instants if instant.skipped_reason is None)

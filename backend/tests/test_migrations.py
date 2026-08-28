@@ -18,6 +18,7 @@ import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from alembic import command
@@ -25,8 +26,12 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Boolean, DateTime, bindparam, create_engine, inspect, text
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql.elements import TextClause
+from sqlalchemy.types import TypeEngine
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base, enum_check_constraint_names
@@ -1209,3 +1214,325 @@ def test_a_settings_url_with_a_percent_sign_survives_env_py(
         assert "players" in set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
+
+
+def _feed_row(**overrides: object) -> dict[str, object]:
+    """One ``draft_feed_observations`` row, written as raw SQL on purpose.
+
+    Going through ``text()`` rather than the ORM means the assertion is about
+    what the *database built by the migration* accepts, which is what runs on
+    the owner's machine. Asserting through the model would be asserting about
+    the model's own copy of the constraint.
+
+    Values are bound with **declared types** (:func:`_typed`), never inlined as
+    SQL literals. Raw SQL is the right tool for testing a constraint; it is not
+    a reason to hand the driver untyped values, and both directions of that
+    mistake are live here. ``1`` for a boolean is silently accepted by SQLite
+    and refused by Postgres with *column "is_active" is of type boolean but
+    expression is of type integer*. A bare ``datetime`` is fine for psycopg and
+    trips SQLite's deprecated default adapter, which this suite escalates to an
+    error via ``filterwarnings``. A declared type makes the dialect responsible
+    for both.
+    """
+    row: dict[str, object] = {
+        "draft_id": 1,
+        "transport": "bridge_capture",
+        "artifact_key": "artifact",
+        "locator": "$[0]",
+        "recogniser": "test",
+        "observed_at": datetime(2026, 10, 18, 23, 14, tzinfo=UTC),
+        "kind": "selection",
+        "team_external_id": "t1",
+        "player_label": None,
+        "player_external_id": None,
+        "skipped_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+#: Columns whose Python value must carry a declared type to bind portably.
+#: Everything else here is a string or an int, which every dialect agrees on.
+_BIND_TYPES: dict[str, TypeEngine[Any]] = {
+    "observed_at": DateTime(timezone=True),
+    "is_active": Boolean(),
+    "is_mock": Boolean(),
+}
+
+
+def _typed(statement: str, params: dict[str, object]) -> TextClause:
+    """``text()`` with a declared type on every parameter that needs one.
+
+    The rule this encodes: **when a value crosses an engine boundary, let the
+    strict engine's requirements decide its representation, not the permissive
+    one's.** Inlining literals into the SQL string puts the *test author* in
+    charge of that, and the test author only ever runs SQLite.
+    """
+    clause = text(statement)
+    declared = [bindparam(name, type_=_BIND_TYPES[name]) for name in params if name in _BIND_TYPES]
+    return clause.bindparams(*declared) if declared else clause
+
+
+def _insert_feed_row(connection: Connection, row: dict[str, object]) -> None:
+    columns = ", ".join(row)
+    values = ", ".join(f":{name}" for name in row)
+    connection.execute(
+        _typed(f"INSERT INTO draft_feed_observations ({columns}) VALUES ({values})", row),
+        row,
+    )
+
+
+def _seed_draft_for_feed(connection: Connection) -> None:
+    """A league and a draft for the feed rows to hang off.
+
+    ``is_active`` and ``is_mock`` are bound as Python ``bool`` through
+    :func:`_typed`, not written as the literal ``1``. That literal is what a
+    first version of this helper used, and it cost this branch a CI cycle:
+    SQLite has no boolean type and takes the integer happily, Postgres refuses
+    it. It is the ADR-001 case exactly — green on the development engine, red
+    on the one the owner will eventually run.
+
+    Worth naming because the obvious remedy does not work. I *had* read the
+    schema off the migrated database rather than guessing at it, with
+    ``PRAGMA table_info``. But that reports SQLite's **declared** type, and
+    SQLite then accepts ``1`` for it regardless: **the check could not fail on
+    the engine it was run against.** Reading the schema harder was never going
+    to catch this; binding a typed value is.
+    """
+    league = {
+        "id": 1,
+        "name": "l",
+        "season": "2026-27",
+        "scoring_type": "h2h_categories",
+        "draft_type": "snake",
+        "is_active": True,
+        "team_count": 2,
+        "roster_size": 2,
+    }
+    connection.execute(
+        _typed(
+            "INSERT INTO leagues"
+            " (id, name, season, scoring_type, draft_type, is_active, team_count, roster_size)"
+            " VALUES (:id, :name, :season, :scoring_type, :draft_type, :is_active,"
+            " :team_count, :roster_size)",
+            league,
+        ),
+        league,
+    )
+    draft = {
+        "id": 1,
+        "league_id": 1,
+        "name": "d",
+        "is_mock": True,
+        "tool_usage": "instrumented",
+        "draft_type": "snake",
+        "team_count": 2,
+        "roster_size": 2,
+    }
+    connection.execute(
+        _typed(
+            "INSERT INTO drafts"
+            " (id, league_id, name, is_mock, tool_usage, draft_type, team_count, roster_size)"
+            " VALUES (:id, :league_id, :name, :is_mock, :tool_usage, :draft_type,"
+            " :team_count, :roster_size)",
+            draft,
+        ),
+        draft,
+    )
+
+
+def test_0021_admits_a_nameless_observation_only_when_it_says_why(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The widened CHECK, driven in both directions against a real database.
+
+    ``draft-feed-unreadable-id-surfacing``: a record whose player id was
+    present and unreadable used to be dropped, and was reported only on the
+    ``POST`` ingest response — so a board polling ``GET`` was silently short a
+    pick. Recording it needs a row that names nobody, which the original
+    ``feed_names_a_player`` CHECK forbade.
+
+    **The widening has to stay narrow**, and that is what the second half
+    asserts. A nameless row is admitted *only* while it carries a
+    ``skipped_reason``, and the apply pass filters ``pending`` on
+    ``skipped_reason IS NULL`` — so the invariant the CHECK was protecting,
+    that anything which can become a ``draft_events`` entry names a player,
+    survives. Asserting only the first half would pass just as well for a
+    constraint that had been dropped outright.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _seed_draft_for_feed(connection)
+            _insert_feed_row(connection, _feed_row(skipped_reason="player_external_id_unreadable"))
+
+        with engine.begin() as connection:
+            count = connection.execute(
+                text("SELECT COUNT(*) FROM draft_feed_observations")
+            ).scalar_one()
+        assert count == 1
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            _insert_feed_row(connection, _feed_row(locator="$[1]"))
+    finally:
+        engine.dispose()
+
+
+def test_0021_is_reversible_and_takes_only_the_rows_it_permitted(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """Down and up again, with the one data case the downgrade can meet.
+
+    A row written under the wider rule violates the narrower one, so the
+    downgrade deletes exactly those and no others. Driven rather than reasoned:
+    the ``WHERE`` names both halves of the condition, and a row naming a player
+    must survive the round trip.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _seed_draft_for_feed(connection)
+            _insert_feed_row(connection, _feed_row(skipped_reason="player_external_id_unreadable"))
+            _insert_feed_row(connection, _feed_row(locator="$[1]", player_label="Nikola Jokic"))
+    finally:
+        engine.dispose()
+
+    command.downgrade(alembic_config, "0020")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            surviving = connection.execute(
+                text("SELECT player_label FROM draft_feed_observations")
+            ).scalars()
+            assert list(surviving) == ["Nikola Jokic"]
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            _insert_feed_row(
+                connection,
+                _feed_row(locator="$[2]", skipped_reason="player_external_id_unreadable"),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _insert_feed_row(
+                connection,
+                _feed_row(locator="$[3]", skipped_reason="player_external_id_unreadable"),
+            )
+    finally:
+        engine.dispose()
+
+
+def test_the_raw_sql_seed_helpers_bind_every_engine_sensitive_value() -> None:
+    """Excludes: a raw-SQL test that is green only on the permissive engine.
+
+    This is the check the previous remedy could not be. Seeding by raw SQL bit
+    this branch twice: ``1`` for a boolean, which SQLite accepts and Postgres
+    refuses, and a bare ``datetime``, which psycopg takes and SQLite's
+    deprecated adapter warns on. The remedy I adopted the first time -- read the
+    schema off the migrated database with ``PRAGMA table_info`` rather than
+    guessing -- **could not have caught either**, because it reports SQLite's
+    declared type and SQLite then accepts the wrong Python type for it anyway.
+    The domain being measured was narrower than the hazard.
+
+    So this asserts the property directly, and against the **strict** dialect:
+    every engine-sensitive value must cross as a *bound parameter with a
+    declared type*, never inlined into the SQL string. A literal ``1`` does not
+    appear in ``construct_params`` at all, which is exactly how it escaped.
+
+    ``render_postcompile`` is not needed here and is deliberately absent: the
+    subject is the parameter set, not the rendered string.
+    """
+    for statement, params in _seed_statements():
+        for name, expected in (
+            ("is_active", bool),
+            ("is_mock", bool),
+            ("observed_at", datetime),
+        ):
+            if name not in params:
+                continue
+            bound = _bound_under(statement, params, name, _PG_DIALECT)
+            assert bound is not _NOT_BOUND, (
+                f"{name} is not a bound parameter, so it was inlined into the SQL "
+                "string -- which is how a boolean written as 1 reached Postgres"
+            )
+            assert isinstance(bound, expected), (
+                f"{name} binds as {type(bound).__name__} under the Postgres dialect; "
+                f"Postgres wants {expected.__name__} and will refuse anything else"
+            )
+
+    # Control: the same declared types must *not* hand SQLite a raw datetime,
+    # which trips its deprecated default adapter -- an error under this suite's
+    # filterwarnings. One representation is wrong on each engine, which is the
+    # whole reason the type is declared rather than the value hand-formatted.
+    row = _feed_row()
+    columns = ", ".join(row)
+    values = ", ".join(f":{name}" for name in row)
+    statement = _typed(f"INSERT INTO t ({columns}) VALUES ({values})", row)
+    assert isinstance(_bound_under(statement, row, "observed_at", _SQLITE_DIALECT), str)
+
+
+#: Sentinel for "this name never reached the driver as a parameter", which is
+#: what an inlined SQL literal looks like from here.
+_NOT_BOUND: Any = object()
+
+#: The two dialects this project runs on (ADR-001). ``dialect()`` is an untyped
+#: factory in SQLAlchemy's stubs, so the ignore is on the construction rather
+#: than spread across every call site.
+_PG_DIALECT: Any = postgresql.dialect()  # type: ignore[no-untyped-call]
+_SQLITE_DIALECT: Any = sqlite.dialect()
+
+
+def _bound_under(
+    statement: TextClause,
+    params: dict[str, object],
+    name: str,
+    dialect: Any,
+) -> Any:
+    """The value one parameter takes on the wire under ``dialect``.
+
+    Runs the type's own bind processor, because that is the step the two
+    engines disagree in: the same declared ``DateTime`` hands psycopg a
+    ``datetime`` and SQLite a string, and a value with no declared type is
+    handed over exactly as written.
+    """
+    compiled = statement.compile(dialect=dialect)
+    bound = compiled.construct_params(params)
+    if name not in bound:
+        return _NOT_BOUND
+    processor = compiled.binds[name].type.dialect_impl(dialect).bind_processor(dialect)
+    return processor(bound[name]) if processor is not None else bound[name]
+
+
+def _seed_statements() -> list[tuple[TextClause, dict[str, object]]]:
+    """The statements the seed helpers issue, without needing a database.
+
+    Captured through a stub connection rather than re-written here, so this test
+    reads the statements the helpers *actually* execute. Restating them would be
+    a second copy that can drift from the one under test -- the defect class this
+    package's reviews have found most often.
+    """
+    captured: list[tuple[TextClause, dict[str, object]]] = []
+
+    class _Recorder:
+        def execute(self, statement: TextClause, params: dict[str, object]) -> None:
+            captured.append((statement, params))
+
+    _seed_draft_for_feed(cast(Connection, _Recorder()))
+
+    row = _feed_row(skipped_reason="player_external_id_unreadable")
+    columns = ", ".join(row)
+    values = ", ".join(f":{name}" for name in row)
+    captured.append(
+        (_typed(f"INSERT INTO draft_feed_observations ({columns}) VALUES ({values})", row), row)
+    )
+    return captured

@@ -87,8 +87,21 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
         ),
         CheckConstraint("amount IS NULL OR amount > 0", name="feed_amount_positive"),
         CheckConstraint("artifact_key <> ''", name="feed_artifact_key_present"),
+        # A row either names a player, or says why it cannot. The second arm
+        # was added by migration ``0021`` and is narrow on purpose: an
+        # observation that names nobody is admitted **only** while it carries a
+        # reason, and ``apply_observations`` filters ``pending`` on
+        # ``skipped_reason IS NULL`` — so a nameless row can never be an
+        # application candidate. The invariant "anything applicable names a
+        # player" is unchanged; what changed is that a record whose identity
+        # the recogniser refused is now recorded instead of dropped.
+        #
+        # It was dropped before, and only counted on the ``POST`` ingest
+        # response, so a board polling ``GET`` was short a player with every
+        # channel reading clean. See ``draft-feed-unreadable-id-surfacing``.
         CheckConstraint(
-            "player_label IS NOT NULL OR player_external_id IS NOT NULL",
+            "player_label IS NOT NULL OR player_external_id IS NOT NULL"
+            " OR skipped_reason IS NOT NULL",
             name="feed_names_a_player",
         ),
         # Mirrors the kind's own meaning at the storage layer: a selection is a
@@ -177,6 +190,18 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     #: resolvable seat, a disagreement held open. Free text, published on the
     #: status endpoint, because an observation that silently never becomes an
     #: event is indistinguishable from one that was never read.
+    #:
+    #: **Written by two passes, and the difference matters when reading it.**
+    #: ``apply_observations`` writes ``already_in_log``,
+    #: ``duplicate_within_run`` and friends *after* the fact; those rows are
+    #: real readings of a pick. The recogniser writes
+    #: ``player_external_id_unreadable`` and ``record_names_no_player`` at
+    #: **ingest** time, on a record whose identity it could not read, and such a
+    #: row names no player at all. Both are permanent — nothing here ever
+    #: clears this column — and both keep the row out of ``pending``, which is
+    #: exactly what the second case needs: an id that cannot be read is not
+    #: going to become readable, so leaving the row as an application candidate
+    #: (which ``blocked_reason`` would have done) would be wrong.
     skipped_reason: Mapped[str | None] = mapped_column(Text)
     #: Why the *last apply run* stopped at this row without consuming it.
     #:
