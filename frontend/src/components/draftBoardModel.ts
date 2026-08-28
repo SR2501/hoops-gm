@@ -95,6 +95,12 @@ export interface SeatBudget {
   budget: DecimalString | null
   liveBidAmount: DecimalString | null
   liveBidPlayerLabel: string | null
+  /**
+   * Passed through from the backend, **not re-derived from the sign of
+   * `remainingBudget`**. Deriving it here would be a second computation of a
+   * fact the API already publishes, and the two could drift.
+   */
+  overAssumedBudget: boolean
 }
 
 export interface SeatRow {
@@ -245,6 +251,7 @@ export function buildDraftBoardModel(
           remainingBudget: participant.remaining_budget,
           spent: participant.spent,
           budget: state.format.auction_budget,
+          overAssumedBudget: participant.over_assumed_budget,
           // Set only for the seat that actually holds the high bid, so the
           // caveat appears exactly where the headline figure is currently
           // incomplete and nowhere else.

@@ -275,15 +275,6 @@ def test_a_stale_writer_is_refused_with_a_conflict(client: TestClient, session: 
             "draft_no_open_lot",
         ),
         (
-            {
-                "event_type": "sale",
-                "participant_id": None,
-                "amount": "500.00",
-                "player_label": "Teodor Fane",
-            },
-            "draft_budget_exceeded",
-        ),
-        (
             {"event_type": "void", "supersedes_sequence": 99},
             "draft_void_target_missing",
         ),
@@ -306,6 +297,131 @@ def test_a_refusal_is_a_422_carrying_its_code(
 
     log = client.get(f"/api/v1/drafts/{draft_id}/events").json()
     assert log["last_sequence"] == 0, "A refused append leaves no row and no sequence hole."
+
+
+def test_a_sale_above_the_assumed_budget_is_accepted_and_flagged(
+    client: TestClient, session: Session
+) -> None:
+    """**This test replaces a removed assertion, and the removal is the point.**
+
+    ``test_a_refusal_is_a_422_carrying_its_code`` used to parametrise a third
+    case: a ``500.00`` sale for "Teodor Fane" against a ``200.00`` draft,
+    asserting ``422 draft_budget_exceeded``. That assertion is gone. It was
+    pinning a defect rather than a contract.
+
+    **Why the old behaviour was wrong, stated so it can be disagreed with
+    cheaply.** ``Draft.auction_budget`` is one scalar for the whole draft — grep
+    ``DraftParticipant`` in ``db/models`` and there is no budget column — and
+    ``formats.py`` copies it from the single nullable ``League.auction_budget``.
+    The owner's league sets each seat's bank from last season's final totals, so
+    that scalar is wrong for most seats by construction. The refusal fired in
+    ``_apply_sale`` three lines above ``board.add``, so the pick never reached
+    the board: a sale the recorder watched clear vanished, which is exactly the
+    owner's stated walk-away condition ("it loses track of the draft ... misses
+    one"). The refusal was also filed into ``skipped_reason`` by the capture
+    ingest path, and nothing clears that column, so a retry deduped against the
+    burned row instead of re-running.
+
+    A recorded sale above the assumed budget means our assumption is wrong, not
+    that the sale did not happen. The contract asserted here is the replacement:
+    **201, the pick is on the board, and the wrongness is named on the seat.**
+    """
+    state = _create(client, _league(session))
+    draft_id = state["id"]
+    seats = _seats(state)
+
+    response = client.post(
+        f"/api/v1/drafts/{draft_id}/events",
+        json={
+            "event_type": "sale",
+            "participant_id": seats[1],
+            "amount": "500.00",
+            "player_label": "Teodor Fane",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    body = client.get(f"/api/v1/drafts/{draft_id}").json()
+    seat = {each["team_slot"]: each for each in body["participants"]}[1]
+
+    # The assertion the old behaviour could not satisfy. Everything below is
+    # worthless without this one: the pick that happened is on the board.
+    assert [held["player_label"] for held in seat["holdings"]] == ["Teodor Fane"]
+    assert body["selections_made"] == 1
+
+    # Signed, and published as a string like every other money field.
+    assert seat["spent"] == "500.00"
+    assert seat["remaining_budget"] == "-300.00"
+    assert seat["over_assumed_budget"] is True
+
+    # No other seat is flagged, so the flag is about this seat rather than about
+    # the draft.
+    assert [each["over_assumed_budget"] for each in body["participants"]].count(True) == 1
+
+
+@pytest.mark.parametrize("draft_type", [DraftType.AUCTION, DraftType.SNAKE])
+def test_over_assumed_budget_never_disagrees_with_remaining_budget(
+    client: TestClient, session: Session, draft_type: DraftType
+) -> None:
+    """``over_assumed_budget`` is a total function of ``remaining_budget``.
+
+    This is the executable half of the argument for typing the field ``bool``
+    rather than ``bool | None``. A nullable flag would be a *second* nullable
+    encoding of "does this draft have a budget at all", which
+    ``remaining_budget`` already answers — two fields that can represent
+    disagreeing answers (``remaining_budget: "138.00"`` beside
+    ``over_assumed_budget: null``) where one field can not.
+
+    So the claim is not "``False`` reads better than ``None``", which is
+    taste. It is the identity below, which either holds for every seat of both
+    draft types or does not.
+
+    **The write is asserted and the flagged count is pinned per draft type.**
+    Without both, this degenerates into the failure mode this repository keeps
+    finding: a POST that silently did nothing leaves four untouched seats, the
+    identity holds trivially on four ``False``s, and the test reports green
+    while never once exercising the ``True`` branch it exists for. That is not
+    hypothetical here — the first draft of this test sent ``amount: None`` on
+    the snake ``pick``, which the request model refuses as ``extra_forbidden``,
+    and the assertion below is what turned a silent green into a red.
+    """
+    budget = Decimal("200.00") if draft_type is DraftType.AUCTION else None
+    is_auction = draft_type is DraftType.AUCTION
+    league = _league(
+        session, draft_type=draft_type, budget=budget, name=f"identity {draft_type.value}"
+    )
+    state = _create(client, league)
+    draft_id = state["id"]
+    seats = _seats(state)
+
+    # ``amount`` is omitted rather than passed as ``None`` on the pick: the
+    # discriminated request model forbids the key outright on that branch.
+    body_out: dict[str, Any] = {
+        "event_type": "sale" if is_auction else "pick",
+        "participant_id": seats[1],
+        "player_label": "Teodor Fane",
+    }
+    if is_auction:
+        body_out["amount"] = "500.00"
+
+    written = client.post(f"/api/v1/drafts/{draft_id}/events", json=body_out)
+    assert written.status_code == 201, written.text
+
+    body = client.get(f"/api/v1/drafts/{draft_id}").json()
+    assert body["selections_made"] == 1, "the pick this test reasons about was never recorded"
+
+    checked = 0
+    for seat in body["participants"]:
+        remaining = seat["remaining_budget"]
+        expected = remaining is not None and Decimal(remaining) < 0
+        assert seat["over_assumed_budget"] == expected, seat
+        checked += 1
+    assert checked == 4, "A vacuous pass over zero seats would prove nothing."
+
+    # The discriminating half: the auction case must actually reach ``True``,
+    # and the snake case must reach it nowhere.
+    flagged = sum(1 for seat in body["participants"] if seat["over_assumed_budget"])
+    assert flagged == (1 if is_auction else 0)
 
 
 def test_an_unknown_draft_is_a_404_not_a_500(client: TestClient) -> None:

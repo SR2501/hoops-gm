@@ -82,7 +82,8 @@ function isDraftParticipant(value: unknown): value is DraftParticipant {
     typeof value.slots_filled === 'number' &&
     typeof value.slots_remaining === 'number' &&
     isDecimalOrNull(value.spent) &&
-    isDecimalOrNull(value.remaining_budget)
+    isDecimalOrNull(value.remaining_budget) &&
+    typeof value.over_assumed_budget === 'boolean'
   )
 }
 

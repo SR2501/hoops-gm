@@ -138,6 +138,23 @@ export interface DraftParticipant {
    * the seat where that is currently false.
    */
   remaining_budget: DecimalString | null
+  /**
+   * True when this seat's recorded spend has passed the budget the tool
+   * *assumed* for it — i.e. when `remaining_budget` is negative.
+   *
+   * **It is a statement about the tool's assumption, not about the seat.**
+   * `format.auction_budget` is one scalar for the whole draft; the backend has
+   * no per-seat budget column, and this league sets each seat's bank
+   * separately. So a raised flag means "the figure beside this seat is wrong,
+   * by `-remaining_budget`", and the sale that revealed it is on the board.
+   *
+   * Read the flag; do not re-derive it from the sign of `remaining_budget`. It
+   * is `false` — not `null` — in a snake draft, where there is no assumption to
+   * have passed. That is deliberate: `remaining_budget` already answers "does
+   * this draft have a budget", so a second nullable field answering the same
+   * question could only ever disagree with the first.
+   */
+  over_assumed_budget: boolean
 }
 
 export interface DraftOpenLot {

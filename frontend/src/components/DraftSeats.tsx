@@ -28,9 +28,70 @@
  * the line is itself the signal. An absent marker and a present one are
  * different claims here, which is the distinction the previous frontend lane
  * could not answer for its own screen.
+ *
+ * ## The third claim: a seat that has spent past the assumed budget
+ *
+ * `remaining_budget` is **signed**, and a negative value is a fact about this
+ * tool rather than about the seat. The budget in that subtraction is one scalar
+ * for the whole draft; the backend has no per-seat budget column, and this
+ * league sets each seat's bank from last season's final totals. So the figure
+ * is wrong for most seats by construction, and the backend admits a sale above
+ * it instead of refusing it — refusing it deleted a pick the recorder had
+ * watched clear.
+ *
+ * That produced a rendering bug this screen had no way to notice: `$-300.00`
+ * beneath the words *left, of sales recorded*. Legible, and false in the one
+ * word that matters. A recorder glancing at it reads a negative balance as the
+ * seat's problem, when it is ours.
+ *
+ * So a flagged seat reads **`$300.00 over` / *past the budget this tool
+ * assumed*** and carries a note saying, in as many words, that nothing was
+ * rejected and no pick is missing. Both are driven by
+ * `over_assumed_budget`, which the backend publishes as its own field — this
+ * screen never infers the condition from a minus sign, because two derivations
+ * of one fact can disagree and a label disagreeing with its own figure is the
+ * failure being avoided.
  */
 
-import type { DraftBoardModel, SeatRow } from './draftBoardModel'
+import type { DraftBoardModel, SeatBudget, SeatRow } from './draftBoardModel'
+
+/**
+ * The headline figure, as a magnitude plus a word rather than a signed number.
+ *
+ * `remainingBudget` is signed and may be negative, because the backend admits a
+ * sale above the assumed budget rather than refusing it — refusing it lost a
+ * pick that really happened. `$-300.00` under the words "left, of sales
+ * recorded" is legible and false: nothing is left, and the label claims
+ * otherwise. So a flagged seat reads `$300.00 over` instead.
+ *
+ * **The digits are not recomputed.** The sign is stripped from the string the
+ * backend sent, so `"-300.00"` becomes `"300.00"` with the cents intact. A
+ * parse-and-reformat here would round-trip through a float and is exactly what
+ * `renders money byte-identically to what the backend sent` exists to catch.
+ */
+function renderRemaining(budget: SeatBudget): string {
+  if (budget.remainingBudget === null) return 'not recorded'
+  if (!budget.overAssumedBudget) return `$${budget.remainingBudget}`
+  const magnitude = budget.remainingBudget.startsWith('-')
+    ? budget.remainingBudget.slice(1)
+    : budget.remainingBudget
+  return `$${magnitude} over`
+}
+
+/**
+ * The words under the figure, which are the part that was wrong.
+ *
+ * "left, of sales recorded" is a true claim about a seat with money left and a
+ * false one about a seat that has spent past the assumption. The label is
+ * chosen from the flag rather than from the sign of the figure, so it cannot
+ * disagree with the flag that drives the note beneath it.
+ */
+function remainingLabel(budget: SeatBudget): string {
+  if (budget.remainingBudget === null) return 'left, of sales recorded'
+  return budget.overAssumedBudget
+    ? 'past the budget this tool assumed, of sales recorded'
+    : 'left, of sales recorded'
+}
 
 export function DraftSeats({ model }: { model: DraftBoardModel }) {
   return (
@@ -67,15 +128,39 @@ function Seat({ seat, isAuction }: { seat: SeatRow; isAuction: boolean }) {
       {isAuction ? (
         <div className="seat__budget">
           <p className="seat__budget-main">
-            <span className="seat__money" data-testid={`seat-remaining-${String(participant.id)}`}>
+            <span
+              className={
+                budget.overAssumedBudget ? 'seat__money seat__money--over' : 'seat__money'
+              }
+              data-testid={`seat-remaining-${String(participant.id)}`}
+            >
               {/* Words, not an em dash. This screen uses an em dash as ordinary
                   punctuation in the caveat line directly below, and a glyph
                   cannot be a missing-value marker and punctuation in the same
                   element without one reading as the other. */}
-              {budget.remainingBudget === null ? 'not recorded' : `$${budget.remainingBudget}`}
+              {renderRemaining(budget)}
             </span>
-            <span className="seat__budget-label">left, of sales recorded</span>
+            <span className="seat__budget-label">{remainingLabel(budget)}</span>
           </p>
+          {/* Rendered only for a seat whose recorded spend has passed the
+              assumed budget. Its presence is the signal, exactly like the live
+              bid caveat below it, so it must never be emitted empty. */}
+          {budget.overAssumedBudget ? (
+            <p
+              className="seat__budget-over"
+              data-testid={`seat-over-budget-${String(participant.id)}`}
+              role="note"
+            >
+              <span className="seat__budget-label">
+                Every seat in this draft is assumed to have{' '}
+                <strong>{budget.budget === null ? 'the same budget' : `$${budget.budget}`}</strong>,
+                because that is the only figure recorded — the backend holds no per-seat budget.
+                This seat has cleared more than that, so{' '}
+                <strong>the assumption is wrong here, not the sale</strong>. Nothing was rejected
+                and no pick is missing.
+              </span>
+            </p>
+          ) : null}
           {/* Rendered only for the seat holding the high bid. Its presence is
               the signal, so it must never be emitted empty. */}
           {holdsHighBid && budget.liveBidAmount !== null ? (
@@ -92,7 +177,8 @@ function Seat({ seat, isAuction }: { seat: SeatRow; isAuction: boolean }) {
           ) : null}
           {budget.spent !== null && budget.budget !== null ? (
             <p className="seat__spent">
-              ${budget.spent} spent of ${budget.budget}
+              ${budget.spent} spent
+              {budget.overAssumedBudget ? ', against an assumed ' : ' of '}${budget.budget}
             </p>
           ) : null}
         </div>

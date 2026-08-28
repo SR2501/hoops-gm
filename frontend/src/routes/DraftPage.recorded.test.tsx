@@ -565,20 +565,50 @@ describe('every recorded refusal, reached', () => {
     reached.add('bid-not-increasing')
   })
 
-  it('shows a refused over-budget sale', async () => {
-    const refusal = REFUSALS['budget-exceeded']!
-    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+  it('renders a seat past the assumed budget as an overage, not a negative balance', async () => {
+    // Replaces `shows a refused over-budget sale`, whose fixture is retired
+    // because the backend no longer refuses this. The screen bug that
+    // replacement exposed: `$-300.00` under the words "left, of sales
+    // recorded". Legible, and false in the one word that matters.
+    const overspent = {
+      ...auctionState,
+      participants: auctionState.participants.map((seat) =>
+        seat.id === 1
+          ? {
+              ...seat,
+              spent: '500.00',
+              remaining_budget: '-300.00',
+              over_assumed_budget: true,
+            }
+          : seat,
+      ),
+    }
+    stubDraftFetch({ state: overspent, events: auctionEvents })
     renderBoard()
 
-    await screen.findByTestId('recorder-seat')
-    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
-    await userEvent.type(screen.getByTestId('recorder-amount'), '999')
-    await userEvent.click(screen.getByTestId('recorder-submit'))
+    const remaining = await screen.findByTestId('seat-remaining-1')
+    // The magnitude, with the cents intact, and the word that makes it true.
+    expect(remaining).toHaveTextContent('$300.00 over')
+    expect(remaining.textContent).not.toContain('-')
 
-    expect(await screen.findByTestId('recorder-error-backend')).toHaveTextContent(
-      refusal.body.detail,
-    )
-    reached.add('budget-exceeded')
+    const seat = screen.getByTestId('seat-1')
+    expect(seat).toHaveTextContent('past the budget this tool assumed')
+    // The label the figure used to sit under must be gone from this seat, not
+    // merely joined by a truer one.
+    expect(seat).not.toHaveTextContent('left, of sales recorded')
+
+    // The note says the two things a recorder needs at a glance: whose mistake
+    // this is, and that no pick is missing.
+    const note = screen.getByTestId('seat-over-budget-1')
+    expect(note).toHaveTextContent('the assumption is wrong here, not the sale')
+    expect(note).toHaveTextContent('no pick is missing')
+
+    // And the flag is about this seat, not about the board. Counting is the
+    // assertion: "no note where it does not belong" passes on a board with none.
+    const notes = screen
+      .getAllByTestId(/^seat-over-budget-/)
+      .map((node) => node.getAttribute('data-testid'))
+    expect(notes).toEqual(['seat-over-budget-1'])
   })
 
   it('shows a refused unknown seat', async () => {

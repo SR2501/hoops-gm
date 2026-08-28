@@ -30253,3 +30253,211 @@ the owner and `draft-tracker`.
 the owner and `draft-tracker`. And **this branch needs a PR opened by the
 owner** — it is finished work sitting unlanded, and nothing in CI has ever seen
 it.
+
+## 2026-08-28 - backend - Finishing Route B: an over-budget sale reaches the board, and the burn it used to cause is now a red test
+
+Picking up `sr2501-budget-refusal-route-b` at `a00440d`, which was pushed
+deliberately incomplete past a hard stop with its own "what is not done" list.
+Cherry-picked clean onto `origin/main` at `5c365cf` — re-derived, not trusted;
+the branch's base `2ff50ff` is an ancestor of main, so the rebase was a
+no-conflict replay.
+
+### What Route B is, in one sentence a reader can disagree with
+
+`Draft.auction_budget` is **one scalar for the whole draft** — `DraftParticipant`
+has no budget column, and `formats.py` copies the scalar from the single nullable
+`League.auction_budget` — so it is wrong for most seats by construction (Q8: *"I
+think 200, but it's slightly different per team based on last years' final
+totals"*). `_refuse_if_over_budget` sat three lines above `board.add(...)` in
+`_apply_sale`, so a sale the recorder watched clear **never reached the board**.
+A recorded sale above an assumed budget means the assumption is wrong, not that
+the sale did not happen. So the refusal is deleted at all three call sites,
+`remaining_budget` is signed, and `over_assumed_budget` reports the condition.
+
+**Route A — a real per-seat budget column — is still open and is still needed.**
+`per-team-auction-budgets` stays `pending`. Route B removes the pick-loss
+**without giving seats real budgets**: every figure beside a seat is still
+derived from one scalar that is wrong for most of them. What changed is that the
+tool now says so on the screen instead of deleting the evidence.
+
+### The assertion I removed, named, with why the old behaviour was wrong
+
+`backend/tests/test_drafts_api.py`, the `test_a_refusal_is_a_422_carrying_its_code`
+parametrisation, third case: a `500.00` sale for "Teodor Fane" against a `200.00`
+draft, asserting `422` and `draft_budget_exceeded`. **Gone.** It was pinning a
+defect rather than a contract — it asserted that a pick that happened produces no
+pick. The parametrised list is now two cases; the input is asserted in
+`test_a_sale_above_the_assumed_budget_is_accepted_and_flagged`, which requires
+`201`, the player on the board, `selections_made == 1`,
+`remaining_budget == "-300.00"`, `over_assumed_budget is True`, and exactly one
+flagged seat. I did **not** substitute a third refusal case: my first attempt
+guessed `draft_row_rejected` for an unmatched `player_id`, and I reverted it
+rather than assert a status code I had not driven.
+
+### `bool`, not `bool | None`, and the argument is executable
+
+The previous lane typed the flag `bool` and asked for a second opinion against
+the repo's `X | None` precedent. **I kept `bool`, on a different ground than the
+one offered.** "A warning reading unknown is worse than one reading no" is taste.
+The mechanical reason: `remaining_budget` **already** answers "does this draft
+have a budget", so a nullable flag would be a *second* nullable encoding of the
+same applicability fact, and two fields that can represent disagreeing answers
+(`remaining_budget: "138.00"` beside `over_assumed_budget: null`) are strictly
+worse than one that cannot. `state.py`'s own docstring calls a second derivation
+of one fact "the defect shape this package has paid for repeatedly".
+
+So I made the claim falsifiable rather than arguing it:
+`test_over_assumed_budget_never_disagrees_with_remaining_budget` asserts
+`over_assumed_budget == (remaining_budget is not None and Decimal(remaining) < 0)`
+for every seat of **both** draft types, with a non-vacuity assertion on the seat
+count. Reversing the decision is still a one-line change, and that test is what
+would have to be deleted to do it.
+
+### Injection and reversion are different questions, and I drove both
+
+**Injection** — the sale reaches the board and raises the flag — is covered at
+three layers: `derive_state` (`test_draft_tracker.py`, inherited), HTTP
+(`test_drafts_api.py`, new), and the ingest path (new). Incidental but real
+evidence: the *first* full-suite run, before I touched anything, failed the old
+parametrised case and printed the whole `201` body, which shows the holding, the
+price and `over_assumed_budget: true` directly.
+
+**Reversion** — the `skipped_reason` burn — is the thing the previous lane
+established by grep and explicitly did not drive. **I drove it.**
+`apply_observations` files a refusal into `row.skipped_reason`; `pending` filters
+on `skipped_reason IS NULL`; nothing in the package ever assigns it `None`. Two
+new tests in `test_draft_feed.py`:
+
+- `test_a_sale_past_the_assumed_budget_is_applied_rather_than_burned` — a real
+  bridge capture, ingested and applied: `t1` clears 150 then 120 against a 200
+  scalar, both reach the log, **both rows have `skipped_reason is None`**, the
+  seat reports `-70.00` and the flag, and a second `apply_observations` is a
+  no-op rather than a duplicate pick.
+- `test_a_refusal_that_survives_still_burns_its_row_permanently` — the control,
+  and it is the one that makes the first mean anything. `[None, None]` above is
+  equally consistent with "the burn stopped catching this" and "the burn never
+  worked". So a **still-live** refusal (`draft_roster_full`, `roster_size=2`,
+  three purchases) is driven, watched to burn, and watched to **stay burned
+  across a re-ingest**. Its assertion carries a message saying that if it ever
+  goes green the test above stops excluding what it claims to.
+
+Filed as `draft-feed-burned-row-recovery` (new backlog item, `pending`). Rows
+burned before today are **not** recovered and I did not attempt it.
+
+### The consumer trace: inherited, and the two load-bearing claims spot-checked
+
+I re-grepped rather than trusting the handover, because branches had landed since.
+`userscript/` still has **zero** matches for the field — confirmed. `DraftSeats.tsx`
+did render `$-300.00` beneath *"left, of sales recorded"*, which is legible and
+false in the one word that matters. Fixed: a flagged seat now reads `$300.00 over`
+under *past the budget this tool assumed*, plus a note (`seat-over-budget-N`,
+present only when flagged, like the existing live-bid caveat) saying the
+assumption is wrong rather than the sale and that **no pick is missing**. The
+magnitude is a sign-strip on the backend's own string, not a parse-and-reformat,
+so `renders money byte-identically to what the backend sent` still holds.
+
+Also retired, because the backend can no longer emit the code: the
+`draft_budget_exceeded` copy in `draftErrors.ts`, the `budget-exceeded` entry in
+`draft-refusals.recorded.json`, **and its capture in
+`scripts/capture_draft_fixtures.py`** — which the brief did not list and which
+would have failed loudly on the next `--check`, since `_refusal()` raises when a
+case stops refusing. That guard working is why I found it. The test that drove
+that fixture is replaced by one asserting the new rendering, keeping the
+`afterAll` set-equality in step. Three recorded state fixtures gained
+`over_assumed_budget`, derived from `remaining_budget` rather than hardcoded
+`false`.
+
+### Gates
+
+Backend: full `pytest` **2278 passed, 1 skipped, 0 failed** with every change in
+— re-run to completion, not inferred from the affected files. `ruff format
+--check` and `ruff check` exit 0; `mypy src tests` clean over 206 files.
+Frontend: `tsc --noEmit` clean, `eslint .` clean, `vitest run` **324 passed**,
+`vite build` clean. `capture_draft_fixtures.py --check` — 9 payloads, **no
+drift**, which is also what confirms the new fixture key matches live output.
+`backlog_graph.py`, `check_doc_terminators.py`, `check_append_only.py` all exit
+0. The backlog header was **recounted from the merged file** by the tool (168
+items) rather than reconciled.
+
+### The one thing I found by writing the test rather than by reading
+
+`test_over_assumed_budget_never_disagrees_with_remaining_budget` was green in its
+first draft and **green for the wrong reason on the snake leg.** It sent
+`amount: None` on a `pick`, which the discriminated request model refuses as
+`extra_forbidden`; the POST 422'd, nothing was recorded, and the identity loop
+then ran over four untouched seats and held trivially on four `False`s. It never
+reached the branch it exists for.
+
+I only caught it because I went back and added `assert written.status_code == 201`
+and a flagged-count assertion pinned per draft type — i.e. by converting *"does
+not contradict"* into *"reaches"*, which is the finding
+`DraftPage.recorded.test.tsx`'s own docstring is built on. The failure is now
+recorded in the test's docstring so the next person to touch it knows why the
+write is asserted.
+
+### The rebase found three more things, and two were invisible to the suite
+
+Main moved twice while I was running gates — `5c365cf` to `dc0e7dd`, carrying
+#120's category work — and the rebase invalidated part of my own verification.
+Worth recording because two of the three were **green in the test run**:
+
+1. **`draft-auction-resolved-state.recorded.json` is a new fixture that predates
+   the field.** `isDraftParticipant` now requires `over_assumed_budget`, so the
+   guard refused the payload and seven tests failed with `invalid_response`.
+   Loud, caught immediately, and the guard behaving exactly as intended.
+2. **`openapi.recorded.json` was a stale contract recording.** Nothing failed.
+   `openapiEnums.recorded.test.ts` partitions *enums*, and a new boolean property
+   is not an enum, so the document silently stopped describing the API. I diffed
+   the served document against the recording leaf by leaf first — **3 added, 0
+   removed, 0 changed, all three mine** — and only then re-recorded, so the
+   refresh is surgical rather than a blind snapshot that could have absorbed
+   inherited drift. The re-record script verified the committed formatting by
+   round-tripping the existing file before writing, so it would have refused
+   rather than commit an 88 KB reformat as though it were a content change.
+   **That file has no capture script and no drift check**, unlike the draft
+   fixtures; refreshing it is a manual act its own test docstring names as a
+   real limit. Worth a `capture_draft_fixtures.py`-style `--check`, not filed.
+3. **`leagueCategoryModel.test.ts` builds a `DraftParticipant` literal**, which
+   stopped compiling. `vitest run` was green — it does not typecheck — so only
+   `tsc --noEmit` caught it. That is the third time in this lane that a green
+   suite meant less than it looked like.
+
+Everything was re-run after the rebase rather than assumed: the full backend
+suite, frontend build, lint and tests, the fixture drift check and all three doc
+gates. The backlog header was recomputed by `resolve_doc_conflicts.py` and then
+**independently confirmed** with `backlog_graph.py` rather than trusted.
+
+### What I could not verify
+
+- **That no *other* reader of `remaining_budget` misleads.** I re-grepped the
+  field across `frontend/`, `userscript/` and `docs/`, and spot-checked the two
+  claims the handover rested on. I did not re-derive the whole trace — no sort
+  keys, no `max()`/`min()`, no progress bars — that half is still inherited.
+- **That `$300.00 over` is the rendering the owner wants.** It is defensible and
+  it is not his call reported back to me. He has never seen a flagged seat,
+  because until today the sale that produces one was refused. Same for the
+  colour: I used `--pending` rather than `--warn` or `--error`, on the reasoning
+  that this is not a fault and must not borrow the vocabulary of one — and
+  `--warn` already means something else on a seat that can carry both notes at
+  once. That is an argument, not a decision he has made.
+- **Whether the `draft-tracker` -> `per-team-auction-budgets` edge should still
+  exist.** Its stated justification — "a recorded sale can be refused and the
+  player never added to the board" — is now false, and I corrected the claim. I
+  deliberately did **not** drop the edge: re-sequencing is `architect`'s call,
+  and silently removing a constraint while fixing the sentence holding it up is
+  the wrong half to do unilaterally.
+- **That the sign-strip is safe for every value the backend can emit.** It is
+  guarded on `startsWith('-')` and only ever runs when `over_assumed_budget` is
+  true, which the backend sets exactly when the value is negative. I did not
+  drive a negative that fails to start with `-`; I do not believe `Decimal`
+  serialisation can produce one.
+- **That the flagged seat renders acceptably at 12 seats on his actual screen.**
+  Every frontend assertion here is against the DOM. I did not bring the demo up
+  and look at it, and a note four lines long on one seat of twelve is the kind
+  of thing that reads fine in a test and crowds a board in practice.
+- **Anything about Postgres CI or the live smoke leg.** Not run locally;
+  `-m 'not live_smoke'` is in `addopts`.
+- **`.season-band` at `styles.css:1758` carries a 3px accent side-border** that
+  the design hook flags as a generated-UI tell. It is pre-existing and unrelated
+  to this change, so I left it. I removed the equivalent border I had briefly
+  added to the over-budget seat rather than suppress the finding.

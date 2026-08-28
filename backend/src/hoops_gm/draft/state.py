@@ -19,6 +19,33 @@ validate: :mod:`hoops_gm.draft.service` appends a candidate event, re-derives,
 and refuses if derivation refuses. One rule instead of a validator per event
 type that has to be kept in step with the reader.
 
+**Why spending past the budget is not a refusal.** It used to be, at three call
+sites, and it was wrong. ``Draft.auction_budget`` is a **single scalar for the
+whole draft** — ``DraftParticipant`` has no budget column — and the owner's
+league sets each seat's bank from last season's final totals, so the scalar is
+wrong for most seats by construction. The refusal in ``_apply_sale`` sat three
+lines above ``board.add``, so a seat with a larger real bank lost its winning
+bids from the moment its spend passed our assumption, and the board silently
+lacked a player it had watched being sold.
+
+**A recorded sale above the assumed budget means our assumption is wrong, not
+that the sale did not happen.** This module records what happened; it does not
+adjudicate whether it was legal. So the sale is admitted, ``remaining_budget``
+is allowed to go negative, and ``ParticipantState.over_assumed_budget`` reports
+the condition as a first-class flag. That is ADR-014's shape — a read detects a
+moved cohort rather than locking to prevent one — and it makes the tool's own
+wrong assumption visible instead of making a real draft invisible.
+
+The refusal was removed from the **bid** and **nomination** paths too, not only
+the sale. Keeping it there would refuse the recorder as he types the bid and
+accept him as he types the sale that follows it, and ``derive_state`` refuses on
+the first event it cannot apply — so a refused bid is a bid the log can never
+hold at all.
+
+Restoring a *real* per-seat limit is ``per-team-auction-budgets`` Route A: a
+budget column on the seat, which needs a migration and a source for the
+per-seat figures. This is Route B, and it is deliberately reversible.
+
 **Corrections are tail-first, and that is a limit rather than a design.** A
 correction is a ``void`` event, so nothing is ever deleted or edited. Voiding
 the most recent event always works. Voiding an *older* one replays everything
@@ -36,7 +63,7 @@ read off this module.
 
 **What is not here.** No dollar value, no inflation, no max bid, no
 recommendation, no ``p(play)``. The only arithmetic is addition of amounts a
-human watched clear, subtraction from a stated budget, and counting slots.
+human watched clear, subtraction from an *assumed* budget, and counting slots.
 ``auction-budget-manager`` owns the $1-per-unfilled-slot reserve and the max
 bid it implies; that is a decision number and it is deliberately absent, so the
 absence of a ``max_bid`` field here is a boundary rather than an oversight.
@@ -143,7 +170,32 @@ class ParticipantState:
     #: Auction only. ``budget - spent``, an identity over recorded facts. It is
     #: not a maximum bid: the reserve rule that turns this into one belongs to
     #: ``auction-budget-manager``.
+    #:
+    #: **This may be negative**, and a negative value is information rather
+    #: than an error — see ``over_assumed_budget`` immediately below.
     remaining_budget: Decimal | None
+    #: Auction only, and ``False`` in an ordered draft. True when this seat's
+    #: recorded spend has passed the budget this tool *assumed* for it.
+    #:
+    #: **It is a statement about our assumption, not about the seat.** The
+    #: budget is one draft-wide scalar (``Draft.auction_budget``, copied from
+    #: ``League``); ``DraftParticipant`` has no budget column, and the owner's
+    #: league sets budgets per seat. So this flag says "the figure beside this
+    #: seat is wrong, by ``-remaining_budget``", and the seat is the evidence.
+    #:
+    #: Published as a flag rather than left to be inferred from the sign of
+    #: ``remaining_budget`` so that a reader does not have to re-derive the
+    #: condition — a second derivation of the same fact is the defect shape
+    #: this package has paid for repeatedly.
+    #:
+    #: Carries the same caveat ``spent`` does: it counts **recorded sales
+    #: only**, so a seat sitting on a live high bid that would take it past the
+    #: assumption is not flagged until that lot clears.
+    #:
+    #: ``False`` rather than ``None`` in an ordered draft: a warning that reads
+    #: "unknown" where warnings do not apply is worse than one that reads
+    #: "no", and there is genuinely no assumption to have passed.
+    over_assumed_budget: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,14 +475,6 @@ def _apply_nomination(
     _refuse_if_board_full(board, fmt.total_roster_slots, event.sequence)
     key = _player_key(label)
     board.refuse_if_taken(key=key, player_id=event.player_id, label=label, sequence=event.sequence)
-    if event.amount is not None:
-        _refuse_if_over_budget(
-            amount=event.amount,
-            participant=participant,
-            fmt=fmt,
-            board=board,
-            sequence=event.sequence,
-        )
     return OpenLot(
         nomination_sequence=event.sequence,
         player_id=event.player_id,
@@ -446,21 +490,8 @@ def _apply_nomination(
     )
 
 
-def _refuse_if_over_budget(
-    *,
-    amount: Decimal,
-    participant: RecordedParticipant,
-    fmt: AuctionDraftFormat,
-    board: _Board,
-    sequence: int,
-) -> None:
-    remaining = fmt.auction_budget - board.spent_by(participant.id)
-    if amount > remaining:
-        raise DraftLogError(
-            "draft_budget_exceeded",
-            f"{participant.display_name} has {remaining} left and this is {amount}.",
-            sequence=sequence,
-        )
+# There is deliberately no ``_refuse_if_over_budget`` here any more. See the
+# module docstring, "Why spending past the budget is not a refusal".
 
 
 def _apply_bid(
@@ -490,9 +521,6 @@ def _apply_bid(
             sequence=event.sequence,
         )
     _refuse_if_roster_full(board, participant, fmt.roster_size, event.sequence)
-    _refuse_if_over_budget(
-        amount=amount, participant=participant, fmt=fmt, board=board, sequence=event.sequence
-    )
     return OpenLot(
         nomination_sequence=open_lot.nomination_sequence,
         player_id=open_lot.player_id,
@@ -561,9 +589,6 @@ def _apply_sale(
     _refuse_if_board_full(board, fmt.total_roster_slots, event.sequence)
     _refuse_if_roster_full(board, participant, fmt.roster_size, event.sequence)
     board.refuse_if_taken(key=key, player_id=player_id, label=label, sequence=event.sequence)
-    _refuse_if_over_budget(
-        amount=amount, participant=participant, fmt=fmt, board=board, sequence=event.sequence
-    )
     board.add(
         participant_id=participant.id,
         key=key,
@@ -680,6 +705,7 @@ def derive_state(
             remaining_budget=(
                 budget - board.spent_by(participant.id) if budget is not None else None
             ),
+            over_assumed_budget=(budget is not None and board.spent_by(participant.id) > budget),
         )
         for participant in sorted(participants, key=lambda seat: seat.team_slot)
     )

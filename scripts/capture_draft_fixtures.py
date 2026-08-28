@@ -162,15 +162,13 @@ def capture_refusals(tmp: Path) -> dict[str, dict[str, Any]]:
             {"event_type": "bid", "participant_id": seat, "amount": "100.00"},
         )
 
-    with _client(tmp, "budget-exceeded") as c:
-        state = c.get(f"/api/v1/drafts/{AUCTION_DRAFT}").json()
-        seat = state["participants"][0]["id"]
-        _open_a_lot(c, seat, "Unaffordable Nominee")
-        out["budget-exceeded"] = _refusal(
-            c,
-            AUCTION_DRAFT,
-            {"event_type": "sale", "participant_id": seat, "amount": "999"},
-        )
+    # There is deliberately no "budget-exceeded" capture here any more. It drove
+    # a sale above the draft-wide `auction_budget` scalar and recorded the
+    # `draft_budget_exceeded` refusal it produced. That refusal is gone: the
+    # scalar is wrong for most seats by construction, so refusing the sale threw
+    # away a pick that really happened. The backend now admits it and flags
+    # `over_assumed_budget` on the seat. Driving the case here would trip
+    # `_refusal`'s own guard, which is the guard working.
 
     with _client(tmp, "unknown-participant") as c:
         state = c.get(f"/api/v1/drafts/{AUCTION_DRAFT}").json()
@@ -181,8 +179,8 @@ def capture_refusals(tmp: Path) -> dict[str, dict[str, Any]]:
             {"event_type": "sale", "participant_id": 999, "amount": "5.00"},
         )
 
-    if len(out) != 7:
-        raise AssertionError(f"captured {len(out)} refusals, expected 7")
+    if len(out) != 6:
+        raise AssertionError(f"captured {len(out)} refusals, expected 6")
     return out
 
 

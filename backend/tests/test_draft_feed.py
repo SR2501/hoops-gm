@@ -5536,3 +5536,141 @@ def test_the_official_path_surfaces_a_refused_identity_too(session: Session) -> 
     status = feed_service.feed_status(session, draft)
     assert dict(status.skipped) == {"player_external_id_unreadable": 1}
     assert status.observation_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Round ten: the burn, driven rather than reasoned about.
+# ---------------------------------------------------------------------------
+
+
+def test_a_sale_past_the_assumed_budget_is_applied_rather_than_burned(session: Session) -> None:
+    """Excludes: a real pick vanishing because our budget scalar is wrong.
+
+    **The two questions are different, and only one of them was ever answered.**
+    That a sale above the assumed budget now *derives* is injection, and
+    ``test_draft_tracker`` covers it. This test covers reversion on the path the
+    owner's draft actually runs on: a capture, ingested, applied. That path had
+    a second consequence nobody had driven — it was established by grep and by
+    reading, which is exactly the "unexamined inheritance" this repository keeps
+    finding defects in.
+
+    **The consequence.** ``apply_observations`` files a ``DraftLogError`` into
+    ``row.skipped_reason`` (service.py, the ``except DraftLogError`` branch),
+    and ``pending`` is filtered on ``skipped_reason IS NULL``. Nothing in the
+    package assigns ``skipped_reason = None`` anywhere. So a refusal did not
+    merely skip the row for this run — it **burned it permanently**, and
+    re-ingesting the identical capture deduped against the burned row instead of
+    retrying it. The pick was unrecoverable short of typing it by hand, which is
+    precisely the thing the feed exists to stop him doing.
+
+    ``t1`` here clears 150 and then 120 against a 200 scalar. Both are real
+    sales; the scalar is the thing that is wrong.
+    """
+    league = _league(session, draft_type=DraftType.AUCTION, budget=Decimal("200.00"))
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "winningBid": 150},
+            {"teamId": "t1", "playerName": EDWARDS, "winningBid": 120},
+        ],
+        dedupe_key="over-assumed-budget",
+    )
+    feed_service.ingest(session, draft)
+
+    outcome = feed_service.apply_observations(session, draft)
+
+    # Both reached the board. Before this change the second raised
+    # ``draft_budget_exceeded`` and never got as far as ``board.add``.
+    assert outcome.halted is None
+    assert [event.player_label for event in outcome.applied] == [JOKIC, EDWARDS]
+    assert [event.player_label for event in draft_service.load_events(session, draft)] == [
+        JOKIC,
+        EDWARDS,
+    ]
+
+    # And no row was burned, which is the half that could not be undone.
+    rows = feed_service.load_observations(session, draft)
+    assert [row.skipped_reason for row in rows] == [None, None]
+    assert all(row.applied_event_sequence is not None for row in rows)
+
+    # The tool reports its own wrong assumption instead of hiding a real draft.
+    state = draft_service.load_state(session, draft)
+    seat = {each.participant.team_slot: each for each in state.participants}[1]
+    assert seat.spent == Decimal("270.00")
+    assert seat.remaining_budget == Decimal("-70.00")
+    assert seat.over_assumed_budget is True
+
+    # A second run is a no-op rather than a second pick: the rows are linked,
+    # not re-applied. Asserted because "not burned" and "not duplicated" are
+    # different properties and this change could have traded one for the other.
+    again = feed_service.apply_observations(session, draft)
+    assert list(again.applied) == []
+    assert len(draft_service.load_events(session, draft)) == 2
+
+
+def test_a_refusal_that_survives_still_burns_its_row_permanently(session: Session) -> None:
+    """The mechanism the test above escapes, driven so it is not taken on trust.
+
+    Without this, ``[None, None]`` up there is consistent with two very
+    different worlds: one where ``draft_budget_exceeded`` stopped reaching the
+    burn, and one where the burn never worked at all. Only the second is
+    excluded here, and it is excluded by watching a *different*, still-live
+    refusal burn a row and stay burned across a re-ingest.
+
+    ``draft_roster_full`` is the vehicle: ``roster_size`` is 2, so ``t1``'s
+    third purchase cannot be recorded. That refusal is correct and stays — it
+    is a fact about a format the draft was created with, not about a scalar we
+    guessed.
+
+    **This is also a live defect, and it is not mine to fix here.** The burn is
+    permanent for every surviving refusal, so a row skipped for a reason the
+    owner then resolves by hand never returns to ``pending``. Route B removed
+    the worst input to it. Filed rather than fixed.
+    """
+    league = _league(
+        session,
+        fantrax_league_id="LG-BURN",
+        draft_type=DraftType.AUCTION,
+        budget=Decimal("500.00"),
+    )
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "winningBid": 10},
+            {"teamId": "t1", "playerName": EDWARDS, "winningBid": 10},
+            {"teamId": "t1", "playerName": HALIBURTON, "winningBid": 10},
+        ],
+        dedupe_key="roster-full-burn",
+        league_id="LG-BURN",
+    )
+    feed_service.ingest(session, draft)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert [event.player_label for event in outcome.applied] == [JOKIC, EDWARDS]
+
+    burned = [row for row in feed_service.load_observations(session, draft) if row.player_label]
+    third = next(row for row in burned if row.player_label == HALIBURTON)
+    assert third.skipped_reason is not None
+    assert third.skipped_reason.startswith("draft_roster_full")
+    assert third.applied_event_sequence is None
+
+    # The permanence. Re-ingesting the identical capture and re-applying does
+    # not retry it, because ``pending`` filters on ``skipped_reason IS NULL``
+    # and nothing ever sets it back to ``None``.
+    feed_service.ingest(session, draft)
+    retry = feed_service.apply_observations(session, draft)
+    assert list(retry.applied) == []
+    still = next(
+        row
+        for row in feed_service.load_observations(session, draft)
+        if row.player_label == HALIBURTON
+    )
+    assert still.skipped_reason is not None, (
+        "If this is None the burn has been fixed elsewhere and the test above "
+        "no longer excludes what it claims to."
+    )
+    assert still.applied_event_sequence is None
