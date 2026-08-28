@@ -1759,7 +1759,7 @@ the owner has told us his league's budgets differ per team.
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *umbrella; the two landed halves are now `draft-tracker-persistence` and `draft-tracker-screen`, and only `draft-tracker-bridge-feed` is outstanding*
+- [ ] **pending** — *umbrella; eight of nine dependencies are done as of 2026-08-28 and the one outstanding is `per-team-auction-budgets`, which is a live defect rather than unbuilt work*
 - **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `per-team-auction-budgets`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
