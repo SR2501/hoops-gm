@@ -29434,3 +29434,388 @@ Corroborating, and explicitly not proving: 30 over 3 games is **10.0 observation
 **STILL NOT CLOSED, AND THE REASON MATTERS.** That per-date excess is canonical-minus-*direct*, so it mixes the three dropped games with ordinary exclusions on the same date; its agreeing with the gap at exactly 30 is corroboration, not identity. No committed artifact publishes the manifest's canonical count for 2025-11-19, which is the one number that would settle it. `cohort-canonical-count-reconciliation` stays open with that named as the remaining step.
 
 **The pattern is the point.** The item records that the *first* mechanism offered "was killed by **implausibility, not by verification**". The second was killed the same way - by reading an era off a field nobody re-checked was the right field. Two artifacts, two documents and one backlog item carried the error, and it survived because *the shape of the claim was right*: there really are exactly three dropped games, they really do differ from the census, and a date really was cited. **Validation of form cannot catch errors of meaning**, and a field name is a self-describing value like any other.
+## 2026-08-27 - frontend - league-category-table: every seat ranked 1-to-N, and the one number I refused to invent
+
+The owner named this twice, unprompted, in Q4 and Q9 of
+`docs/what-draft-day-looks-like.md`, and it had no backlog item until this
+commit. It is now `/draft/:draftId/categories`, linked from the draft board.
+
+### The decision the whole unit turns on
+
+**Q9 asks for "expected performance". I did not build expected performance, and
+that is deliberate rather than a shortfall I am hiding.**
+
+Expected performance is per-game production fused with expected games played.
+ADR-002 permits that fusion at exactly one seam - `expected-games` - and that
+seam does not exist; neither does `p(play)`. The projections route publishes
+`source_games_played_assumptions`, and its own docstring says why that array is
+not the loophole: for a season-total source the assumption is the exact divisor
+the importer used, so `rate x assumption` reconstructs the source's published
+season total. Joining it *is* the forbidden fusion, dressed as a join.
+
+So the screen ranks seats on **the sum of the per-game rates the source
+published for the players each seat holds**, and says so in its own paragraph
+above the table. The entire page is `+` and `/` over published fields, with no
+fitted parameter, no weighting, no spread and no distribution - which is what
+keeps it behind the **Code gate**. A held-out backtest of "the sum of a list of
+numbers" would report nothing, because there is no calibration question to ask.
+The moment someone adds a weight or an availability adjustment, that stops being
+true and this becomes a Model-gate unit.
+
+`leagueCategoryModel.ts` does not import the assumption type at all. That is the
+structural half; `CategoriesPage.recorded.test.tsx` is the behavioural half, and
+it checks two families of forbidden value - the per-player product **and the
+seat-level sum of those products**, which is what "expected performance" would
+actually be.
+
+### What I found by opening the page rather than by testing it
+
+**The lede rendered "ranked 1-to-0".** It interpolated `rankedSeatCount` into a
+range, and on the seeded demo that count is zero, so the first sentence a reader
+meets read like a bug. Every test was green. Now pinned by
+`does not say "ranked 1-to-0" when nothing can be ranked`.
+
+### Three things that were true and that I expected not to be
+
+1. **Every holding in the seeded demo carries `player_id: null`.** All three
+   committed draft fixtures, and the live seed: `unresolved_player_count` is 7,
+   12 and 7. `seed_demo` invents draft names and the identity crosswalk matches
+   none of them, so **the all-unranked board is the state a first-time reader
+   actually meets**, not an edge case. The screen names it, counts it, and
+   explains that nothing is matched by name - a browser guessing which
+   projection row a typed name meant would attribute one player's rates to
+   another and rank a seat on them.
+2. **The demo's drafts are not in the league that has projections.** Drafts sit
+   in leagues 2 and 3; `SchedulePage` and `ProjectionsPage` hardcode
+   `LEAGUE_ID = 1`. A fourth screen copying that constant would have joined a
+   league-2 draft against a league-1 cohort and ranked seats on another league's
+   players with nothing on screen looking wrong. This page reads
+   `state.league_id`, and a test asserts it requests league 2 and not league 1.
+3. **No endpoint publishes the league's scoring categories.** Nineteen paths in
+   the served OpenAPI document, none of them league scoring configuration. The
+   nine categories are a frontend constant sourced from
+   `docs/league/2025-26-rules-baseline.md`, which calls itself *"Historical
+   reference only. Not verified for 2026-27."* That is the least-defended claim
+   on the screen and the screen says so, with the file path, in the key.
+   `league-settings-ingest` is what closes it.
+
+### A contract drift nothing was positioned to catch
+
+`frontend/src/api/draftTypes.ts` declared
+`DraftToolUsage = 'blind' | 'assisted' | 'tool_led'`. The served OpenAPI enum is
+`blind, partial, instrumented`. **Two of the three values were wrong and 362
+tests were green**, because every committed fixture carries `blind` - the one
+value both spellings share - and `DraftPage` renders the field verbatim inside a
+`<code>`, so even a `partial` draft would have *displayed* correctly.
+
+It surfaced only because a `POST /drafts` was refused with a `422` naming the
+real enum. **The read path cannot see this class of defect at all**: a union too
+narrow on the receiving side is invisible until a value outside it arrives, and
+no recorded fixture carried one. Fixed, and the new fixture carries `partial`
+specifically so the old spelling can no longer come back green.
+
+### Percentage categories
+
+`Sigma made / Sigma attempted` across the seat, never a mean of player
+percentages, with the attempt volume drawn beside every ratio. That is
+volume-weighted by construction - a 90%-on-one-attempt shooter contributes 0.9
+to the numerator and 1.0 to the denominator and moves the seat by almost
+nothing - and it is also exactly what an H2H category is scored on. The test
+that pins it asserts 51.9% for a case where the mean-of-percentages bug gives
+70%, so a test asserting the bug would be visibly asserting it.
+
+### Gate evidence
+
+Lint, `tsc --noEmit`, `vite build` and 369 tests green. 45 new tests across
+`leagueCategoryModel.test.ts` (24), `CategoriesPage.recorded.test.tsx` (14) and
+`CategoriesPage.test.tsx` (7). New fixture
+`draft-auction-resolved-state.recorded.json`, captured as raw bytes via
+`HttpClient.GetByteArrayAsync` to `File.WriteAllBytes` with no serialiser in
+between.
+
+**15 mutations, 15 caught by the test whose name claims to establish the
+property, 0 escaped, tree reverted to original bytes and green afterwards.** The
+harness asserts the anchor is present before mutating and reports a stale anchor
+as a **failure** - which earned its place immediately: the first run reported
+four `ANCHOR MISSING` because the tree is CRLF and my anchors were LF. Four of
+fifteen mutations had silently not applied. A harness that scored those as skips
+would have reported 11/11 caught and looked complete.
+
+The recorded ADR-002 detector has a **tripwire test**: it plants a known
+forbidden product in the rendered DOM and asserts the detector finds it, then
+removes it and asserts green again. Without that, `[]` from a detector looking
+in the wrong place is indistinguishable from `[]` from a clean screen. Its first
+version also reported **fifteen false violations** - it did not know the screen
+renders a stored `0.4456` as `44.6`, so a per-player season total of 44.5 blocks
+collided with a drawn percentage. A check that cries wolf on a correct screen
+gets loosened by whoever meets it next, so the fix was to teach it the displayed
+forms rather than to widen the tolerance.
+
+### A layout defect only a narrow real browser found
+
+At 900px the **document** scrolled sideways instead of the table, which takes
+the sticky team column off screen with it - and the team column is the one thing
+that must stay put while a reader scans nine categories. Cause:
+`.shell__main` is a CSS grid item, a grid item's `min-width` defaults to
+`auto`, and `auto` means "never narrower than my min-content width". The
+eleven columns' `min-width` values summed past the window, so the `1fr`
+track refused to shrink and the `overflow: auto` wrapper never became the
+thing that overflowed.
+
+**It surfaced because the probe measured something that could disagree with
+itself.** `documentOverflowsHorizontally: true` beside
+`tableFitsViewportWidth: true` is a contradiction if you believe the wrapper
+is the scrollport, and reading the pair is what named the cause. A probe
+reporting only "the table fits" would have passed.
+
+`stickySeatColumnHeldAfterScroll` had read `null` at every viewport and I
+had written that down as an untested gap. **It was not a gap in coverage; it was
+the defect reporting itself as an absence** - the wrapper never had horizontal
+overflow, so there was no scroll for the sticky column to survive. Worth
+recording: a probe field that is persistently `null` is a finding, not a
+missing measurement, and I nearly shipped it as the latter.
+
+Fixed with `min-width: 0` scoped by `:has(.page--categories)` rather than
+applied to `.shell__main`, because every screen is a grid item and the
+schedule grid is far wider than this one - the general fix is a layout change to
+seven screens nobody has measured. Before and after at 900px:
+`documentOverflowsHorizontally` true -> false,
+`stickySeatColumnHeldAfterScroll` null -> true, and `--differs-from`
+confirmed the two readings differ. 1440x900 and 1366x768 unchanged except that
+the document no longer overflows.
+### What I could not verify
+
+- **That the ranking is useful.** Everything above establishes that the numbers
+  are the ones I claim they are. It establishes nothing about whether ranking
+  seats on an availability-blind, depth-unadjusted sum helps him at a live
+  auction. Only he can say, and the honest test is a mock draft.
+- **That it is readable at a full board.** 48 of 156 slots, 12 seats, measured
+  at 1440x900, 1366x768 and 900x700. Nothing here says the table works at 156
+  filled slots, at a longer team name, or on the external monitor he actually
+  uses.
+- **That the nine categories are this league's nine.** They are 2025-26's,
+  unverified for 2026-27, and there is no endpoint to check them against.
+- **That the demo distribution resembles anything.** The seat sizes
+  (8, 6, 6, 6, 4, 4, 4, 4, 2, 2, 2, 0) were chosen to exercise paths. Only the
+  player names are real; every rate is invented by `seed_demo`, which says so.
+- **The sparse-rate path against a recording.** Every rate in the Basketball
+  Monster cohort is non-null by construction - a row missing a required rate is
+  rejected rather than stored - so `omittedPlayers` is never non-zero in the
+  fixture and the `-n` marker has never rendered outside a hand-built payload.
+- **That `DraftPage`'s identical bug is harmless.** It fires
+  `GET /api/v1/drafts/NaN` on a malformed id before drawing the refusal. I
+  inherited the shape, caught it in my own page with a test asserting no request
+  was made, and fixed it there by splitting the component. **I did not fix it on
+  the draft board**, because that fetcher carries the bundle-identity comparison
+  the polling skip depends on and I was not willing to disturb it unreviewed
+  under a deadline. Filed as `draft-page-invalid-id-request`.
+- **Whether a separate route was the right call.** Q4 wants this while he is
+  nominating, and a second tab is a context switch. I chose a route over a panel
+  because a 12x9 table wants width the draft board has already lost an argument
+  about, and because it keeps `DraftPage`'s "this screen recommends nothing"
+  sentence true. He may want it embedded; that is his call, not mine.
+
+## 2026-08-27 - frontend - the rebase that found a duplicate item, and two follow-ups to the enum drift
+
+Rebasing #120 onto `431cc71` (#118). Three findings, one of which the header
+count would have hidden.
+
+### A green CI run on a base that no longer existed
+
+`check_ci_gates.py` returned exit 0 on `910dfc5`. The exit code was honest and
+the question was wrong: `main` had moved to `431cc71` and my branch did not
+contain it, so the run described a merge that could not happen -
+`mergeable: CONFLICTING`. **Pair the gate read with
+`git merge-base --is-ancestor <main> <head>`;** neither answers the other's
+question, and a green on a superseded base is the same non-event as `CLEAN`
+with zero runs.
+
+### The item count was right and the file was still wrong
+
+After resolving the item-block conflict by keeping both sides, `docs/backlog.md`
+had exactly the 168 `###` headings arithmetic predicted - and **two of them were
+the same item**. #118 filed `league-category-table` the same night I built it,
+independently, from the same page of the owner's words.
+
+A count cannot see that, and the count is the thing this file guards most
+carefully. `scripts/backlog_graph.py` does check uniqueness and would have
+caught it, but only after I had already read 168 and believed the merge was
+clean. **The heading count agreeing with the header is not evidence the merge
+was correct**; it is evidence about one property, and duplicate-name is a
+different one.
+
+### The resolution, and why it is not "mark it done"
+
+#118's acceptance criterion is *"a rank 1-to-N in each of the nine categories
+**on expected performance**"*. What I built does not meet it and does not claim
+to. Its own prose is the ruling I had independently obeyed: *"a per-game-rate
+table is a legitimate intermediate and must be labelled as a rate table, never
+as expected performance."*
+
+So the item is **split**, not merged: `league-category-rate-table` is marked
+done for what actually shipped, and `league-category-table` stays **pending
+behind `expected-games`** with a note recording what landed and what remains.
+Marking the original done would have been a well-formed false claim in the file
+that exists to prevent them, and it would have silently discharged a real
+`expected-games` edge.
+
+Two lanes reaching the production-versus-availability distinction separately, on
+the same night, from the same source page, is worth more than either statement
+of it.
+
+### `resolve_doc_conflicts.py` rewrote line endings again
+
+`docs/backlog.md` went from 3,133 CRLF to 0 CR in the working tree while the
+tool printed `Safe to stage.` **It is harmless here and the mechanism is worth
+writing down rather than the reassurance:** `core.autocrlf=true`, so the
+committed blob was already LF and `git add` normalises either way -
+`check_append_only.py` confirms `CR in head blob: 0` against a base with 0. The
+line *count* also moved +2 while I removed 3 markers, which arithmetic does not
+explain and which I did not chase, because the answer to "did the merge come out
+right" is the content, not the delta: header `59 done - 1 blocked - 108 pending
+- 168 total` agrees with an independent grep of the status markers (59/1/108)
+and with `backlog_graph.py`'s own parse, all 14 of #118's items are present, and
+both of mine are.
+
+### Two follow-ups to the `tool_usage` drift
+
+**The generator, not the instance.** Nothing compared any declared TypeScript
+union to the OpenAPI enum it mirrors, and nothing could, because a bare
+`type X = 'a' | 'b'` is erased at build time. The four draft vocabularies are
+now runtime `as const` arrays with the types derived from them, and
+`openapiEnums.recorded.test.ts` compares each against a recorded `openapi.json`.
+
+It found a **second live drift** immediately: `DraftType` omitted `unknown`.
+That is the more consequential of the two - `draftBoardModel.ts` decides whether
+a board is an auction from that field, and `LeagueFormatDrift` carries a
+`DraftType` describing what the league row says now.
+
+The test **partitions** every enum in the document into mirrored or
+explicitly-not-modelled-with-a-reason, so a new backend enum fails rather than
+going unnoticed. A test listing the enums somebody remembered is the same defect
+one level up.
+
+**`draft-page-invalid-id-request`, taken after all.** I deferred it because
+`DraftPage`'s fetcher carries the bundle-identity comparison the polling skip
+depends on. The skip was already covered with a control; **the cross-draft ref
+keying was not**, and the split makes it load-bearing, because
+`DraftBoardLoader` stays mounted across a draft change so its ref survives. That
+gap is closed with a test where both logs report the same `last_sequence` -
+without `previous.draftId === draftId` the second draft's poll hands back the
+first draft's bundle.
+
+Its first version re-rendered `MemoryRouter` with new `initialEntries`, which
+are read only at mount, so it failed for a reason other than the one it was
+written to detect. Driven by a link click instead.
+
+### What I could not verify
+
+- **That the two backlog items are the right shape.** Splitting rather than
+  merging is my reading of #118's acceptance criterion. `architect` wrote that
+  item and may prefer one item with a partial status; I could not ask.
+- **That no other TypeScript union has drifted.** The new check covers the four
+  the frontend declares as closed vocabularies. `ExternalSource` and
+  `ScoringType` are carried as bare strings and are listed as deliberately
+  unmodelled, so a drift in either is invisible to it by construction.
+- **That the recording stays true.** `openapi.recorded.json` is a snapshot from
+  a local backend. This catches a frontend union drifting from the document, and
+  a backend enum change **only once somebody re-records** - the `tool_usage`
+  drift itself would have been caught at the next refresh and not before.
+  Closing that means generating the document in CI from the backend package,
+  which is a cross-owner change rather than a test.
+- **That the +2 line delta in `backlog.md` is benign.** Every content check
+  passes and I stopped there.
+
+## 2026-08-28 - frontend - the scope of the question, and the backlog header as a merge-queue mutex
+
+Two observations from rebasing #120 three times in one night. Neither is a
+defect in anyone's work; both are structural and invisible inside a single PR.
+
+### I reported a green that was true and answered the wrong question
+
+I wrote "lint, build and 380 tests green" and it was accurate - of the
+**frontend** suite. This branch's diff touches four gate families:
+
+    git diff --name-only origin/main...HEAD | ...
+      backend: 1   docs: 2   frontend: 15   scripts: 1
+
+The single backend file is `backend/tests/test_resolve_doc_conflicts.py`, and
+it is the one file I never ran the backend formatter against. CI failed on
+`ruff format --check` for a blank line and a one-line assert. The tooling was
+fine; **the scope of the question was wrong** - I ran the gates for the area I
+believed I was working in, while the diff had quietly crossed into another.
+
+The coordinator points out this was the most recurrent failure of the night
+across three other lanes: one grepped a single file and missed a second
+carrier, another grepped inside one function and could not see callers
+elsewhere. Same shape each time.
+
+**The cheap guard, which I have adopted and recommend: derive the gates from
+the diff, not from the work's self-image.** `git diff --name-only
+origin/main...HEAD`, map the top-level directories to CI jobs, run those. It is
+one command and it is mechanical, which is the point - "remember to also run
+the backend gates" is advice, and advice is what failed here.
+
+### `docs/backlog.md` is a global mutex on the merge queue
+
+**The mechanism, so it can be checked rather than taken on faith.** Every unit
+in this project edits `docs/backlog.md`. Its header is a *derived count* over
+the whole file, so any merge that adds or completes an item invalidates the
+header on every other open branch - and a header conflict is not
+auto-resolvable, because neither side is a usable input (each was computed
+before the other lane's items landed). So N ready PRs cost N **sequential**
+rebases, each carrying a recount that must be done correctly at whatever hour
+it lands. #120 paid it three times: `d33c0d1`, then `431cc71`, then `2ff50ff`,
+then `5c365cf`.
+
+Measured rather than asserted: on the third rebase, `backlog.md` merged
+**cleanly** and its header was correct only because #119 happened to add zero
+net items. That is luck, and a clean auto-merge is exactly the case where
+nobody re-checks. `backlog_graph.py` would have caught it - but only after I
+had read "no conflict" and believed it.
+
+**A second cost that is easy to miss.** The recount is not the whole tax. On the
+second rebase the item bodies conflicted too, and keeping both sides produced a
+file with exactly the 168 headings arithmetic predicted, **two of which were the
+same item** - #118 had filed `league-category-table` the same night I built it.
+The count agreed with itself while the file was wrong, because a count cannot
+see a duplicate name. The header discipline is sound and it defends one property
+only.
+
+**My view, since it was asked for, offered as a preference and not a
+recommendation to act on tonight.** The header is the only part of the file that
+is *derived*, and it is the only part that conflicts. Everything else merges
+because it is append-structured. So the smallest honest change is to **stop
+storing it**: delete the count from the file, and have `backlog_graph.py` print
+it. CI already recomputes it on every push, `resolve_doc_conflicts.py` already
+recomputes it unconditionally, and no consumer needs it at rest - a reader who
+wants the number runs the tool that owns it. That removes the conflict entirely
+without touching the item format, without a migration, and without inventing per-item
+status files whose consistency would then need its own checker.
+
+**What that does not fix, and why I am not claiming more.** Two lanes editing
+*the same item* still conflict, which is correct and should. The duplicate-item
+class above is untouched by it. And "the count is visible when you open the
+file" has real value on a page whose whole purpose is to be the authoritative
+list - deleting it trades a merge cost for a legibility cost, and I do not think
+that trade is mine to make. `architect` owns it.
+
+If the answer is "leave it, the recount discipline works", that is defensible:
+the discipline **did** work all three times, and it works because the tooling
+refuses rather than guesses. The cost is real but it is paid in agent time on a
+night with a deadline, not in correctness.
+
+### What I could not verify
+
+- **That deleting the stored header is actually cheap.** I did not try it. I do
+  not know how many docs, scripts or CI jobs read line 5 of that file expecting
+  a count; `check_ci_gates.py` and `resolve_doc_conflicts.py` both touch it and
+  there may be others. The proposal is worth exactly as much as that unchecked
+  assumption.
+- **That three rebases is representative.** It is one branch on one night with
+  four lanes running. A quieter week may never pay this.
+- **That the diff-derived gate rule is sufficient.** It catches a *directory* I
+  did not think about. It would not catch a change that stays inside `frontend/`
+  and breaks a backend contract test, which is a real coupling this repository
+  has - the recorded fixtures are captured from the backend and live under
+  `frontend/src/test/fixtures/`.

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 import types
@@ -596,3 +597,57 @@ def test_writes_preserve_lf_and_do_not_flip_the_file_to_crlf(tmp_path: pathlib.P
         "every line of an append-only document and destroys the byte-prefix check"
     )
     assert written.count(b"\n") > 0, "the file should still have line endings at all"
+
+
+def test_the_recount_note_states_the_property_and_restates_no_count(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The note this tool writes must carry no integers.
+
+    It used to interpolate ``{len(headings)} `###` headings and {len(markers)}
+    markers``, which is a **second copy of the count**, in prose, in the one file
+    whose entire header discipline is that a second copy is stale on arrival.
+    ``backlog_graph.py`` checks only the header *line*, so the prose copy was
+    precisely the unguarded duplicate that file warns about.
+
+    The `demo-one-command` lane deleted exactly this restatement from
+    `docs/backlog.md` on 2026-08-23 and recorded why. **It fixed the artefact and
+    not the generator**, so this function put the numbers straight back on the
+    next conflict — observed on 2026-08-27, four days later, on a branch that had
+    never touched that prose. Fixing an instance and leaving the thing that
+    emits it is how a corrected file un-corrects itself.
+
+    The assertion is on **digits in the note**, not on the specific old wording.
+    A test pinning the old sentence would pass for any rephrasing that
+    reintroduced the numbers, which is the likelier regression: somebody adding
+    "(N items)" for helpfulness. AGENTS.md: *"Do not restate that count here or
+    anywhere else."*
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    backlog.write_text(
+        _backlog(
+            ITEM_A + "\n" + ITEM_B,
+            header="<<<<<<< HEAD\n**9 done - 9 blocked - 9 pending - 27 total**\n"
+            "=======\n**4 done - 0 blocked - 0 pending - 4 total**\n>>>>>>> other",
+        ),
+        encoding="utf-8",
+    )
+
+    module = _load(tmp_path)
+    module.resolve_backlog(backlog)
+    written = backlog.read_text(encoding="utf-8")
+
+    # Recomputed from the file, agreeing with neither conflicting side.
+    assert "**1 done - 0 blocked - 1 pending - 2 total**" in written
+    assert "27 total" not in written
+    assert "4 total" not in written
+
+    start = written.index("(Recomputed from the status markers")
+    note = written[start : written.index(")", start) + 1]
+    assert "1:1" in note, "the property is still stated"
+    # `1:1` is the *ratio* the note asserts, not a count of anything, so it is
+    # removed before the digit scan rather than carved out of the pattern - a
+    # pattern excusing digits around a colon would also excuse `169:169`.
+    assert not re.search(r"\d", note.replace("1:1", "")), f"the note restates a count: {note!r}"

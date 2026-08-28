@@ -21,11 +21,26 @@ export interface MockResponse {
   headers?: Record<string, string>
 }
 
+/**
+ * The URL a `fetch` argument denotes, resolved exactly as `mockFetch` resolves
+ * it for routing.
+ *
+ * Shared rather than repeated so an assertion about which URL was requested and
+ * the stub's own routing decision cannot disagree. `String(input)` is not a
+ * substitute: `RequestInfo` includes `Request`, which stringifies to
+ * `[object Object]`, and an assertion comparing that to a path would be false
+ * for a reason that looks like a failing feature.
+ */
+export function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
 /** Stub `fetch`, routing by URL substring. Unmatched requests fail loudly. */
 export function mockFetch(routes: Record<string, MockResponse | (() => never)>) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    const url = requestUrl(input)
     const match = Object.entries(routes).find(([path]) => url.includes(path))
 
     if (!match) {
