@@ -22,9 +22,39 @@
 /** Money, exactly as the backend serialised it. Never a `number`. */
 export type DecimalString = string
 
-export type DraftType = 'snake' | 'auction' | 'linear'
+/**
+ * The four closed vocabularies the draft API publishes, as **runtime arrays**
+ * with the types derived from them.
+ *
+ * Written this way for one reason: a bare `type X = 'a' | 'b'` is erased at
+ * build time, so nothing can compare it to anything. `DraftToolUsage` was wrong
+ * in **two of its three values** against a 362-test green suite, and the only
+ * thing that could have caught it — a comparison against the OpenAPI enum it
+ * mirrors — was impossible to write while the union existed only in the type
+ * system. `openapiEnums.recorded.test.ts` now performs exactly that comparison
+ * against a recorded `openapi.json`, and it can only do so because these are
+ * values.
+ *
+ * `as const` plus `(typeof X)[number]` keeps the type and the array in step by
+ * construction, so there is one definition rather than two that can drift.
+ */
+export const DRAFT_TYPES = ['snake', 'auction', 'linear', 'unknown'] as const
 
-export type DraftStatus = 'setup' | 'in_progress' | 'closed'
+/**
+ * `unknown` is on this list and was missing until 2026-08-27.
+ *
+ * Found by the same sweep that found the `tool_usage` drift, and it is the
+ * more consequential of the two: `draftBoardModel.ts` decides whether a board
+ * is an auction with `draft_type === 'auction'`, and `LeagueFormatDrift`
+ * carries a `DraftType | null` describing what the league row says *now*. A
+ * draft recorded under a format the ingest could not classify is exactly the
+ * case the backend added `unknown` for, and this build could not name it.
+ */
+export type DraftType = (typeof DRAFT_TYPES)[number]
+
+export const DRAFT_STATUSES = ['setup', 'in_progress', 'closed'] as const
+
+export type DraftStatus = (typeof DRAFT_STATUSES)[number]
 
 /**
  * Recorded, never inferred: whether this tool was on the recorder's screen.
@@ -36,13 +66,24 @@ export type DraftStatus = 'setup' | 'in_progress' | 'closed'
  * on, and `DraftPage` renders the field verbatim inside a `<code>`, so a
  * `partial` draft would have displayed correctly while being unassignable to
  * this type. Found by a `POST /drafts` that was refused with a `422` naming the
- * real enum, which is the only reason it surfaced at all: the read path cannot
- * see it. A `tool_usage` filter or badge map built against the old spelling
- * would have silently matched nothing.
+ * real enum, which is the only reason it surfaced at all: **the read path
+ * cannot see this class of defect**, because a union too narrow on the
+ * receiving side is invisible until a value outside it arrives.
  */
-export type DraftToolUsage = 'blind' | 'partial' | 'instrumented'
+export const DRAFT_TOOL_USAGES = ['blind', 'partial', 'instrumented'] as const
 
-export type DraftEventType = 'pick' | 'nomination' | 'bid' | 'sale' | 'void' | 'closed'
+export type DraftToolUsage = (typeof DRAFT_TOOL_USAGES)[number]
+
+export const DRAFT_EVENT_TYPES = [
+  'pick',
+  'nomination',
+  'bid',
+  'sale',
+  'void',
+  'closed',
+] as const
+
+export type DraftEventType = (typeof DRAFT_EVENT_TYPES)[number]
 
 /** The configuration a draft was recorded under, frozen at creation. */
 export interface DraftFormat {

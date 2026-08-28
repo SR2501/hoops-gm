@@ -79,8 +79,33 @@ interface DraftBundle {
 export function DraftPage() {
   const params = useParams<{ draftId: string }>()
   const draftId = Number(params.draftId)
-  const isValidId = Number.isInteger(draftId) && draftId > 0
 
+  // Split rather than guarded after the hook. Until 2026-08-27 the `useAsync`
+  // below ran unconditionally and this refusal was rendered afterwards, so
+  // `/draft/not-a-number` fired a `GET /api/v1/drafts/NaN` and then drew the
+  // error. The screen looked correct either way and the wasted request was
+  // visible only in the network log, which is why reading never found it; a
+  // test asserting *no request was made* did.
+  //
+  // The restructure is behaviour-preserving for the polling path because
+  // `DraftBoardLoader` mounts once for a valid id and stays mounted across a
+  // draft change, so `lastBundleRef` survives exactly as it did — which is why
+  // it is still keyed by draft id, and why that keying now has its own test.
+  if (!Number.isInteger(draftId) || draftId <= 0) {
+    return (
+      <article className="page">
+        <h1>Draft board</h1>
+        <p className="state state--error" role="alert">
+          <code>{params.draftId ?? '(none)'}</code> is not a draft id.
+        </p>
+      </article>
+    )
+  }
+
+  return <DraftBoardLoader draftId={draftId} />
+}
+
+function DraftBoardLoader({ draftId }: { draftId: number }) {
   // A tick, bumped by the timer and by every append, so one effect drives both
   // the scheduled re-read and the immediate one after a write.
   const [tick, setTick] = useState(0)
@@ -124,23 +149,11 @@ export function DraftPage() {
   )
 
   useEffect(() => {
-    if (!isValidId) return
     const timer = setInterval(refresh, POLL_INTERVAL_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [isValidId, refresh])
-
-  if (!isValidId) {
-    return (
-      <article className="page">
-        <h1>Draft board</h1>
-        <p className="state state--error" role="alert">
-          <code>{params.draftId ?? '(none)'}</code> is not a draft id.
-        </p>
-      </article>
-    )
-  }
+  }, [refresh])
 
   return (
     <article className="page page--draft">
