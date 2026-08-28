@@ -29614,3 +29614,114 @@ the document no longer overflows.
   because a 12x9 table wants width the draft board has already lost an argument
   about, and because it keeps `DraftPage`'s "this screen recommends nothing"
   sentence true. He may want it embedded; that is his call, not mine.
+
+## 2026-08-27 - frontend - the rebase that found a duplicate item, and two follow-ups to the enum drift
+
+Rebasing #120 onto `431cc71` (#118). Three findings, one of which the header
+count would have hidden.
+
+### A green CI run on a base that no longer existed
+
+`check_ci_gates.py` returned exit 0 on `910dfc5`. The exit code was honest and
+the question was wrong: `main` had moved to `431cc71` and my branch did not
+contain it, so the run described a merge that could not happen -
+`mergeable: CONFLICTING`. **Pair the gate read with
+`git merge-base --is-ancestor <main> <head>`;** neither answers the other's
+question, and a green on a superseded base is the same non-event as `CLEAN`
+with zero runs.
+
+### The item count was right and the file was still wrong
+
+After resolving the item-block conflict by keeping both sides, `docs/backlog.md`
+had exactly the 168 `###` headings arithmetic predicted - and **two of them were
+the same item**. #118 filed `league-category-table` the same night I built it,
+independently, from the same page of the owner's words.
+
+A count cannot see that, and the count is the thing this file guards most
+carefully. `scripts/backlog_graph.py` does check uniqueness and would have
+caught it, but only after I had already read 168 and believed the merge was
+clean. **The heading count agreeing with the header is not evidence the merge
+was correct**; it is evidence about one property, and duplicate-name is a
+different one.
+
+### The resolution, and why it is not "mark it done"
+
+#118's acceptance criterion is *"a rank 1-to-N in each of the nine categories
+**on expected performance**"*. What I built does not meet it and does not claim
+to. Its own prose is the ruling I had independently obeyed: *"a per-game-rate
+table is a legitimate intermediate and must be labelled as a rate table, never
+as expected performance."*
+
+So the item is **split**, not merged: `league-category-rate-table` is marked
+done for what actually shipped, and `league-category-table` stays **pending
+behind `expected-games`** with a note recording what landed and what remains.
+Marking the original done would have been a well-formed false claim in the file
+that exists to prevent them, and it would have silently discharged a real
+`expected-games` edge.
+
+Two lanes reaching the production-versus-availability distinction separately, on
+the same night, from the same source page, is worth more than either statement
+of it.
+
+### `resolve_doc_conflicts.py` rewrote line endings again
+
+`docs/backlog.md` went from 3,133 CRLF to 0 CR in the working tree while the
+tool printed `Safe to stage.` **It is harmless here and the mechanism is worth
+writing down rather than the reassurance:** `core.autocrlf=true`, so the
+committed blob was already LF and `git add` normalises either way -
+`check_append_only.py` confirms `CR in head blob: 0` against a base with 0. The
+line *count* also moved +2 while I removed 3 markers, which arithmetic does not
+explain and which I did not chase, because the answer to "did the merge come out
+right" is the content, not the delta: header `59 done - 1 blocked - 108 pending
+- 168 total` agrees with an independent grep of the status markers (59/1/108)
+and with `backlog_graph.py`'s own parse, all 14 of #118's items are present, and
+both of mine are.
+
+### Two follow-ups to the `tool_usage` drift
+
+**The generator, not the instance.** Nothing compared any declared TypeScript
+union to the OpenAPI enum it mirrors, and nothing could, because a bare
+`type X = 'a' | 'b'` is erased at build time. The four draft vocabularies are
+now runtime `as const` arrays with the types derived from them, and
+`openapiEnums.recorded.test.ts` compares each against a recorded `openapi.json`.
+
+It found a **second live drift** immediately: `DraftType` omitted `unknown`.
+That is the more consequential of the two - `draftBoardModel.ts` decides whether
+a board is an auction from that field, and `LeagueFormatDrift` carries a
+`DraftType` describing what the league row says now.
+
+The test **partitions** every enum in the document into mirrored or
+explicitly-not-modelled-with-a-reason, so a new backend enum fails rather than
+going unnoticed. A test listing the enums somebody remembered is the same defect
+one level up.
+
+**`draft-page-invalid-id-request`, taken after all.** I deferred it because
+`DraftPage`'s fetcher carries the bundle-identity comparison the polling skip
+depends on. The skip was already covered with a control; **the cross-draft ref
+keying was not**, and the split makes it load-bearing, because
+`DraftBoardLoader` stays mounted across a draft change so its ref survives. That
+gap is closed with a test where both logs report the same `last_sequence` -
+without `previous.draftId === draftId` the second draft's poll hands back the
+first draft's bundle.
+
+Its first version re-rendered `MemoryRouter` with new `initialEntries`, which
+are read only at mount, so it failed for a reason other than the one it was
+written to detect. Driven by a link click instead.
+
+### What I could not verify
+
+- **That the two backlog items are the right shape.** Splitting rather than
+  merging is my reading of #118's acceptance criterion. `architect` wrote that
+  item and may prefer one item with a partial status; I could not ask.
+- **That no other TypeScript union has drifted.** The new check covers the four
+  the frontend declares as closed vocabularies. `ExternalSource` and
+  `ScoringType` are carried as bare strings and are listed as deliberately
+  unmodelled, so a drift in either is invisible to it by construction.
+- **That the recording stays true.** `openapi.recorded.json` is a snapshot from
+  a local backend. This catches a frontend union drifting from the document, and
+  a backend enum change **only once somebody re-records** - the `tool_usage`
+  drift itself would have been caught at the next refresh and not before.
+  Closing that means generating the document in CI from the backend package,
+  which is a cross-owner change rather than a test.
+- **That the +2 line delta in `backlog.md` is benign.** Every content check
+  passes and I stopped there.
