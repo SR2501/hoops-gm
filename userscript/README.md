@@ -5,13 +5,17 @@ pages, pairs a backend-generated bridge secret into Tampermonkey storage on an
 explicit owner command, provides a loopback `GM_xmlhttpRequest` transport with a
 `/health` probe and an authenticated handshake, and **read-only captures**
 Fantrax's internal `/fxpa/req` responses for forwarding to the backend —
-automatically via page-world `fetch`/`XHR` hooks and a best-effort Cache
-Storage watcher, plus a conservative automatic rendered-view snapshot after
-initial load, SPA navigation, and settled page changes. An explicit manual
-page-state export remains the final fallback (see "Root cause #2" below).
+automatically via page-world `fetch`/`XHR` hooks, plus a conservative automatic
+rendered-view snapshot after initial load, SPA navigation, and settled page
+changes. An explicit manual page-state export remains the final fallback (see
+"Root cause #2" below). It also renders a small **status strip** reporting what
+it has already captured, because the bridge's failure mode is silence.
 Capture clones rather than mutates the Fantrax DOM, does not touch any other
-Fantrax endpoint, does not render an overlay, and does not execute any action.
-`bridge-overlay` and Phase 10 automation are separate, later work.
+Fantrax endpoint, and does not execute any action. The status strip is
+informational only — it carries no price, value, suggested bid or ranking, and
+cannot intercept a click. `bridge-overlay`, which renders recommendations and
+carries the Model gate with it, and Phase 10 automation are separate, later
+work.
 
 ## Install
 
@@ -181,21 +185,40 @@ patching `window.fetch`/`XMLHttpRequest` can only ever see requests page
 script itself issues, and structurally cannot see one the service worker
 issued on its own.
 
-Three things follow from that, all implemented here:
+Three things followed from that. One has since been ruled out by observation,
+and two are implemented here:
 
-1. **Cache Storage watcher (best-effort, automatic).** Cache Storage
+1. **Cache Storage watcher — tried, and REMOVED on 2026-08-28.** Cache Storage
    (`window.caches`) is a *per-origin* store shared by both `window` and the
-   service worker — if `fx-sw.js` persists a response there (a common
-   Workbox pattern for background sync / offline support), a page script can
-   legitimately read the same entry, the same way it could read any other
-   origin-scoped browser storage. While the tab is visible, the page-world
-   hook polls Cache Storage every 5 seconds, matches entries against the
-   exact `/fxpa/req` filter (using `{ignoreMethod: true}` so a cached `POST`
-   entry is still found), and publishes any match through the same channel
-   as `fetch`/`xhr` captures, tagged `source: "cache-storage"`. **This is
-   opportunistic and unverified against the live site** — it depends
-   entirely on whether Fantrax's service worker actually uses Cache Storage
-   for this endpoint, which the owner's live check (below) determines.
+   service worker, so if `fx-sw.js` persisted a response there — a common
+   Workbox pattern for background sync and offline support — a page script
+   could legitimately read the same entry. Versions 0.4.x–0.5.1 polled it
+   every 5 seconds while the tab was visible, matched entries against the
+   exact `/fxpa/req` filter, and published matches tagged
+   `source: "cache-storage"`. It was labelled unverified against the live
+   site.
+
+   **It has now been checked, and the answer is no.** On a live Fantrax draft
+   room the origin's Cache Storage held exactly five entries, every one an
+   `ngsw:`-prefixed Angular service-worker *asset* cache
+   (`assets:app:cache`, `assets:assets:cache`, plus their meta and control
+   databases). Angular's service-worker configuration separates `assetGroups`
+   from `dataGroups`, and Fantrax declares only asset groups — so `/fxpa/req`
+   responses are never written to Cache Storage at all, and the poll could not
+   have succeeded on any tick. The same session captured 49 payloads, all
+   `rendered-view` or `manual-export` and none `fxpa`.
+
+   The watcher was removed for the cost rather than the tidiness: a recurring
+   background timer competes for attention in a tab the browser may be
+   throttling, and path 2 below already depends on `setTimeout` and
+   `MutationObserver` firing promptly during a draft. **Do not re-add it as an
+   obvious missing capability** — the finding is about Fantrax's
+   service-worker configuration, not about the reader, so a reimplementation
+   returns the same nothing. It is worth re-testing only if Fantrax ships a
+   `dataGroups` entry, which shows up in DevTools as a cache name that is not
+   `ngsw:`-prefixed. The reasoning is kept in `src/capture.js` at the point
+   where the poller used to run, and `test/capture.test.js` asserts both the
+   absence of the code and the presence of the finding.
 2. **Rendered-view snapshot (conservative, automatic).** This is the hands-off
    fallback when the raw service-worker response is unavailable. It runs in
    Tampermonkey's isolated world only when all of these remain true: the
@@ -237,34 +260,105 @@ Three things follow from that, all implemented here:
    report that nothing was stored and leave the capture retryable. See
    "Customer workflow: manual export" below for exactly when and how to use it.
 
+IndexedDB was the same idea as path 1 and was never implemented: its schema
+would have to be reverse-engineered per Fantrax version and is far more likely
+to drift silently than Cache Storage's simple `Request`/`Response` shape. That
+remains a documented option rather than code, and removing path 1 does not
+change its status.
+
 All fallback sources are stored in the same `bridge_payloads` table via the same
 authenticated envelope contract (`schema`, `capturedAt`, `request`,
 `response`, `body`, `dedupeKey`) — only `source` and, for rendered/manual
-views, the meaning of `request.url`/`response.status` differ. `source` is now
+views, the meaning of `request.url`/`response.status` differ. `source` is
 one of `"fetch"`, `"xhr"`, `"cache-storage"`, `"rendered-view"`, or
 `"manual-export"`; the backend's `BridgeRequest` model enforces exactly these
-five.
+five. **`"cache-storage"` is retained even though nothing emits it any more**:
+it is part of `hoops-gm.bridge-payload.v1`, which the backend validates and
+which already-stored payloads may carry, so retiring the value is a contract
+change rather than a bridge-local one.
 
 ### What capture is automatic—and what cannot be
 
 After the one-time 0.5.0 update and a Fantrax reload, the page-world fetch/XHR
-observer, Cache Storage watcher, and isolated-world rendered-view watcher
-install automatically at `document-start`; none requires a menu command.
-The rendered-view watcher also notices a secret paired later in the same page
-and starts after settle. The manual-export command is a fallback, not a
-prerequisite for those paths.
+observer and the isolated-world rendered-view watcher install automatically at
+`document-start`; neither requires a menu command. The status strip (below)
+installs the same way. The rendered-view watcher also notices a secret paired
+later in the same page and starts after settle. The manual-export command is a
+fallback, not a prerequisite for those paths.
 
 There is still no honest guarantee that *every* `/fxpa/req` response will be
-captured *raw* with zero clicks. When `fx-sw.js` issues a request internally
-and neither caches nor exposes its response to page script, Tampermonkey has no
-API that can observe that private response. The automatic rendered view now
-preserves the evidence Fantrax actually displayed without owner clicks, but it
-is intentionally labelled lower-confidence rather than pretending rendered
+captured *raw* with zero clicks — and after the 2026-08-28 live check, the
+honest expectation is that **none** of them will be. `fx-sw.js` issues those
+requests internally, does not hand the response to page script, and does not
+persist it anywhere page script can read. Tampermonkey has no API that can
+observe that private response. The automatic rendered view preserves the
+evidence Fantrax actually displayed without owner clicks, but it is
+intentionally labelled lower-confidence rather than pretending rendered
 HTML equals the missing JSON-RPC body. The explicit manual export remains the
 fail-safe for a moment the rate-limited watcher has not yet recorded. A
 guaranteed zero-click copy of uncached service-worker traffic would require a
 different privileged browser-extension/debugging surface or support from
 Fantrax itself, not another userscript permission.
+
+### The status strip: making silence visible
+
+The bridge's failure mode is silence. An unpaired userscript, a refused
+envelope, a stale build and a draft that has not started are **indistinguishable
+from the Fantrax page** — which is the page the owner is looking at during a
+draft. On 2026-08-28 he hit two of those four in one session: a build ten days
+older than the source that declared it, truthfully reporting "no update
+available", and an automatic capture path that had never worked and looked
+exactly like one that did.
+
+From 0.5.2 the userscript renders a small strip in the bottom-left corner of
+any Fantrax league page, showing:
+
+- the **running `@version`**, read from `GM_info` — the one thing that makes a
+  stale served artifact visible where the owner actually is;
+- **paired or not**, with the remedy named rather than implied;
+- **how many envelopes the backend has acknowledged**, how many were dropped as
+  byte-identical to one already sent, when the last capture happened, and
+  **which path produced it** — a healthy-looking count made entirely of
+  `rendered-view` snapshots is the expected state, not evidence of RPC capture;
+- the **last refusal reason**, if there is one. Before 0.5.2 this reason was
+  discarded in `forward()`'s `catch`, which is what made "backend unreachable",
+  "bridge is not paired" and "HTTP 401" indistinguishable on the page.
+
+Design constraints, all of them testable:
+
+- **Shadow DOM, closed.** Fantrax's Angular styles cannot restyle the strip and
+  nothing here leaks into their page. Closed mode also means Fantrax's own page
+  script cannot reach in through `element.shadowRoot`.
+- **Every style is set through the CSSOM**, never a `<style>` element or a
+  `style` attribute. A `style-src` CSP on fantrax.com would block those two and
+  leave an invisible strip; CSP does not restrict CSSOM writes.
+- **`pointer-events: none`.** The owner's rule is *advise everywhere, override
+  nowhere*. With pointer events off the strip is structurally incapable of
+  swallowing a click meant for the draft board.
+- **No timer of its own.** It rides the rendered-view watcher's existing
+  one-second context check and suppresses DOM writes when its rendered text is
+  unchanged, so an unchanged tick costs nothing. Adding a status interval right
+  after removing the Cache Storage interval would have been a wash.
+- **Text only, never markup.** Refusal text is capture-derived and is written
+  with `textContent`; any secret-shaped token in it is redacted first.
+- **It shows no number a decision rests on.** No price, no value, no suggested
+  bid, no ranking. Those belong to `bridge-overlay`, which sits behind the whole
+  valuation chain and carries the **Model gate** with it. A test asserts the
+  rendered text carries no valuation vocabulary, so growing one fails loudly.
+
+It does **not** show picks the feed recognised. That number is draft-scoped: it
+needs a `draft_id` for `GET /drafts/{id}/feed`, and the userscript has no honest
+way to learn one — a Fantrax league page URL carries Fantrax's *external* league
+id, while `GET /drafts` returns our *internal* `league_id`, so the two cannot be
+joined in the browser. Guessing "the newest draft" would render a confident
+number for the wrong draft, which is worse than rendering none. Surfacing it
+properly needs a backend contract that `backend` owns.
+
+**hoops-gm: show/hide status strip** toggles it from the Tampermonkey menu,
+which is why the strip itself never needs to accept a click. Hiding is
+deliberately **not** persisted: a remembered "hidden" would recreate exactly the
+silence the strip exists to break, on a later page load where nobody remembers
+switching it off.
 
 
 - **Read-only; network paths are response-only.** Nothing about an outgoing
@@ -371,23 +465,33 @@ the Fantrax tab so the new document-start page-world hook is installed:
    version. Do not alter Fantrax requests to test it.
 5. If DevTools shows the relevant `/fxpa/req` request's initiator as
    `fx-sw.js` (Fantrax's service worker), expect a `rendered-view` row rather
-   than a raw `fetch`/`xhr` row unless Cache Storage contains the response.
-   Use the manual command only if the specific view needed was not recorded.
+   than a raw `fetch`/`xhr` row. As of 2026-08-28 that is the only outcome
+   available: Cache Storage was checked on a live draft room and holds no
+   `/fxpa/req` response. Use the manual command if the specific view needed
+   was not recorded.
+6. Read the status strip in the bottom-left corner first. It reports the
+   running `@version`, whether the script is paired, how many envelopes the
+   backend acknowledged, when the last capture happened, which path produced
+   it, and the last refusal reason. That is faster than the database for
+   every failure except "the recogniser did not understand the payload".
 
 The owner repeated this check against a live paired browser: bounded automatic
 captures persisted successful `rendered-view` rows for roster, players, and a
 paginated players view, while the manual fallback persisted a separate
 `manual-export` row. This verifies the rendered-view path against Fantrax's
-actual DOM; Cache Storage capture remains best-effort and was not required.
+actual DOM. A live draft room on 2026-08-28 produced 49 payloads on the same
+two paths and **zero** `fxpa` rows, which is the expected steady state, not a
+regression.
 
 During a live draft, Fantrax must remain the visible active tab. After roughly
 five minutes in a hidden tab, Chrome throttles timers to about once per minute,
 which stalls Fantrax's own draft polling. Later overlay work must therefore
-avoid requiring an alt-tab during a pick clock. The Cache Storage watcher
-respects this too: it skips its poll entirely while `document.visibilityState`
-is `"hidden"`. The rendered-view watcher likewise skips hidden documents and
-takes one settled snapshot after visibility returns, so neither watcher is the
-thing competing for an already-throttled tick.
+avoid requiring an alt-tab during a pick clock. Removing the Cache Storage
+poller in 0.5.2 was partly about this: it was a recurring timer that could
+never find anything, competing for exactly those throttled ticks. The
+rendered-view watcher skips hidden documents and takes one settled snapshot
+after visibility returns, and the status strip adds no timer at all, so nothing
+in this userscript competes for an already-throttled tick.
 
 ## Customer workflow: manual export (guaranteed fallback)
 
@@ -422,13 +526,20 @@ command.
 injection (no real browser or network): URL filtering, malformed/non-JSON body
 normalization, typed envelope shape, dedupe, page-world fetch/XHR wiring,
 rejection of cross-origin, wrong-source, wrong-channel, malformed, and
-lookalike page events, the Cache Storage watcher (matching entries, the
-hidden-tab skip, and a rejecting `caches.keys()` never throwing), the automatic
+lookalike page events, the **absence** of the removed Cache Storage watcher
+(no `window.caches` read even when a matching entry is offered, no recurring
+timer, and the finding itself still recorded in the source), the automatic
 rendered-view fallback (exact Fantrax/local/paired guards, initial settle, SPA
 URL detection, mutation rate limiting, dedupe, visibility, detached-clone
-sanitization, and size bounds), and the manual export (`captureManual`
+sanitization, and size bounds), the manual export (`captureManual`
 bypassing the `/fxpa/req` filter, app-state preference over DOM snapshot,
-script/style stripping, size truncation, and the Tampermonkey menu wiring).
+script/style stripping, size truncation, and the Tampermonkey menu wiring),
+and the status strip (secret redaction in refusal text, the four silent
+failures rendering distinctly, a closed shadow root, `pointer-events: none`,
+`all: initial` written first, no `<style>` element, `textContent` rather than
+markup, deferred mounting before `body` exists, suppression of identical
+re-renders, the menu toggle, and the guarantee that it adds no timer and
+carries no valuation vocabulary).
 It also verifies that no capture envelope has a request body, cookie, or
 header field and that the page's real response and live DOM remain intact.
 `test/build.test.js` runs the real build and freezes the legacy identity,

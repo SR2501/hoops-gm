@@ -60,14 +60,24 @@
   // cannot see a service-worker-originated call. This is a platform
   // boundary, not a bug in the patch.
   //
-  // Three read-only, best-effort paths remain, plus one guaranteed manual
-  // fallback:
+  // One read-only best-effort path remains, plus one guaranteed manual
+  // fallback. A second was tried and is now ruled out:
   //  1. Cache Storage (`window.caches`) is a *per-origin* store shared by
-  //     both `window` and the service worker -- if fx-sw.js persists
-  //     responses there (a common Workbox pattern), a page script can
-  //     legitimately enumerate and read them. See `startCacheStorageWatcher`
-  //     below. This is opportunistic: it depends entirely on Fantrax's own
-  //     implementation and is unverified against the live site.
+  //     both `window` and the service worker, so if fx-sw.js persisted
+  //     responses there -- a common Workbox pattern -- a page script could
+  //     legitimately enumerate and read them. **Tried, and verified absent on
+  //     a live Fantrax draft room on 2026-08-28.** The origin's Cache Storage
+  //     held exactly five entries, all `ngsw:`-prefixed Angular
+  //     service-worker *asset* caches (`assets:app:cache`,
+  //     `assets:assets:cache`, plus their meta and control databases).
+  //     Angular's service-worker configuration distinguishes `assetGroups`
+  //     from `dataGroups`, and Fantrax declares only asset groups -- so API
+  //     responses are never persisted to Cache Storage at all, and no amount
+  //     of polling can find one. The watcher that read this store was removed
+  //     with this finding; see the note where it used to run, below. This is
+  //     a property of Fantrax's service-worker config, not of our reader, so
+  //     re-adding the watcher would only reproduce the same empty result --
+  //     but it is worth re-testing if Fantrax ever ships a `dataGroups` entry.
   //  2. A bounded rendered-view snapshot in the isolated world runs after
   //     initial load, SPA navigation, and settled DOM changes. It does not
   //     claim to be the missing raw response; it records the already-rendered
@@ -240,14 +250,32 @@
     now = () => Date.now(),
     dedupe = createDedupeCache(),
     logger = console,
+    status = null,
   } = {}) {
     const inFlight = new Map();
 
+    /**
+     * The status strip must never be able to break the capture it reports
+     * on, so every call into it is contained here.
+     */
+    function report(method, argument) {
+      if (!status || typeof status[method] !== "function") {
+        return;
+      }
+      try {
+        status[method](argument);
+      } catch {
+        // Reporting is observational only.
+      }
+    }
+
     function forward(envelope) {
       if (!transport || typeof transport.sendPayload !== "function") {
+        report("recordRefusal", "no local transport is configured");
         return Promise.resolve(false);
       }
       if (dedupe.has(envelope.dedupeKey)) {
+        report("recordDuplicate", envelope.source);
         return Promise.resolve(true);
       }
       const activeDelivery = inFlight.get(envelope.dedupeKey);
@@ -259,13 +287,19 @@
         .then(() => transport.sendPayload(envelope))
         .then(() => {
           dedupe.remember(envelope.dedupeKey);
+          report("recordDelivered", envelope.source);
           return true;
         })
-        .catch(() => {
+        .catch((err) => {
           safeWarn(
             logger,
             `hoops-gm bridge: failed to forward captured payload (${envelope.request.method} ${envelope.request.url})`
           );
+          // The reason was previously discarded here. A refused envelope is
+          // one of the four ways this bridge fails silently, and the message
+          // is the only thing that separates "backend unreachable" from
+          // "bridge is not paired" from "HTTP 401" on the page.
+          report("recordRefusal", err && err.message);
           return false;
         })
         .finally(() => {
@@ -595,85 +629,43 @@
       window.XMLHttpRequest = PageCaptureXHR;
     }
 
-    // Best-effort, read-only: some /fxpa/req calls are initiated by
-    // Fantrax's own service worker rather than page script, so the
-    // fetch/XHR patches above never see them (a service worker runs in a
-    // separate global scope no page script can instrument). Cache Storage
-    // is the one place both worlds can legitimately meet: it is a per-origin
-    // store, so if the service worker persists a response there, this page
-    // script can read the same entry no differently than reading any other
-    // origin-scoped browser storage. This is opportunistic and depends
-    // entirely on Fantrax's own implementation -- it may find nothing, and
-    // that is an expected, non-error outcome, not a bug.
-    if (
-      !window[marker].cacheWatcherStarted &&
-      typeof window.caches === "object" &&
-      window.caches &&
-      typeof window.caches.keys === "function" &&
-      typeof window.setInterval === "function"
-    ) {
-      window[marker].cacheWatcherStarted = true;
-
-      const pollCacheStorage = () => {
-        // A hidden tab is already timer-throttled by the browser; skipping
-        // explicitly keeps this from ever being the thing that competes for
-        // a throttled tick during a draft.
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-          return;
-        }
-        Promise.resolve()
-          .then(() => window.caches.keys())
-          .then((cacheNames) =>
-            Promise.all(
-              (cacheNames || []).map((name) =>
-                window.caches
-                  .open(name)
-                  .then((cache) => cache.keys().then((requests) => ({ cache, requests })))
-                  .then(({ cache, requests }) =>
-                    Promise.all(
-                      requests
-                        .filter((request) => matches(request && request.url))
-                        .map((request) =>
-                          cache
-                            .match(request, { ignoreMethod: true })
-                            .then((response) => {
-                              if (!response || typeof response.clone !== "function") {
-                                return undefined;
-                              }
-                              return response
-                                .clone()
-                                .text()
-                                .then((raw) =>
-                                  publish({
-                                    source: "cache-storage",
-                                    url: request.url,
-                                    method: request.method || "GET",
-                                    status: response.status,
-                                    ok: response.ok,
-                                    contentType:
-                                      response.headers && typeof response.headers.get === "function"
-                                        ? response.headers.get("content-type")
-                                        : null,
-                                    raw,
-                                  })
-                                )
-                                .catch(() => {});
-                            })
-                            .catch(() => {})
-                        )
-                    )
-                  )
-                  .catch(() => {})
-              )
-            )
-          )
-          .catch(() => {
-            // Cache Storage inspection is opportunistic; never throw into Fantrax.
-          });
-      };
-      pollCacheStorage();
-      window[marker].cacheWatcherIntervalId = window.setInterval(pollCacheStorage, 5000);
-    }
+    // Cache Storage watcher: REMOVED 2026-08-28, after being verified empty.
+    //
+    // This is where a `setInterval(pollCacheStorage, 5000)` used to run on
+    // every Fantrax league page. It enumerated `window.caches`, matched
+    // entries against the `/fxpa/req` filter above, and published anything it
+    // found as `source: "cache-storage"`. It was a legitimate hypothesis --
+    // Cache Storage is per-origin, so a response written there by fx-sw.js is
+    // readable by page script, and persisting API responses there is a common
+    // Workbox pattern. It was never verified against the live site, and it
+    // was labelled as such.
+    //
+    // It has now been checked. On a live Fantrax draft room the origin's
+    // Cache Storage held five entries, every one an `ngsw:`-prefixed Angular
+    // service-worker *asset* cache. Angular's service-worker config separates
+    // `assetGroups` from `dataGroups`; Fantrax declares only asset groups, so
+    // `/fxpa/req` responses are never written to Cache Storage and the poll
+    // could not have succeeded on any tick. The same session captured 49
+    // payloads, all `rendered-view` or `manual-export` and none `fxpa`.
+    //
+    // It was removed for the cost rather than the tidiness: a recurring
+    // background timer competes for attention in a tab the browser may be
+    // throttling, and the rendered-view path -- the one that does work --
+    // already depends on `setTimeout` and `MutationObserver` firing promptly
+    // during a draft.
+    //
+    // The `"cache-storage"` source string is deliberately still accepted by
+    // `PAGE_EVENT_SOURCES` and by the backend envelope schema. Nothing emits
+    // it now, but it is part of `hoops-gm.bridge-payload.v1`, which the
+    // backend validates and which already-stored payloads may carry;
+    // retiring a shared schema value is a contract change, not a bridge-local
+    // one.
+    //
+    // Do not re-add this as an obvious missing capability. The finding is
+    // about Fantrax's service-worker configuration, not about the reader, so
+    // a reimplementation returns the same nothing. It is worth re-testing
+    // only if Fantrax ships a `dataGroups` entry -- check for a non-`ngsw:`
+    // cache name in DevTools first, which costs seconds and settles it.
   }
 
   function createPageWorldHookSource(channel) {
@@ -952,6 +944,463 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Status strip
+  //
+  // The bridge's failure mode is silence. An unpaired script, a refused
+  // envelope, a stale build and a draft that has not started all look
+  // identical from the Fantrax page -- which is the page the owner is
+  // looking at during a draft. This surface exists to make those four
+  // distinguishable *where he already is*. It does not prevent any of them.
+  //
+  // It reports only what this userscript observed directly: its own running
+  // @version, its own pairing state, and the outcome of its own forwards. It
+  // deliberately does NOT report picks the feed recognised. That number is
+  // draft-scoped -- it needs a `draft_id` for `GET /drafts/{id}/feed`, and
+  // the userscript has no honest way to learn one. A Fantrax league page URL
+  // carries Fantrax's external league id, while `GET /drafts` returns our
+  // internal `league_id`, so the two cannot be joined here; guessing "the
+  // newest draft" would render a confident number for the wrong draft, which
+  // is worse than rendering none. Widening it needs a backend contract that
+  // `backend` owns, not a heuristic here.
+  //
+  // Hard boundary: this must never show a price, a value, a suggested bid or
+  // a ranking. Those belong to `bridge-overlay` and carry the Model gate with
+  // them. If a number a decision rests on appears here, this has become the
+  // wrong component.
+  // ---------------------------------------------------------------------
+
+  const STATUS_TEXT_MAX_CHARS = 120;
+  // Mirrors the shape check in test/build.test.js. A transport error should
+  // never contain the bridge secret -- none of userscript.js's rejection
+  // messages include it -- but this text is the one capture-derived string
+  // that reaches the DOM, so the guarantee is enforced here rather than
+  // assumed of every future error path.
+  const SECRET_SHAPED = /[0-9a-fA-F]{32,}|[A-Za-z0-9_-]{43,}/g;
+
+  /**
+   * Collapses an error message to one short, printable, secret-free line.
+   * Returns null for anything that reduces to nothing.
+   */
+  function sanitizeStatusText(value, maxChars = STATUS_TEXT_MAX_CHARS) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const collapsed = value
+      .replace(/[\u0000-\u001f\u007f]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (collapsed.length === 0) {
+      return null;
+    }
+    const redacted = collapsed.replace(SECRET_SHAPED, "[redacted]");
+    return redacted.length > maxChars ? `${redacted.slice(0, maxChars - 1)}\u2026` : redacted;
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  /** Local wall-clock, because that is the clock the owner is drafting on. */
+  function formatClock(ms) {
+    const when = new Date(ms);
+    if (Number.isNaN(when.getTime())) {
+      return null;
+    }
+    return `${pad2(when.getHours())}:${pad2(when.getMinutes())}:${pad2(when.getSeconds())}`;
+  }
+
+  /**
+   * Deliberately coarse. An age is what makes a stale feed visible, but a
+   * per-second age would rewrite the DOM every second for the whole draft.
+   * Bucketing to "just now" then whole minutes bounds the rewrite to once a
+   * minute while keeping the only distinction that matters: whether the last
+   * capture was recent or a long time ago.
+   */
+  function formatAge(ageMs) {
+    if (!Number.isFinite(ageMs) || ageMs < 0) {
+      return null;
+    }
+    const seconds = Math.floor(ageMs / 1000);
+    if (seconds < 45) {
+      return "just now";
+    }
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 90) {
+      return `${minutes}m ago`;
+    }
+    return `${Math.round(minutes / 60)}h ago`;
+  }
+
+  /**
+   * The whole rendering decision, as a pure function of state. Kept separate
+   * from the DOM so the wording of every failure mode is testable without a
+   * browser.
+   *
+   * @returns {{headline: string, detail: string, refusal: string|null, ok: boolean}}
+   */
+  function formatStatusLines(state, { nowMs = Date.now() } = {}) {
+    const safe = state || {};
+    const version = typeof safe.version === "string" && safe.version ? `v${safe.version}` : "bridge";
+    const paired = safe.paired === true;
+    const forwarded = Number.isSafeInteger(safe.forwarded) ? safe.forwarded : 0;
+    const duplicates = Number.isSafeInteger(safe.duplicates) ? safe.duplicates : 0;
+    const refusal = sanitizeStatusText(safe.lastRefusal);
+
+    const headline = `hoops-gm ${version} \u00b7 ${paired ? "paired" : "NOT PAIRED"}`;
+
+    let detail;
+    if (!paired) {
+      // Advice, never a block: the page keeps working either way.
+      detail = "not sending \u00b7 pair from the Tampermonkey menu";
+    } else if (forwarded === 0 && duplicates === 0) {
+      detail = "no captures yet";
+    } else {
+      const parts = [`${forwarded} sent`];
+      if (duplicates > 0) {
+        // "Captured, byte-identical to one already sent" is a different fact
+        // from "captured nothing", and on a draft board it means the view has
+        // not changed rather than that the bridge has stopped.
+        parts.push(`${duplicates} unchanged`);
+      }
+      const clock = Number.isFinite(safe.lastCaptureAtMs) ? formatClock(safe.lastCaptureAtMs) : null;
+      if (clock) {
+        const age = formatAge(nowMs - safe.lastCaptureAtMs);
+        parts.push(age ? `${clock} (${age})` : clock);
+      }
+      if (typeof safe.lastSource === "string" && safe.lastSource) {
+        // Which path produced it is load-bearing: `/fxpa/req` is unreachable,
+        // so a healthy-looking count made entirely of `rendered-view`
+        // snapshots is the expected state, not evidence of RPC capture.
+        parts.push(safe.lastSource);
+      }
+      detail = parts.join(" \u00b7 ");
+    }
+
+    return {
+      headline,
+      detail,
+      refusal: refusal ? `refused: ${refusal}` : null,
+      ok: paired && refusal === null,
+    };
+  }
+
+  /**
+   * Event-driven state for the status strip. No timer of its own: callers
+   * push transitions in as they happen, and `observeContext` is called from
+   * the rendered-view watcher's existing tick.
+   */
+  function createBridgeStatus({ version = null, now = () => Date.now() } = {}) {
+    const state = {
+      version: typeof version === "string" && version ? version : null,
+      paired: false,
+      forwarded: 0,
+      duplicates: 0,
+      lastCaptureAtMs: null,
+      lastSource: null,
+      lastRefusal: null,
+      lastRefusalAtMs: null,
+    };
+    const listeners = new Set();
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function emit() {
+      for (const listener of Array.from(listeners)) {
+        try {
+          listener(snapshot());
+        } catch {
+          // A broken renderer must never break capture.
+        }
+      }
+    }
+
+    function snapshot() {
+      return { ...state };
+    }
+
+    return {
+      snapshot,
+      subscribe(listener) {
+        if (typeof listener !== "function") {
+          return () => {};
+        }
+        listeners.add(listener);
+        try {
+          listener(snapshot());
+        } catch {
+          // As above: a first render that throws must not reject the
+          // subscription or propagate into capture.
+        }
+        return () => listeners.delete(listener);
+      },
+      recordDelivered(source) {
+        state.forwarded += 1;
+        state.lastCaptureAtMs = nowMs();
+        state.lastSource = typeof source === "string" && source ? source : null;
+        state.lastRefusal = null;
+        state.lastRefusalAtMs = null;
+        emit();
+      },
+      recordDuplicate(source) {
+        state.duplicates += 1;
+        state.lastCaptureAtMs = nowMs();
+        state.lastSource = typeof source === "string" && source ? source : null;
+        emit();
+      },
+      recordRefusal(message) {
+        state.lastRefusal = sanitizeStatusText(message) || "unknown error";
+        state.lastRefusalAtMs = nowMs();
+        emit();
+      },
+      observeContext({ paired } = {}) {
+        state.paired = paired === true;
+        // Emitted unconditionally: the strip needs a tick to re-age its
+        // "last capture" line, and it suppresses DOM writes itself when the
+        // rendered text is unchanged.
+        emit();
+      },
+    };
+  }
+
+  const STATUS_HOST_STYLES = [
+    // `all: initial` first, so Fantrax's inherited font, colour and direction
+    // cannot reach into the shadow tree. Everything after it overrides that
+    // reset for this one element.
+    ["all", "initial"],
+    ["position", "fixed"],
+    ["left", "8px"],
+    ["bottom", "8px"],
+    ["z-index", "2147483000"],
+    // The strip advises; it never overrides. With pointer events off it is
+    // structurally incapable of swallowing a click meant for the draft board,
+    // which is the only way an informational surface could cost a pick.
+    ["pointer-events", "none"],
+  ];
+
+  const STATUS_BOX_STYLES = [
+    ["font-family", "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"],
+    ["font-size", "11px"],
+    ["line-height", "1.5"],
+    ["letter-spacing", "0.2px"],
+    ["padding", "6px 9px"],
+    ["border-radius", "6px"],
+    ["background", "rgba(17, 19, 24, 0.92)"],
+    ["color", "rgb(226, 232, 240)"],
+    ["box-shadow", "0 1px 6px rgba(0, 0, 0, 0.35)"],
+    ["white-space", "nowrap"],
+    ["max-width", "60vw"],
+    ["overflow", "hidden"],
+    ["text-overflow", "ellipsis"],
+  ];
+
+  const STATUS_OK_BORDER = "1px solid rgba(74, 222, 128, 0.55)";
+  const STATUS_ALERT_BORDER = "1px solid rgba(251, 191, 36, 0.75)";
+
+  function applyStyles(element, pairs) {
+    if (!element || !element.style || typeof element.style.setProperty !== "function") {
+      return;
+    }
+    for (const [property, value] of pairs) {
+      try {
+        element.style.setProperty(property, value);
+      } catch {
+        // An unsupported property must not stop the rest of the strip.
+      }
+    }
+  }
+
+  /**
+   * Renders the status strip into a closed shadow root.
+   *
+   * Shadow DOM in both directions: Fantrax's Angular stylesheets cannot
+   * restyle this, and nothing here leaks into their page. Every style is set
+   * through the CSSOM rather than a `<style>` element or a `style` attribute,
+   * because a `style-src` CSP on fantrax.com would block those two and
+   * silently leave an unstyled strip -- CSP does not restrict CSSOM writes.
+   *
+   * Text is assigned with `textContent`, never `innerHTML`: a refusal message
+   * is capture-derived text and must never be parsed as markup.
+   */
+  function installStatusStrip({
+    status,
+    win = typeof window !== "undefined" ? window : undefined,
+    doc = typeof document !== "undefined" ? document : undefined,
+    now = () => Date.now(),
+    logger = console,
+  } = {}) {
+    const notInstalled = { installed: false, uninstall: () => {} };
+    if (
+      !status ||
+      typeof status.subscribe !== "function" ||
+      !win ||
+      !doc ||
+      typeof doc.createElement !== "function" ||
+      !win.location ||
+      !isTopLevelWindow(win) ||
+      !isFantraxLeaguePage(win.location.href)
+    ) {
+      return notInstalled;
+    }
+
+    let host;
+    let shadow;
+    let box;
+    let headlineNode;
+    let detailNode;
+    let refusalNode;
+    try {
+      host = doc.createElement("div");
+      if (typeof host.attachShadow !== "function") {
+        return notInstalled;
+      }
+      applyStyles(host, STATUS_HOST_STYLES);
+      shadow = host.attachShadow({ mode: "closed" });
+      box = doc.createElement("div");
+      applyStyles(box, STATUS_BOX_STYLES);
+      headlineNode = doc.createElement("div");
+      detailNode = doc.createElement("div");
+      refusalNode = doc.createElement("div");
+      applyStyles(refusalNode, [["color", "rgb(252, 211, 77)"]]);
+      box.appendChild(headlineNode);
+      box.appendChild(detailNode);
+      box.appendChild(refusalNode);
+      shadow.appendChild(box);
+    } catch (err) {
+      safeWarn(logger, `hoops-gm bridge: status strip could not be built (${err && err.message})`);
+      return notInstalled;
+    }
+
+    let mounted = false;
+    let stopped = false;
+    let visible = true;
+    let lastRendered = null;
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function mount() {
+      if (mounted || stopped) {
+        return;
+      }
+      // Prefer `body`. Capture installs at document-start, so during parse
+      // `body` may not exist yet -- appending to `documentElement` then puts
+      // the host where the parser is still building, so that fallback is
+      // taken only once parsing has finished and `body` is genuinely absent.
+      const parent = doc.body || (doc.readyState !== "loading" ? doc.documentElement : null);
+      if (!parent || typeof parent.appendChild !== "function") {
+        return;
+      }
+      try {
+        parent.appendChild(host);
+        mounted = true;
+      } catch (err) {
+        safeWarn(logger, `hoops-gm bridge: status strip could not mount (${err && err.message})`);
+      }
+    }
+
+    function render(state) {
+      if (stopped) {
+        return;
+      }
+      // Before the short-circuit below: a state that renders identically must
+      // still be able to mount, or a strip whose first render happened at
+      // document-start would depend entirely on the DOMContentLoaded listener.
+      mount();
+      const lines = formatStatusLines(state, { nowMs: nowMs() });
+      const signature = `${visible}|${lines.headline}|${lines.detail}|${lines.refusal || ""}`;
+      if (signature === lastRendered) {
+        // The watcher tick calls this once a second for the whole draft.
+        // Skipping an identical write keeps that from being a DOM mutation
+        // per second on the page Fantrax is also mutating.
+        return;
+      }
+      lastRendered = signature;
+      try {
+        headlineNode.textContent = lines.headline;
+        detailNode.textContent = lines.detail;
+        refusalNode.textContent = lines.refusal || "";
+        applyStyles(refusalNode, [["display", lines.refusal ? "block" : "none"]]);
+        applyStyles(box, [["border", lines.ok ? STATUS_OK_BORDER : STATUS_ALERT_BORDER]]);
+        applyStyles(host, [["display", visible ? "block" : "none"]]);
+      } catch (err) {
+        safeWarn(logger, `hoops-gm bridge: status strip render failed (${err && err.message})`);
+      }
+    }
+
+    const unsubscribe = status.subscribe(render);
+
+    const onReady = () => mount();
+    if (!mounted && typeof doc.addEventListener === "function") {
+      // Capture installs at document-start, so `doc.body` may not exist yet.
+      doc.addEventListener("DOMContentLoaded", onReady, { once: true });
+    }
+    mount();
+
+    return {
+      installed: true,
+      host,
+      shadowRoot: shadow,
+      render: () => render(status.snapshot()),
+      isVisible: () => visible,
+      setVisible: (next) => {
+        visible = next === true;
+        // Hiding is deliberately not persisted. A remembered "hidden" would
+        // recreate exactly the silence this strip exists to break, on a later
+        // page load where nobody remembers switching it off.
+        render(status.snapshot());
+      },
+      uninstall: () => {
+        stopped = true;
+        if (typeof unsubscribe === "function") {
+          unsubscribe();
+        }
+        if (typeof doc.removeEventListener === "function") {
+          doc.removeEventListener("DOMContentLoaded", onReady);
+        }
+        if (host && typeof host.remove === "function") {
+          try {
+            host.remove();
+          } catch {
+            // Teardown is best-effort; never throw into the page.
+          }
+        }
+        mounted = false;
+      },
+    };
+  }
+
+  /**
+   * Registers the Tampermonkey menu toggle. The menu lives outside the page,
+   * so the strip itself never needs to accept a click to be dismissable.
+   */
+  function installStatusStripMenu({ registerMenuCommand, strip } = {}) {
+    if (typeof registerMenuCommand !== "function" || !strip || !strip.installed) {
+      return false;
+    }
+    registerMenuCommand("hoops-gm: show/hide status strip", () => {
+      try {
+        strip.setVisible(!strip.isVisible());
+      } catch {
+        // A failed toggle must never propagate into the page.
+      }
+    });
+    return true;
+  }
+
   /**
    * Installs a read-only rendered-view watcher in Tampermonkey's isolated
    * world. It snapshots after DOM settle on initial load, SPA URL changes, and
@@ -975,6 +1424,7 @@
     navigationMinIntervalMs = AUTO_SNAPSHOT_NAV_MIN_INTERVAL_MS,
     mutationMinIntervalMs = AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS,
     locationPollMs = AUTO_SNAPSHOT_LOCATION_POLL_MS,
+    status = null,
     logger = console,
   } = {}) {
     const notInstalled = { installed: false, uninstall: () => {} };
@@ -1031,6 +1481,17 @@
     let lastUrl = win.location.href;
     let wasPaired = hasPairedLocalTransport(transport);
     let wasReady = doc.readyState !== "loading";
+
+    function reportContext(paired) {
+      if (!status || typeof status.observeContext !== "function") {
+        return;
+      }
+      try {
+        status.observeContext({ paired });
+      } catch {
+        // The strip must never be able to stop the capture watcher.
+      }
+    }
 
     function nowMs() {
       try {
@@ -1138,6 +1599,11 @@
       const nextUrl = win.location.href;
       const paired = hasPairedLocalTransport(transport);
       const ready = doc.readyState !== "loading";
+      // The status strip rides this existing tick rather than starting its
+      // own interval -- the same recurring-timer cost that removing the Cache
+      // Storage poll was about. The strip suppresses DOM writes when its
+      // rendered text is unchanged, so an unchanged tick costs nothing.
+      reportContext(paired);
       if (nextUrl !== lastUrl) {
         lastUrl = nextUrl;
         resetPending();
@@ -1183,6 +1649,7 @@
     }
 
     attachObserver();
+    reportContext(wasPaired);
     if (doc.readyState !== "loading") {
       requestSnapshot("navigation");
     }
@@ -1299,6 +1766,13 @@
     captureRenderedViewSnapshot,
     hasPairedLocalTransport,
     installAutomaticRenderedViewCapture,
+    sanitizeStatusText,
+    formatClock,
+    formatAge,
+    formatStatusLines,
+    createBridgeStatus,
+    installStatusStrip,
+    installStatusStripMenu,
     captureManualSnapshot,
     installManualCaptureMenu,
   };
@@ -1309,15 +1783,32 @@
   // the narrow response observer is injected into Fantrax's page world.
   if (typeof window !== "undefined" && typeof globalThis.HoopsGmTransport !== "undefined") {
     const transport = globalThis.HoopsGmTransport;
-    const installed = createCapture({ transport });
+    // GM_info needs no @grant and is always present under Tampermonkey. The
+    // running build's own @version is here because a stale served artifact is
+    // one of the four silent failures: on 2026-08-28 the browser correctly
+    // reported "no update available" for a build ten days older than the
+    // source that declared it, and nothing on the page said so.
+    const runningVersion =
+      typeof GM_info !== "undefined" && GM_info && GM_info.script && GM_info.script.version
+        ? String(GM_info.script.version)
+        : null;
+    const status = createBridgeStatus({ version: runningVersion });
+    const installed = createCapture({ transport, status });
     installed.pageBridge = installPageWorldBridge({ capture: installed, win: window, doc: document });
     installed.renderedViewWatcher = installAutomaticRenderedViewCapture({
       capture: installed,
       transport,
       win: window,
       doc: document,
+      status,
     });
+    installed.status = status;
+    installed.statusStrip = installStatusStrip({ status, win: window, doc: document });
     capture.instance = installed;
+    installStatusStripMenu({
+      registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,
+      strip: installed.statusStrip,
+    });
     installManualCaptureMenu({
       registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,
       capture: installed,
