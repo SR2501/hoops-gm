@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 116 pending - 177 total**
+**60 done - 1 blocked - 118 pending - 179 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1738,6 +1738,101 @@ a browser, not at CI.
 unpaired script and a refused envelope, and all three look identical from the
 Fantrax page: nothing happens. See `bridge-status-strip`, which surfaces the
 other two.
+
+### `draft-board-dom-parser` - Reading the draft board from the rendered page, because nothing else can
+
+- [ ] **pending**
+- **Depends on:** `bridge-capture`, `draft-tracker-bridge-feed`
+
+**This became the critical path to 4 October on 2026-08-28, when both automatic
+alternatives were falsified within four hours of each other.**
+
+1. **The bridge cannot read `/fxpa/req`.** Service-worker originated; no browser
+   API or Tampermonkey grant can observe it. 49 of 49 live payloads confirm, and
+   Cache Storage — the last escape route — was verified absent on a live draft
+   room.
+2. **The official API returns nothing.** `getDraftPicks` on a *completed*
+   216-pick draft answered `{"currentDraftPicks":[]}` — HTTP 200, 24 bytes,
+   unauthenticated, no error. See `official-getdraftpicks-live-verification`.
+
+So the only remaining source of live pick data is the **rendered DOM**, which the
+userscript already captures automatically as `rendered-view` snapshots. That is
+capture path 2, and it is now load-bearing rather than a *"lower-confidence
+fallback"* as `capture.js:71-74` describes it.
+
+**The evidence to build against already exists and does not require another live
+draft.** 49 snapshots spanning an entire 18-round draft — 174-250 KB each,
+including the board at every stage — are held outside this repository because
+they carry the owner's league. Whoever takes this must ask him for them; do not
+go looking, and do not commit them.
+
+**What is already known about the parse, from a first pass:**
+
+- The snapshots contain team names and player names as text.
+- A naive regex for board cells (`>12-7<` style) finds **nothing** — Angular's
+  markup does not expose the coordinates that way. Real DOM work, not a pattern
+  match.
+- Console logging on the live page shows the client's own model, which is a
+  guide to what the DOM must encode: `round`, `pickNumberTemp`, `overallPick`,
+  `draftTeamId`, `cellTeamId`, `scorerId`. **`pickNumber` is `undefined` on every
+  line** — a parser that trusts it reads nothing.
+- `overallPick` and `pickNumberTemp` are independent: one monotonic to 216, one
+  resetting each round.
+
+**Acceptance:** given a captured snapshot, produce the picks it contains —
+seat, player, round, overall — and **verify the count against ground truth the
+owner watched happen**. A parser that returns a plausible number is worthless
+here; the owner's Q12 answer is *"shows me picks that already happened or misses
+one"*, and a miscount produces no error code.
+
+**Two hazards to design against rather than discover:**
+
+- **Markup drift.** Fantrax ships a new Angular build whenever they like, and a
+  selector-based parser breaks silently. The parse must **refuse loudly** when it
+  cannot find what it expects, never return a short list. Nothing in the DOM
+  announces its own version, so the refusal is the only signal available.
+- **Snapshot staleness under tab throttling.** Snapshots fire on
+  `MutationObserver` and `setTimeout`, both throttled in hidden tabs. A parse is
+  only as current as its snapshot, and the strip in `bridge-status-strip` is
+  where that must be visible.
+
+### `field-name-guess-audit` - Auditing every field name guessed from a format rather than read from one
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker-bridge-feed`, `fantrax-official-adapter`
+
+**Three instances found on 2026-08-28, all in one afternoon, all invisible to a
+green test suite:**
+
+| where | guessed | actual |
+|---|---|---|
+| `recognise.py` `FIELD_ALIASES["team_external_id"]` | `teamId`, `fantasyTeamId`, `franchiseId`, `teamID` | **`draftTeamId`**, `cellTeamId` |
+| `parsers.py:365` | `payload.get("draftPicks") or payload.get("picks")` | **`currentDraftPicks`** |
+| *(control)* `FIELD_ALIASES["player_external_id"]` | `playerId`, **`scorerId`**, `fantasyPlayerId` | `scorerId` — **correct** |
+
+The control matters: this is not "all guesses are wrong". It is that **a guess
+made from reading a format is right at about the rate you would expect from
+reading a format**, and nothing in this repository distinguishes a verified name
+from a guessed one at the point of use.
+
+**Why tests cannot catch this class.** Every fixture behind these names was
+constructed from the same reading that produced the names. A contract test then
+proves the parser agrees with our assumption, which is exactly what ADR-006
+rejects. `docs/adapters/fantrax-private.md:31-38` already says this in prose
+about parsers; the finding is that it applies equally to *field names inside*
+parsers that do exist.
+
+**Acceptance:** an inventory of every externally-sourced field name in
+`ingest/` and `draft/feed/`, each marked **verified against a real payload** or
+**guessed**, with the verified ones naming the artifact that verified them. Then
+a mechanical check that a name cannot silently move from one category to the
+other — the shape `fingerprint_closure.py` uses for a different question.
+
+**Deliberately not proposed as a fifth gate.** `coordinator-rules-distillation`
+owns whether register rules become gates, and adding one on the strength of a
+single afternoon is the over-correction this project's own register warns about.
+An inventory that makes the distinction *visible* is the smaller, reversible
+step, and it is enough to stop the next instance shipping unnoticed.
 
 ### `official-getdraftpicks-live-verification` - Establishing whether the official API can carry the draft board
 
