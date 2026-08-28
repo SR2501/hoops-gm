@@ -18,6 +18,18 @@ facts, not an estimate. ``max_bid`` — the same subtraction with a
 one-dollar-per-open-slot reserve — is a decision number and is deliberately
 **not** here; it belongs to ``auction-budget-manager``.
 
+**``remaining_budget`` may be negative, and a negative value is a fact about
+this tool rather than about the seat.** The budget in that subtraction is one
+scalar for the whole draft, copied from ``League.auction_budget``; the owner's
+league sets each seat's bank separately, so the figure is wrong for most seats.
+A sale above it is admitted to the board rather than refused — refusing it lost
+a pick that really happened — and ``ParticipantOut.over_assumed_budget`` names
+the condition so no client has to infer it from a minus sign. Clients must
+therefore treat both ``spent`` and ``remaining_budget`` as signed. See
+``hoops_gm.draft.state`` for why this is not a refusal, and the
+``per-team-auction-budgets`` backlog item for the per-seat column that retires
+the assumption.
+
 **No lock is taken on any read** (ADR-014). ``last_sequence`` is a complete
 version token, because a log whose only mutation is append means everything at
 or below a sequence is immutable. Two responses carrying the same
@@ -277,8 +289,13 @@ class ParticipantOut(BaseModel):
     slots_remaining: int
     spent: Decimal | None
     #: ``budget - spent``. An identity, not a maximum bid — see the module
-    #: docstring.
+    #: docstring. **Signed**: negative means this seat's recorded spend has
+    #: passed the budget this tool assumed for it.
     remaining_budget: Decimal | None
+    #: True when ``remaining_budget`` is negative. Published as its own field so
+    #: a client reads the condition rather than re-deriving it from the sign.
+    #: ``False`` in an ordered draft, where there is no budget to pass.
+    over_assumed_budget: bool
 
 
 class OpenLotOut(BaseModel):
@@ -440,6 +457,7 @@ def _state_response(
                 slots_remaining=seat.slots_remaining,
                 spent=seat.spent,
                 remaining_budget=seat.remaining_budget,
+                over_assumed_budget=seat.over_assumed_budget,
             )
             for seat in state.participants
         ],
