@@ -49,6 +49,10 @@ DEFAULT_PATHS = ["docs/handoff.md"]
 #: A prefix shorter than this is not a distinguishable control -- see v7 note.
 TRUNCATED_CONTROL_BYTES = 200
 
+#: One carriage return. Counted rather than searched for as ``\r\n``, because a
+#: lone ``\r`` in a text document is the same defect wearing a different shape.
+CR = bytes([13])
+
 
 def blob(ref: str, path: str) -> bytes:
     return subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, check=True).stdout
@@ -83,10 +87,46 @@ def check(path: str, base_ref: str) -> list[str]:
     print(f"  head bytes        : {len(head)}")
     print(f"  appended          : +{len(head) - len(base)}")
     print(f"  CONTAINMENT       : {contained}")
-    print(f"  CR in base blob   : {base.count(bytes([13]))}")
-    print(f"  CR in head blob   : {head.count(bytes([13]))}")
+    base_cr = base.count(CR)
+    head_cr = head.count(CR)
+    print(f"  CR in base blob   : {base_cr}")
+    print(f"  CR in head blob   : {head_cr}")
     if not contained:
         failures.append(f"{path}: base blob is not a byte-prefix of HEAD blob")
+
+    # An append may not *introduce* CRLF. Deliberately a delta rather than
+    # "contains no CRLF": docs/handoff.md already carries 149 from 2026-08-28
+    # and, the file being append-only, they may not be removable at all. A gate
+    # that is red on main from the day it lands is one everybody learns to route
+    # around, and the claim that is both true and checkable is that this change
+    # added none.
+    #
+    # Neither existing gate can see this. CONTAINMENT passes, because CRLF in
+    # the appended region leaves the prefix untouched. check_doc_terminators.py
+    # passes, because it asks only whether the last byte is a newline. Both are
+    # right about what they check and both have a domain narrower than the
+    # hazard. Two instances landed on 2026-08-28, the second from the same lane
+    # as the first, and every gate was green for both.
+    added_cr = head_cr - base_cr
+    print(f"  CR added by HEAD  : {added_cr}   expected 0")
+    if added_cr > 0:
+        failures.append(
+            f"{path}: HEAD adds {added_cr} CR byte(s) to a region the base keeps pure-LF. "
+            f"Write the append in bytes with LF endings - do NOT round-trip the file "
+            f"through read_text()/write_text() or Get-Content/Set-Content, which will "
+            f"rewrite the base's {base_cr} as well and turn this into a CONTAINMENT failure"
+        )
+
+    # Control. A counter that has never been shown to move is not evidence that
+    # nothing moved -- and this one is easy to get wrong, because reading a blob
+    # through a shell pipeline on Windows silently normalises the bytes being
+    # counted.
+    seeded_delta = (head + b"\r\n").count(CR) - base_cr
+    print(f"  NEG seeded CR     : {seeded_delta}   expected {added_cr + 1}")
+    if seeded_delta != added_cr + 1:
+        failures.append(
+            f"{path}: CR counter did not move under a seeded CRLF; instrument is broken"
+        )
 
     # Control one. Flipping a bit in the base must break containment; if it does
     # not, the comparison is not comparing what it claims to.
