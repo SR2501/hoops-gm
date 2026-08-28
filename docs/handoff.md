@@ -31566,3 +31566,102 @@ went to the lane as well as into the file.
   the other direction** - one that under-counts consistently, so that both the
   real count and the seeded count are wrong by the same amount. The control
   asserts a delta of exactly one, which such a counter would still satisfy.
+---
+
+## 2026-08-28 - A rule that lived only in a chat becomes a script
+
+**Agent:** `data-engineer`. Follow-on to the `getDraftPicks` unit (PR #126,
+merged `5c6118b`), landed because the coordinator asked what this lane held that
+the repository did not.
+
+### What was done
+
+`scripts/merged_backlog_recount.py` and `backend/tests/test_merged_backlog_recount.py`.
+
+The rule *"compute the merge with `git merge-tree --write-tree` and recount the
+merged file - a clean auto-merge on a derived count is the case nobody
+re-checks"* existed in lane briefs and nowhere else. Grep confirmed it before
+writing anything: `merge-tree` appeared **zero** times in `docs/backlog.md` and
+in no script. That is precisely the house rule's own failure mode, so it is a
+file now.
+
+**It adds no second parser.** It computes the merged tree, reads
+`docs/backlog.md` out of it, and hands the text to `backlog_graph.parse_backlog`.
+Every rule it enforces is that module's rule. A second implementation of the
+counting would be a second thing to drift.
+
+### The case it is for
+
+Two lanes each file one backlog item. Each increments the count by one, so both
+write the **byte-identical** header string. Git does not conflict on a line both
+sides changed to the same text, the additions land in different regions, and the
+merge is clean - **no human is ever prompted to look**. The merged file has two
+more items than its header claims, and each branch read alone is correct.
+
+That the header is *usually* caught by a conflict is selection bias: those are
+the cases someone was forced to look at. Twice on 2026-08-28 the conflict fired
+and the answer was **neither side** - `60/0/120/180` against `61/1/117/179`,
+truth `61/0/119/180`; then `62/0/119/181` against `61/0/119/180`, truth
+`63/0/118/181`. The silent case has identical arithmetic and no prompt.
+
+### Proven by execution, not by reasoning
+
+The script was mutated to read the **head** blob instead of the merge - which is
+what a per-branch check does - and run against the same repository:
+
+```
+real (merge-tree)  exit: 1   FAIL header-disagrees-with-items: claims 3, file has 4
+mutant (head only) exit: 0   OK
+```
+
+`test_the_existing_checker_passes_on_both_branches` pins the other half: today's
+`backlog_graph.py` reports **no defect on either branch** of that repository. The
+gap is demonstrated rather than asserted, and if that test ever fails the script
+is redundant and should be deleted.
+
+`test_reconciling_the_two_headers_would_not_have_helped` kills the obvious wrong
+fix: both branches claim 3, the answer is 4, and no arithmetic on the two headers
+reaches it.
+
+### A claim I wrote, checked, and had to retract before shipping
+
+The first docstring said *"CI runs on the head commit, not on the merge result."*
+Going to verify it, I found CI also triggers on `pull_request` and uses
+`actions/checkout@v4` with **no `ref:` override**, which checks out GitHub's
+generated merge commit - so the existing `backlog-graph` job plausibly **already**
+reads a merged file, and my sentence was wrong.
+
+Attempting to settle it empirically failed in an instructive way. `gh run view
+--json headSha` returned the **same SHA** for the `push` and `pull_request` runs,
+which looks like proof that no merge commit was used and is not: that field
+reports the *event's* head, not what was checked out. Fetching
+`refs/pull/126/merge` then returned `couldn't find remote ref`, because the merge
+ref stops resolving once a PR closes.
+
+So the docstring now states the narrower gap it can defend - the merge CI
+evaluates is against `main` *as it was when the run fired*, and `main` moved four
+times on 2026-08-28 - tells the reader to verify against a **live** PR, and names
+why the verification decays. Filed as `merged-backlog-recount-ci-wiring` with the
+procedure attached, deliberately not wired into CI in this unit.
+
+### Could not verify
+
+- **Whether the `pull_request` run's checkout is a merge commit.** Reasoned from
+  `actions/checkout`'s documented default, **not** observed. Both attempts to
+  observe it failed as described above. Nothing in this unit depends on the
+  answer; the filed item does.
+- **Whether the silent clean-merge case has ever actually reached `main`.** It is
+  constructed in tests and reachable; I did not audit history for an instance.
+- The two conflict-and-recount instances are from this lane's own rebases. I did
+  not check whether other lanes hit the same thing.
+
+### One finding worth more than the script
+
+**Untracked files are invisible to diff-derived checks.** A `ruff` error (`C420`)
+survived in this script while mypy was clean and all nine tests passed, because a
+lint command scoped by `git diff --name-only` never saw a file that was not yet
+added. That is the same shape as `c350` - the measured domain narrower than the
+hazard - in a new place, and it will bite the next lane that writes a tool before
+committing it. Found by the coordinator reading the worktree, not by me: I ran
+`ruff check scripts backend` on whole directories and got exit 0, which is why my
+run and the diff-scoped run disagreed.

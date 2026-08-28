@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**64 done - 0 blocked - 123 pending - 187 total**
+**64 done - 0 blocked - 124 pending - 188 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1991,6 +1991,64 @@ else would carry them:**
   `seat_column_mismatch` fired 705. A redesign could preserve either property and
   break the other. **A test asserting only "it refuses" passes while pinning the
   wrong mechanism**, and the mechanism is what the next reader relies on.
+
+### `merged-backlog-recount-ci-wiring` - Deciding whether CI already recounts the merged backlog, and wiring it if not
+
+- [ ] **pending**
+
+**`scripts/merged_backlog_recount.py` landed 2026-08-28 and is not wired into
+CI.** That was deliberate: whether CI *already* covers part of this is an open
+empirical question, and wiring a job before answering it risks the exact failure
+this repository keeps finding — a green check that examined the wrong pair.
+
+**The question.** CI triggers on `pull_request` as well as `push`, and
+`actions/checkout@v4` is used with no `ref:` override. If that means the
+`pull_request` run is checked out at GitHub's generated merge commit, then the
+existing `backlog-graph` job **already** reads a merged file, and the only
+uncovered gap is narrower than it looks.
+
+**The verification procedure, which must be run rather than reasoned about.**
+Steps 1-4 were run against **live PR #131** on 2026-08-28 and are now settled;
+step 5 is what remains, and it turned out **not to be executable as written**.
+
+1. Open a PR whose branch changes `docs/backlog.md`.
+2. `git fetch origin refs/pull/<N>/merge:refs/remotes/prmerge`.
+3. `git rev-list --parents -n 1 refs/remotes/prmerge` — two parents means it is a
+   merge commit. **Established.** For #131 the ref existed and resolved to
+   `0be8016` with exactly two parents: `d24d8f5` (base tip) and `ad69359`
+   (branch head). GitHub does generate the merge ref, so the premise that
+   `actions/checkout@v4` *can* check one out is confirmed.
+4. Compare `git show refs/remotes/prmerge:docs/backlog.md` against
+   `git show <branch-head>:docs/backlog.md`. **Ran, and could not discriminate:**
+   the two were byte-identical, because `main` had not moved since the branch's
+   base. This step only distinguishes a merge checkout from a head checkout when
+   `main` has moved **and** its movement touched the backlog. Re-run it on a PR
+   that has sat through at least one unrelated backlog change.
+5. Confirm what the job actually checked out. **This is the open step, and the
+   obvious ways to do it do not work.** `gh run view --json headSha` reports the
+   *event's* head and returns the identical SHA for the `push` and
+   `pull_request` runs, which looks like proof that no merge commit was used and
+   is not — that cost one verification attempt on 2026-08-28. Nothing else the
+   API exposes distinguishes them either. Settling it needs a step **inside** the
+   workflow that prints `git rev-parse HEAD` and its parent count, which is
+   itself the small piece of work this item is really asking for.
+
+**Do not attempt steps 2-4 on a closed PR.** `refs/pull/<N>/merge` stops
+resolving once the PR is merged; an attempt against the merged #126 returned
+`couldn't find remote ref`, which is why this could not be answered
+retrospectively.
+
+**What remains uncovered even if the answer is yes.** The merge CI evaluates is
+against `main` *as it was when the run fired*. `main` moved four times on
+2026-08-28 — `ea765c5`, `4f8724e`, `39ea327`, `fb35201` — so the merge that
+actually happened was not one any job had seen. Nothing re-runs between the last
+push and the merge button. There is also no way to ask the question before
+pushing, which is when it is cheapest.
+
+**Acceptance:** the procedure above run and its answer recorded in this item
+with the evidence; then either a CI job invoking the script with the correct
+base, or an explicit statement of why the residual gap does not warrant one.
+Either outcome closes it — **"we did not check" does not.**
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 
