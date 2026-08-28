@@ -29819,3 +29819,281 @@ night with a deadline, not in correctness.
   and breaks a backend contract test, which is a real coupling this repository
   has - the recorded fixtures are captured from the backend and live under
   `frontend/src/test/fixtures/`.
+---
+
+## 2026-08-28 - backend - draft-feed-unreadable-id-surfacing: the row that names nobody, and the field that was two fields
+
+`draft-feed-unreadable-id-surfacing`, the single item standing between the
+owner and `draft-tracker`. Branch `sr2501-draft-feed-unreadable-id-surfacing`,
+rebased onto `431cc71`.
+
+**Boundary crossing, on the record.** This edits
+`backend/src/hoops_gm/draft/feed/recognise.py`, which is `data-engineer`'s
+file, and its `_accept_list` / `_instant_from` contract. I was authorised by the
+coordinator to make that edit tonight. It is named here rather than left to be
+noticed in a diff.
+
+### What was wrong
+
+Round thirteen filed it and did not fix it. A record whose `player_external_id`
+is present and unreadable was appended to `_accept_list`'s `unreadable` list,
+turned into an `UnrecognisedShape`, and dropped. `UnrecognisedShape` reaches
+`SourceOutcome.unrecognised`, which reaches the `POST` ingest response and
+nothing else. `FeedStatus` has no such field. **A live board polls `GET`.**
+
+So: two records captured, one player on the board, `pending 0`, `blocked ()`,
+`skipped ()`, `silent: False`. A pick that happened, reported as nothing, with
+every channel reading clean.
+
+### The fix, and the two places it is not what the backlog said
+
+The route the backlog named: unreadable records arrive as instants carrying
+`skipped_reason`, surfaced on `GET`, never applied, never joining identity
+matching, permanent. That is what landed. `_accept_list` now returns the
+unreadable records *with their original index*, `recognise_bridge_payload`
+emits an instant for each at the same locator scheme, and `_store` writes
+`skipped_reason` at ingest rather than leaving it for the apply pass.
+
+Two departures, both because writing it the obvious way produced something
+worse.
+
+**One: the refused row stores no player label either.** The backlog's route
+says nothing about the label, and the obvious reading keeps it - the failed
+field was the id, and `playerName` may be perfectly readable, and "you are
+missing Anthony Edwards" is a better sentence on draft night than "a record at
+seat t2 could not be identified".
+
+I withheld it anyway, on a mechanism rather than a preference.
+`_player_label`'s own docstring says it is "the best display name for a record
+**already known to be about a player**", and its fallback to
+`AMBIGUOUS_NAME_ALIASES` is safe *because* `_player_identity` has already
+succeeded. On a refused record `_player_identity` returned `UNREADABLE`, so the
+precondition that fallback rests on is absent - and the ambiguous branch is the
+one that once put a seat's own name on the board as the player taken. Using it
+here would be reinstating a defect through the fix for a different one.
+
+The second half is the load-bearing one. A row that names nobody has no
+`matching_key`, so **"never joins identity matching" is true by construction**
+rather than by a rule. Nothing has to remember to exclude it and no later
+narrowing can restore it.
+
+**The trade, stated so it can be overturned knowingly.** "A record at seat `t2`
+could not be identified" is a materially worse message for the owner at 7:14pm
+than a name he could act on, and I am not pretending otherwise. What makes it
+the right trade is that it is a *correct* worse message: the alternative is a
+name produced by a fallback whose own docstring says its precondition is
+absent. If the owner finds the nameless message unusable in a mock, the fix is
+to store the explicit label **and** add an enforced exclusion — more machinery,
+and a rule someone has to keep true, which is what this version avoids. The
+coordinator reviewed and accepted this reasoning; it is written down here so
+reversing it is a decision rather than a discovery.
+
+**Two: the same defect is closed on the official path.** The backlog describes
+the bridge path only. `recognise_official_draft_picks` reaches the same end
+state by a different route - `_as_text` refuses the over-long `player_id`,
+`player_name` is absent, and the record was dropped at `if not
+(player_external_id or player_label)` with the loss counted on `POST` alone.
+Round eight of this unit found three docstrings arguing from a rule that held
+on one path only. I was not going to add a fourth. The two cases get different
+reasons, deliberately: `player_external_id_unreadable` means the source named
+someone and we could not read it, and `record_names_no_player` means it named
+nobody, which may simply be an unmade future pick. Calling the second a loss
+would teach the owner to dismiss the count.
+
+### The finding that changed the design, which was mine and not a reviewer's
+
+The first implementation carried `skipped_reason` from the row back onto the
+instant in `_to_instant`, and had `matching_key` return `None` for any instant
+carrying one. It type-checked, and it was wrong.
+
+**`skipped_reason` on a row is written by two passes.** The recogniser writes
+an identity refusal at ingest. `apply_observations` writes `already_in_log` and
+`duplicate_within_run` afterwards - and *those rows are genuine readings of a
+pick*, whose entire value is being reconciled against the other source.
+Excluding them from `matching_key` would have deleted the corroboration signal
+at the moment it is worth something: the official source and the bridge both
+read Jokic, one applies, the other is filed `duplicate_within_run`, and
+reconciliation then reports `only_bridge` instead of an agreement.
+
+The column is overloaded and that is pre-existing and defensible - both senses
+mean "not applied, permanently" - but the *instant's* field is narrower than
+the *column*, so the copy was a lie in the one direction that mattered.
+`_to_instant` now deliberately does not carry it, and says why.
+
+What replaced it is `names_a_player(row)`, one predicate used in one place, and
+the reason it is safe is a database constraint rather than a list of reason
+strings: migration `0021` permits a row naming no player **only** when it
+carries a `skipped_reason`, so "names nobody" and "the recogniser refused this
+record" pick out the same rows and cannot drift apart.
+
+### The freshness half, which is the one that would have bitten
+
+`freshness_of` lets `contact_at` suppress `silent` **only for a transport that
+has produced at least one instant**. That asymmetry exists because a bridge
+capturing page HTML from a service-worker-served draft room lands captures
+continuously while the recogniser reads nothing - a feed that had never read a
+pick reporting `silent=False`.
+
+A refused row is an instant with a transport. Counting it would have restored
+exactly that false all-clear, **through the row added to make a silence
+visible**. `feed_status` filters on `names_a_player` before building the
+reconciliation input, and `test_an_unreadable_record_does_not_join_identity_matching`
+asserts `instant_count == 1` where two rows exist.
+
+### Migration 0021
+
+`feed_names_a_player` gains `OR skipped_reason IS NOT NULL`. Narrow on purpose:
+the apply pass filters `pending` on `skipped_reason IS NULL`, so a nameless row
+can never be an application candidate and the invariant the CHECK protected -
+anything that can become a `draft_events` entry names a player - is unchanged.
+
+`0020`'s docstring flags that adding a CHECK on SQLite forces a table rebuild
+and cascades into dependants. Nothing declares a foreign key *to*
+`draft_feed_observations` (its three FKs all point outward), so the rebuild is
+contained to that table and its five indexes. The downgrade deletes only rows
+that violate the narrower rule, and `test_0021_is_reversible_and_takes_only_the_rows_it_permitted`
+drives that a row naming a player survives the round trip.
+
+**The batch-mode trap cost me a cycle and is worth writing down:** passing the
+*expanded* constraint name to `batch_op.drop_constraint` gets it expanded a
+second time, producing
+`ck_draft_feed_observations_ck_draft_feed_observations_feed_names_a_player` and
+a `ValueError: No such constraint`. Pass the bare name; the metadata naming
+convention does the rest. It broke fourteen migration tests at once, which is
+the good outcome - a mistake here that broke only the new ones would have been
+much easier to mis-read.
+
+### Adapter gate, claimed narrowly
+
+**The recorded-fixture half cannot be discharged on this path and I am not
+going to pretend otherwise.** `gates.md` asks for "a real captured response,
+checked in". No Fantrax draft-room payload has ever been observed by anyone on
+this project. `test_adapter_contracts.py::TestFixtureManifest` requires every
+`tests/fixtures/*.json` to carry `source`, `endpoint` and `captured_at` in
+`manifest.json`, so committing a synthesised fixture would mean writing a
+`captured_at` for something never captured - manufacturing the provenance
+record the manifest exists to be.
+
+The gate is discharged the way `main` already discharges it for this unit:
+`test_the_envelope_shape_still_matches_the_pinned_client` reads `fantraxapi`
+1.0.1's installed source, which is a real third-party artifact talking to this
+exact endpoint.
+
+Two additions rather than an excuse. `test_a_refused_player_identity_is_recorded_rather_than_dropped`
+is `adapter_contract`-marked and pins what this reader does with a record whose
+`playerId` arrives in a form it refuses. And
+`test_no_recorded_fantrax_draft_payload_exists_yet` **fails the day a
+draft-room fixture is recorded**, which is the point at which the recogniser
+must be pointed at it and this claim withdrawn. A paragraph promising to wire
+it up later is precisely the unenforced rule this package's reviews keep
+finding.
+
+While there: `recognise.py`'s module docstring cited
+`test_draft_feed_contracts.py` as the drift check. **That file does not exist
+and never has.** An unenforced rule wearing the clothes of an enforced one, in
+the paragraph claiming to be the one enforced thing in the module. Corrected to
+name the test that does exist.
+
+### Injection, driven
+
+`scripts/mutate_draft_feed_identity.py`, on the `mutate_aav.py` pattern: anchor
+must match exactly once, mutation must change the file, only `rc 1` with a
+parsed `N failed` counts as CAUGHT, files asserted byte-identical afterwards,
+baseline green before anything is touched, and SKIP or crash counted as failure
+rather than success.
+
+MUTATION_RESULTS_PLACEHOLDER
+
+`M01` is the one that matters: it reverts to exactly the state the backlog
+records - the refused record still counted on the `POST` response, and no
+longer reaching storage, so `GET` reports nothing. If the new tests did not go
+red on M01 they would not be testing the defect. `M07` is the over-refusal
+control, and it is not about coverage: a fix that refused every record would
+pass every defect test above while being worse than the defect, because a board
+that never fills looks exactly like a draft that has not started.
+
+### Gates
+
+Run from `backend/` with `PYTHONPATH=$PWD/src`:
+
+GATE_RESULTS_PLACEHOLDER
+
+Code gate, and the Adapter gate as argued above. No Model gate: nothing here
+produces a number a decision rests on. No Automation gate: this is the read
+path and it appends nothing the hand-recorded path does not also append.
+
+### Backlog
+
+`draft-feed-unreadable-id-surfacing` marked done; header recounted to
+`59 done - 1 blocked - 106 pending - 166 total`; `backlog_graph.py` exit 0.
+
+**`draft-tracker` deliberately left `pending`**, and its dependency list now
+reads as satisfied, which is why this needs saying. The coordinator ruled it
+stays open: `architect` found a second way a pick can vanish, in
+`backend/src/hoops_gm/draft/state.py:449-463`, where `fmt.auction_budget` is
+one scalar for the whole draft and `DraftParticipant` has no budget column. The
+owner's Q8 answer is that his league's budgets differ per team, so the scalar
+is wrong for most seats by construction. The rule this item established - the
+board is not markable done while a captured pick can vanish silently - binds
+that defect exactly as it bound this one. `architect` owns adding the edge; I
+did not touch the umbrella.
+
+One thing to hand to whoever takes that unit, because it makes the case worse
+rather than better. The budget check at line 564 fires immediately before
+`board.add(...)`, so the sale never reaches the board - and `apply_observations`
+files the observation that caused it under `f"{error.code}: {error}"` in
+`skipped_reason`, **which nothing in this package ever clears**. The reading is
+burned permanently, and re-ingesting the same capture dedupes against the
+burned row rather than retrying it. So it is not "the pick is missing tonight";
+it is "the pick is unrecoverable without the owner typing it".
+
+### What I could not verify
+
+- **Whether any of this fires on a real Fantrax draft-room payload.** No such
+  payload has ever been observed. Every fixture is constructed. Unchanged from
+  thirteen previous rounds, and it is the caveat that swallows most of the
+  others: I have closed a defect in how this module treats a shape nobody has
+  seen. *Not disproved, unestablished.*
+- **Whether withholding the label is the right trade.** I argued it from
+  `_player_label`'s stated precondition and from wanting the exclusion to be
+  structural, and I believe both. But the owner is the one who will be looking
+  at the screen at 7:14pm, and "a record at seat t2 could not be identified" may
+  be materially worse for him than a name he could act on. If it is, the fix is
+  to store the explicit label *and* add an enforced exclusion, which is more
+  machinery than I would build unreviewed at this hour. *Judgement, not a
+  finding.*
+- **The all-unreadable list is still surfaced on `POST` only.** A list whose
+  records are *every one* unreadable is refused as a list, because nothing about
+  it establishes it was a pick log rather than a standings block, and writing
+  rows for it would put unfounded refusals on the status screen. I think that
+  line is right. I also notice it is the same shape as the defect I just fixed,
+  and I would rather say so than let the next reader discover it. *Driven that
+  it still refuses; not established that refusing is correct.*
+- **Postgres.** Migration `0021` was exercised up/down/up on SQLite only. On
+  Postgres the batch operation compiles to `DROP CONSTRAINT` / `ADD CONSTRAINT`
+  rather than a table rebuild, which is a genuinely different code path, and
+  ADR-001 exists because a suite run against one engine only discriminates on
+  inputs that differ between them. CI's Postgres job covers it; I did not run it
+  locally. *Reasoned locally, delegated to CI.*
+- **That the two `skipped_reason` senses stay disjoint.** The apply pass writes
+  `no_player_label`, `already_in_log`, `duplicate_within_run`,
+  `sale_without_amount`, `no_seat_for_team_external_id` and
+  `f"{code}: {error}"`; the recogniser writes `player_external_id_unreadable`
+  and `record_names_no_player`. Nothing enforces that they do not collide,
+  because nothing needs to *today* - the exclusion is structural, on
+  `names_a_player`, not on the strings. If a later change starts reading the
+  strings, that assumption becomes load-bearing with nothing behind it.
+  *Currently unused, and therefore currently unenforced.*
+- **That `observations_skipped` reconciles with `unrecognised` in every case.**
+  I documented it as differing "by exactly the
+  `player_external_id_unreadable` occurrences for newly-seen artifacts", and
+  drove the single-artifact case. Across a re-ingest with partial dedupe the
+  relationship is more complicated than that sentence and I did not enumerate
+  it. *Driven for one artifact, asserted loosely for the general case.*
+- **That `main` had not moved again between my rebase onto `431cc71` and the
+  push.** I fetched, rebased and pushed within a few minutes, and did not
+  re-check at the instant of the push. *Driven at one point in time, not at the
+  second.*
+
+**Next:** `per-team-auction-budgets`, which is now the thing standing between
+the owner and `draft-tracker`.

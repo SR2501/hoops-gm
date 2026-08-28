@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**59 done - 1 blocked - 110 pending - 170 total**
+**60 done - 1 blocked - 109 pending - 170 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1748,11 +1748,14 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-feed-unreadable-id-surfacing` - Surfacing records whose player id cannot be read
 
-- [ ] **pending** - **Blocks `draft-tracker`.** Filed 2026-08-27 by `architect` after the owner named this exact failure as disqualifying. `unrecognised` reaches only the `POST` response; `_status_out` carries no such field, so a record whose `player_external_id` is present but unreadable is **counted at ingest and never surfaced on `GET`**. Driven at PR #104 head `7a66d4e`: `POST -> written 1, unrecognised [('player_external_id_unreadable', 1)]`; `GET -> observations 1, applied 1, pending 0, blocked (), skipped (), freshness bridge_capture silent: False`; board holds one player where two were captured. **A pick that happened, reported as nothing, with every channel reading clean and freshness asserting the transport is not silent.** Asked what would make him abandon the tool mid-auction, the owner answered *"it loses track of the draft - shows me picks that already happened or misses one"* - this is that, exactly. **The cheap fixes are all closed and were closed deliberately:** `player_external_id=None` is what the round-eleven identity work explicitly forbids; `blocked_reason` leaves the row pending and therefore an application candidate; re-running recognition at status time is two paths answering one question, which is the defect class PR #104 spent thirteen rounds removing. **The route is to change the recogniser's contract** so unreadable records arrive as instants carrying `skipped_reason` - surfaced on `GET`, never applied, never joining identity matching, and permanent, which is arguably correct for an id that cannot be read. That crosses into `data-engineer`'s file, so it is a joint unit. **Recorded as a dependency rather than a caveat on purpose:** a caveat is text, and this repository's own finding is that a rule with nothing executable connecting it to the code is not enforced. `backlog_graph.py` fails on a dangling edge; a paragraph does not.
+- [x] **done** - Landed 2026-08-28. The recogniser's contract changed as this item directed: a record whose `player_external_id` is present and unreadable now becomes an instant carrying `skipped_reason`, written at ingest rather than derived later. It reaches `GET` through the existing `skipped` tally, is never pending and so never applied, and is permanent. Migration `0021` widens `feed_names_a_player` to admit a row naming no player **only** while it carries a reason, so the invariant that anything applicable names a player is unchanged. **The refused row stores no player label either, not only no id**, which goes beyond the letter of the route and is the load-bearing choice: `_player_label`'s fallback is documented as safe only once `_player_identity` has succeeded, which on a refused record it has not; and a row naming nobody has no `matching_key`, so "never joins identity matching" holds by construction rather than by a rule a later change could narrow. The cost is stated rather than hidden - the screen says a record at seat `t2` could not be identified, and does not name the player. The same silence is closed on the official path, where a record with a refused or absent identity was dropped at `if not (player_external_id or player_label)`. **Open caveat:** a list whose records are *all* unreadable is still refused as a list and reported on `POST` only, because nothing about such a list establishes it was a pick log, and writing rows for it would put unfounded refusals on the status screen. See `docs/handoff.md`.
 - **Depends on:** `draft-tracker-bridge-feed`
 
 The board must not be able to be marked done while a captured pick can vanish
-silently. Fix the surfacing, then close this item, then `draft-tracker` unblocks.
+silently. That rule outlived this item: `draft-tracker` stays `pending` after
+this closed, because `architect` found a second way a pick can vanish -
+`draft/state.py`'s budget check derives every seat's bank from one scalar, and
+the owner has told us his league's budgets differ per team.
 
 ### `draft-tracker` - Building the live draft tracker
 

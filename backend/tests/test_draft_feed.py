@@ -5434,6 +5434,61 @@ def test_a_record_with_no_readable_identity_at_all_is_still_surfaced(session: Se
     assert orphan.player_external_id is None
 
 
+def test_the_status_document_itself_reports_the_missing_pick(
+    client: TestClient, session: Session
+) -> None:
+    """Excludes: the fix stopping one layer short of the screen.
+
+    The defect this unit closes is stated in ``docs/backlog.md`` as a property
+    of ``_status_out``, not of ``feed_status``: *"``unrecognised`` reaches only
+    the ``POST`` response; ``_status_out`` carries no such field"*. Every other
+    test here asserts against the service, and a service-level assertion stays
+    green while the response model drops the field the screen reads -- which is
+    the same defect, one layer out.
+
+    So this one goes through HTTP and asserts the two documents *together*:
+    ``POST`` names the block's keys, which is what a five-minute fix needs, and
+    ``GET`` names the loss, which is what a board polling every few seconds
+    needs. Before this change the second half was empty.
+    """
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p-jokic", "playerName": JOKIC, "overallPick": 1},
+            {"teamId": "t2", "playerId": UNREADABLE_ID, "playerName": EDWARDS, "overallPick": 2},
+        ],
+        dedupe_key="http-surfacing",
+    )
+    session.commit()
+
+    ingest = client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": True})
+    assert ingest.status_code == 200, ingest.text
+    body = ingest.json()
+    bridge = next(source for source in body["sources"] if source["transport"] == "bridge_capture")
+    assert bridge["observations_written"] == 2
+    assert bridge["observations_skipped"] == 1
+    assert bridge["instants_recognised"] == 1
+    assert [shape["reason"] for shape in bridge["unrecognised"]] == [
+        "player_external_id_unreadable"
+    ]
+
+    status = client.get(f"/api/v1/drafts/{draft.id}/feed")
+    assert status.status_code == 200, status.text
+    document = status.json()
+    assert document["skipped"] == {"player_external_id_unreadable": 1}
+    assert document["observation_count"] == 2
+    assert document["applied_count"] == 1
+    assert document["pending_count"] == 0
+    assert document["blocked"] == []
+
+    # The board really is short a player, which is what the report is about.
+    events = client.get(f"/api/v1/drafts/{draft.id}/events").json()
+    assert [event["player_label"] for event in events["events"]] == [JOKIC]
+
+
 def test_the_official_path_surfaces_a_refused_identity_too(session: Session) -> None:
     """Excludes: the fix holding on one path only.
 

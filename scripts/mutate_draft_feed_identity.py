@@ -161,6 +161,8 @@ def run(args: list[str], *, stop_early: bool) -> tuple[int, str]:
             "--no-header",
             "-p",
             "no:cacheprovider",
+            "-p",
+            "no:randomly",
         ],
         cwd=SRC,
         env=ENV,
@@ -172,8 +174,21 @@ def run(args: list[str], *, stop_early: bool) -> tuple[int, str]:
 
 
 def classify(rc: int, out: str) -> str:
-    if re.search(r"INTERNALERROR", out):
+    """Verdict for one mutation run.
+
+    **A collection error is a harness failure, not a catch**, and this had to be
+    learned the hard way on this very unit: a first sweep reported 13/13 caught
+    while the author was concurrently editing the test file, and a
+    ``SyntaxError`` there produces a red run that is not evidence about the
+    mutation at all. ``gates.md`` already says a verdict on a tree that moved
+    underneath it is not a verdict; this is the executable half of that.
+    """
+    if "INTERNALERROR" in out:
         return "HARNESS_FAILURE(internal error)"
+    if re.search(r"\b(\d+) errors?\b", out) or "errors during collection" in out:
+        return "HARNESS_FAILURE(collection/error)"
+    if "SyntaxError" in out or "ImportError" in out:
+        return "HARNESS_FAILURE(source did not import)"
     if rc == 5:
         return "HARNESS_FAILURE(no tests collected)"
     if rc == 4:
@@ -182,7 +197,12 @@ def classify(rc: int, out: str) -> str:
         return "HARNESS_FAILURE(interrupted)"
     match = re.search(r"(\d+) failed", out)
     if rc == 1 and match:
-        return f"CAUGHT({match.group(1)} failed)"
+        # Name the test, not just the count. "1 failed" says something went red;
+        # it does not say the *right* thing went red, and on a suite this size
+        # those are very different claims.
+        failed = re.findall(r"FAILED (\S+)", out)
+        named = failed[0].split("::")[-1] if failed else "unnamed"
+        return f"CAUGHT({match.group(1)} failed: {named})"
     if rc == 0:
         return "SURVIVED"
     return f"HARNESS_FAILURE(rc={rc})"
