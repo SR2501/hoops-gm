@@ -1123,27 +1123,6 @@ def recognise_bridge_payload(
                         reason="player_external_id_unreadable",
                     )
                 )
-            for position, record in unreadable:
-                # Stored as an instant that says why it is not a pick, at the
-                # same locator scheme the admitted records use -- so a
-                # republished capture dedupes against it instead of writing a
-                # second copy, and so it can never collide with an admitted
-                # record's slot.
-                instants.append(
-                    _instant_from(
-                        record,
-                        kind=kind,
-                        provenance=InstantProvenance(
-                            transport=SourceTransport.BRIDGE_CAPTURE,
-                            artifact_key=dedupe_key,
-                            recogniser=_BRIDGE_RECOGNISER,
-                            received_at=received_at,
-                            source_claimed_at=captured_at,
-                            locator=f"{list_locator}[{position}]",
-                        ),
-                        skipped_reason="player_external_id_unreadable",
-                    )
-                )
             for position, record in typed:
                 dropped = _fields_dropped_for_kind(record, kind)
                 if dropped:
@@ -1161,6 +1140,33 @@ def recognise_bridge_payload(
                             source_claimed_at=captured_at,
                             locator=f"{list_locator}[{position}]",
                         ),
+                    )
+                )
+            for position, record in unreadable:
+                # After the admitted records, so the picks a capture *did*
+                # yield keep the lower observation ids. Nothing depends on
+                # that -- a refused row is never pending, never reconciled and
+                # never a tie-break for anything -- and it is done this way so
+                # a person reading the table sees the board before the
+                # refusals rather than a refusal at row one.
+                #
+                # Stored at the same locator scheme the admitted records use,
+                # so a republished capture dedupes against it instead of
+                # writing a second copy, and so it can never collide with an
+                # admitted record's slot.
+                instants.append(
+                    _instant_from(
+                        record,
+                        kind=kind,
+                        provenance=InstantProvenance(
+                            transport=SourceTransport.BRIDGE_CAPTURE,
+                            artifact_key=dedupe_key,
+                            recogniser=_BRIDGE_RECOGNISER,
+                            received_at=received_at,
+                            source_claimed_at=captured_at,
+                            locator=f"{list_locator}[{position}]",
+                        ),
+                        skipped_reason="player_external_id_unreadable",
                     )
                 )
         # A capacity refusal is reported whatever else happened in this entry.
