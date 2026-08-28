@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 111 pending - 172 total**
+**60 done - 1 blocked - 112 pending - 173 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1670,6 +1670,41 @@ already recorded for the scoring profile in `ownership.md`.
 - **Depends on:** `punt-builds`, `userscript-foundation`
 
 Shadow-DOM overlay rendering hoops-gm recommendations directly on Fantrax pages, so decisions surface where they are made.
+
+### `userscript-served-version-check` - Failing when the served bridge build is older than the source
+
+- [ ] **pending**
+- **Depends on:** `userscript-foundation`
+
+**Found live on 2026-08-28.** The owner asked whether his browser showing
+`0.5.0` and "no update available" was correct. It was correct and it was wrong:
+`userscript/package.json` and its lock both declared **0.5.1**, while
+`userscript/dist/hoops-gm.user.js` — the exact bytes
+`GET /bridge/userscript.user.js` serves — still said **0.5.0** and was built on
+**18 August**, ten days earlier. Someone bumped the version and never ran
+`npm run build`, so he had been running a bridge that predated the
+*"Harden bridge capture durability"* work, on the code path he is about to
+exercise in a mock draft.
+
+**Nothing could have told him.** `dist/` is gitignored, so CI never sees the
+artifact and cannot compare it to the source that declares it. `build.mjs`
+already refuses when `package.json` and `package-lock.json` disagree, which is
+the adjacent check — but **nothing catches "bumped and never built"**, and the
+auto-update path then works perfectly and faithfully serves a stale file.
+Tampermonkey reports "no update available" because that is literally true of the
+bytes it fetched.
+
+**Acceptance:** a check that fails when the `@version` in the built artifact does
+not match `package.json`, plus a route- or startup-level assertion so the backend
+refuses to serve — or loudly marks — a build older than the source it declares.
+The first half is cheap and can run in CI against a build step; the second is the
+half that helps on draft day, because the person who needs to know is looking at
+a browser, not at CI.
+
+**This is the third distinct way the bridge fails silently**, alongside an
+unpaired script and a refused envelope, and all three look identical from the
+Fantrax page: nothing happens. See `bridge-status-strip`, which surfaces the
+other two.
 
 ### `bridge-status-strip` - Showing, on the Fantrax page, whether the bridge is alive
 
