@@ -1977,6 +1977,14 @@ else would carry them:**
   snapshots of one unchanged board, differing in HTML, must produce one
   observation and one `artifact_key`. Byte-keying passes any test that only
   asserts the new code works.
+- **Pin column-major document order against
+  `backend/tests/fixtures/fantrax_draft_board_complete.html`.** ADR-020's
+  amendment rests on it and it is currently held by nothing: coordinate marks run
+  `1-1, 2-12, 3-1 … 18-12` for seat 1 before `1-2` appears, and column *i* begins
+  with `1-i`. Both were measured across all 42 board-bearing captures and both
+  reproduce from the committed fixture, so **no private capture is needed**. If
+  the layout ever becomes row-major, a truncated capture parses clean and short
+  instead of refusing, and nothing else in the suite would notice.
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 

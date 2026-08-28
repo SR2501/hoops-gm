@@ -76,3 +76,43 @@ observed, so `bridge-snapshot-budget` is load-bearing rather than hygiene.
 
 **Every byte of evidence under this ADR is football, snake format.** Nothing here
 has been driven against an auction board or an NBA one.
+
+## Amendments
+
+### 2026-08-28 — the truncation and seat-stability claims are now measured, not reasoned
+
+**Status:** Proposed. Written by `architect`, the author of the body above; only
+the project owner accepts.
+
+**The decision does not change.** What changes is the standing of two claims
+under it, both of which the handoff entry listed as "could not verify".
+
+**The board is column-major in document order, and this is now checkable in CI.**
+Coordinate marks in `backend/tests/fixtures/fantrax_draft_board_complete.html`
+run `1-1, 2-12, 3-1, 4-12 … 17-1, 18-12` — all eighteen of seat 1's picks,
+snaking within the one column — and only then `1-2, 2-11, …`. The same holds in
+**all 42 board-bearing captures**. The Consequences paragraph above therefore
+stands: a byte cut either removes whole trailing columns, leaving `seen` short of
+an `expected` built from the **header**-derived `seat_count` and tripping
+`coordinate_grid_incomplete`, or lands mid-column and trips `ragged_columns`.
+Both refuse. Had the layout been row-major, a cut would have removed trailing
+rounds uniformly, `rounds` is derived from the rendered cell count
+(`board_dom.py:475-484`), and a truncated capture would have parsed **clean and
+short** — the precise defect the unit exists to prevent.
+
+**Seat index is stable.** Column *i* begins with coordinate `1-i` in **all 42**
+captures, spanning 0 to 216 picks. Decision 2 digests `seat` and excludes
+`seat_name`, and that is the property that holds: the four renames
+`board_dom.py:171` records are of displayed *names*, and the digest never reads
+one.
+
+**What this still does not establish.** One draft, one league, football, snake.
+It says nothing about an auction board, which may not carry coordinates at all,
+and nothing about whether column order survives a mid-draft re-render in a
+different league.
+
+**Because the fixture is committed, this is a test rather than a claim** — no
+private capture is needed to re-derive either figure. Pinning column-major order
+against that fixture is now an acceptance criterion on
+`draft-board-feed-integration`, so the property is re-derived rather than
+believed.
