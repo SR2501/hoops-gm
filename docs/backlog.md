@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 113 pending - 174 total**
+**60 done - 1 blocked - 115 pending - 176 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1738,6 +1738,65 @@ a browser, not at CI.
 unpaired script and a refused envelope, and all three look identical from the
 Fantrax page: nothing happens. See `bridge-status-strip`, which surfaces the
 other two.
+
+### `draft-feed-team-alias-draftteamid` - Admitting the team id Fantrax actually sends
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker-bridge-feed`
+
+**Found in the first instrumented capture, 2026-08-28, on a live Fantrax draft
+room.** `FIELD_ALIASES["team_external_id"]` is `("teamId", "fantasyTeamId",
+"franchiseId", "teamID")`. Fantrax emits **`draftTeamId`** on every
+`processScorerDrafted` and **`cellTeamId`** on every `Board cell MATCHED`.
+Neither is in the tuple.
+
+**Consequence if unchanged.** `recognise.py`'s own contract: a record with no
+resolvable buyer disqualifies the entire list it is in. So every pick refuses as
+`no_seat_anchor`, the board stays empty, and freshness still reports the
+transport healthy. That is the owner's Q12 answer — *"it loses track of the
+draft"* — reached by an alias nobody could check until a real draft existed.
+
+**The player alias was right and must not be touched.** `scorerId` is in the
+tuple and is exactly what Fantrax sends; it entered from `fantraxapi`'s NHL
+heritage and the vocabulary really is scorer-shaped across sports. An earlier
+reading of a compressed screenshot claimed it was `scoreId` and wrong — that was
+a misreading, corrected before anything was edited.
+
+**Add, do not replace.** The existing names may be correct for the official
+`fxea` path, which is a different recogniser (`_OFFICIAL_RECOGNISER =
+"fxea.getDraftPicks.v1"`). This item widens the bridge path only.
+
+**Evidence is console vocabulary, not wire format.** `[DRAFT.STORE]` lines are
+emitted by Fantrax's own client and it may rename on ingest. **Confirm against a
+captured body before editing**, and if no body can confirm it, say so in the
+change rather than asserting the shape. Captures are in the owner's private
+folder, not in this repository.
+
+**Acceptance:** a recorded fixture built from a real capture, a contract test
+that fails against the current tuple and passes after, and an explicit statement
+of which recogniser the widening applies to.
+
+### `bridge-drop-cache-storage-poller` - Removing a five-second poll of a store that is permanently empty
+
+- [ ] **pending**
+- **Depends on:** `bridge-capture`
+
+`capture.js:675` runs `setInterval(pollCacheStorage, 5000)` on every Fantrax
+league page. Capture path 1 was **verified empty on a live draft room** on
+2026-08-28: the origin's Cache Storage holds five `ngsw:` entries, all Angular
+service-worker *asset* groups, and no data group. `/fxpa/req` responses are never
+written there, so the poll can never find anything.
+
+**Two costs, and the second is the one that matters on draft day.** It is wasted
+work on every page load; and it is a recurring background timer competing for
+attention in a tab Brave may be throttling, in a browser where the snapshot
+path already depends on `setTimeout` and `MutationObserver` firing promptly.
+
+**Do not delete the reasoning with the code.** The path was a legitimate
+hypothesis — a common Workbox pattern — and the finding is that *Fantrax does not
+use it*. Leave a comment recording that it was tried, verified absent, and why,
+so nobody re-adds it. Keep the IndexedDB note as it stands: still unimplemented,
+still a documented option.
 
 ### `bridge-status-strip` - Showing, on the Fantrax page, whether the bridge is alive
 
