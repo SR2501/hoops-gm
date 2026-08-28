@@ -31398,3 +31398,84 @@ now, which makes it a property of the format rather than a coincidence.
 I have not touched either file's existing bytes. Flagged for the owner, who is
 the only person who can decide whether the mock league's id is worth a history
 rewrite, and it is very likely not.
+
+## 2026-08-28 - architect - The three contract questions the board parser deferred, answered as ADR-020
+
+`draft-board-dom-parser` landed the parser and deliberately did not wire it to
+the feed, naming three questions as mine: transport, `artifact_key`, and what
+"the board went backwards" means. `docs/decisions/ADR-020-board-reading-keyed-by-board.md`
+answers all three plus a fourth I found while answering them (liveness).
+
+**Why this was urgent rather than tidy.** Both automatic pick paths are now
+negative - `/fxpa/req` is unobservable to a userscript (49 of 49 captures) and
+`getDraftPicks` returns an empty list for a completed draft. The rendered board
+is the only live source of picks there is, so the join is the critical path to
+4 October, and it was blocked on decisions only I could make.
+
+**The decisions, briefly; the ADR is the text that binds.**
+
+1. Transport stays `BRIDGE_CAPTURE`. No `rendered_view` value. I did not decide
+   this on taste - `DraftFeedTransport`'s own docstring already forbids finer
+   values, in as many words, because two readings off one pipe must not look
+   like two pipes. The finer distinction goes in `InstantProvenance.recogniser`.
+2. `artifact_key` digests the parsed board, not the HTML.
+3. Liveness comes from `freshness_of`'s existing `contact_at` parameter, which
+   turns out to have been written for exactly this case.
+4. A board that has lost a pick is stored and published as `board_regression`.
+   Nothing is retracted automatically. Discarding it would be Q12's named
+   failure - *"it loses track of the draft"* - implemented on purpose.
+
+**The part worth reading, because it is a correction of my own reasoning in
+flight.** I drafted decision 2 with the strong justification: keying on HTML
+bytes would enter one board twice and hand the independence guard a false
+corroboration. That is the more serious-sounding objection, and it is **false**.
+`reconcile._independence` refuses on `same_transport_on_both_sides` before
+`artifact_key` is ever consulted, so two bridge readings cannot corroborate each
+other however they are keyed. I found this by reading lines 232-259 rather than
+by remembering what the guard does.
+
+The true reason is narrower and duller: `dedupeKey` is
+`METHOD:fnv1a(url):fnv1a(raw)` (`capture.js:154`), the raw is the whole HTML, and
+HTML moves between two snapshots of an unchanged board. Keyed on bytes, a
+156-slot board snapshotted through a three-hour auction stores every pick once
+per snapshot, and `SourceFreshness.instant_count` becomes a count of snapshots
+rather than of picks read.
+
+This is AGENTS.md's rhetorical-convenience rule catching me in the act, one day
+after I put a false claim into a lane brief as settled fact and had the lane
+disprove it. Both times the mechanism was the same: I reached for the objection
+that sounded most serious instead of the one I could evidence. **Naming the
+mechanism is what made it checkable in ninety seconds.** The false version is
+written into the ADR beside the true one, because a reader who arrives at
+decision 2 and reasons about it fresh will reach for the same wrong reason.
+
+**One requirement the ADR asserts that nothing else would carry.**
+`observations.py:44` says `artifact_key` "identifies the **bytes**", flatly.
+ADR-020 contradicts it. An ADR that contradicts a docstring and leaves the
+docstring standing has produced precisely the false-guarantee shape this
+repository keeps finding, so it is now an acceptance criterion on
+`draft-board-feed-integration` rather than a sentence in a decision record. I did
+not edit `observations.py` myself: the ADR is `Proposed`, and writing an
+unaccepted decision into the code would be the same laundering one level down.
+
+**Could not verify.**
+
+- **Whether any of this holds for an auction.** Every byte of evidence under
+  ADR-020 is a 12-team, 18-round football *snake*. The owner's draft is a
+  12-team NBA *auction*. Decision 4 in particular assumes a board with fixed
+  coordinates; an auction board may not have them at all.
+- **Whether a capture cut *inside* the board refuses.** The parser has two cover
+  checks (`ragged_columns`, `coordinate_grid_incomplete`) and I read both. But
+  all 22 truncated captures on record were cut *past* the board, so the refusal
+  path has never fired on a real truncated board - only on constructed fixtures.
+  I reasoned that a byte cut in a column-major DOM shortens the last column and
+  therefore trips one of the two, and I have **not** driven it. That reasoning is
+  the same shape as the claim the parser lane disproved for me this morning.
+- **Whether `contact_at` is actually plumbed to a bridge payload arrival
+  anywhere today.** I established the parameter exists and is documented for
+  this purpose. I did not trace a live caller that sets it.
+- **Whether ADR-020's decision 2 digest is stable across seat renames.**
+  `BoardPick.seat_name` is excluded from the digest and `seat` is included, but
+  `board_dom.py:171` records that four seats changed their displayed name across
+  the captures. If seat *index* is also unstable, the digest moves without the
+  board changing, and content-deduping stops working. Not tested.

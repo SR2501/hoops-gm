@@ -36,6 +36,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [017](ADR-017-auction-pricing-without-mock-corpus.md) | Auction pricing ships on seed AAV; empirical AAV is an enhancement | *Proposed* | `auction-values` derives dollars from our own valuation and never consumed AAV; drop the blocked dependency and show published AAV beside ours |
 | [018](ADR-018-calibration-displayed-beside-the-number.md) | `p(play)` calibration is displayed beside the number it grades | *Proposed* | Owner rejected both auto-brake and footnote; the restricted calibration figure becomes a visible, flattenable badge that blocks nothing |
 | [019](ADR-019-cohort-fingerprint-boundary.md) | The cohort fingerprint boundary is the derivation closure, and the check claims bytes, not entitlement | *Proposed* | Nothing is dropped and the set is under-inclusive by 31 files; a fingerprinted file may be edited with a leaf-diff transcript attached |
+| [020](ADR-020-board-reading-keyed-by-board.md) | A rendered board reading is keyed by the board, not by the bytes | *Proposed* | Both automatic pick paths are negative, so the rendered board is the live source; transport stays `BRIDGE_CAPTURE`, `artifact_key` digests the parsed board, and a board that lost a pick never clears it |
 
 **016 is unwritten and reserved.** Four coordinator-register entries (`c170`,
 `c171`, `c178`, `c179`) each name a requirement for "whenever ADR-016 is

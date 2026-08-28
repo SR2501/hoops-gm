@@ -1958,6 +1958,26 @@ decide on its own:
   It should not, but SPA navigation, a re-render and a throttled tab are all
   ways it might, and "the board went backwards" needs a defined answer.
 
+**All four are answered by ADR-020 (2026-08-28, `Proposed`).** Read it rather
+than this summary; it records why one of its own reasons is false. In short:
+transport stays `BRIDGE_CAPTURE` with `board_dom` in `recogniser`; `artifact_key`
+digests the parsed board, not the HTML; liveness comes from `freshness_of`'s
+existing `contact_at`; a newer board that has lost a pick is stored and published
+as `board_regression` and retracts nothing.
+
+**Two acceptance criteria that exist because the ADR asserts them and nothing
+else would carry them:**
+
+- The divergence in ADR-020 decision 2 **must be written into
+  `observations.py`'s `InstantProvenance` docstring**, which today says
+  `artifact_key` "identifies the **bytes**" without qualification. An ADR that
+  contradicts a docstring and leaves the docstring standing has produced the
+  false-guarantee shape this repository keeps finding.
+- A test must **fail on the old behaviour**, not merely pass on the new: two
+  snapshots of one unchanged board, differing in HTML, must produce one
+  observation and one `artifact_key`. Byte-keying passes any test that only
+  asserts the new code works.
+
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 
 - [ ] **pending**
