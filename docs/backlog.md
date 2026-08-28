@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**63 done - 0 blocked - 118 pending - 181 total**
+**63 done - 0 blocked - 119 pending - 182 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1852,6 +1852,52 @@ one"*, and a miscount produces no error code.
   `MutationObserver` and `setTimeout`, both throttled in hidden tabs. A parse is
   only as current as its snapshot, and the strip in `bridge-status-strip` is
   where that must be visible.
+
+### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
+
+- [ ] **pending**
+- **Depends on:** `frontend-skeleton`
+
+**Observed 2026-08-28, in a merge the coordinator performed.** `docs/handoff.md`
+went from **0 CRLF to 149** in one merge. Measured blob-to-blob: `39ea327` had
+2,006,082 bytes and zero CRLF; `fb35201` had 2,015,243 bytes and 149. Every other
+byte in that 2 MB file is LF.
+
+**Every gate passed.** `check_doc_terminators.py` reads the file and asserts only
+that it **ends** with a newline (`data.endswith(b"\n")`, line 87) — it says
+nothing about the line endings inside. `check_append_only.py` asserts byte-prefix
+containment against the merge-base, and CRLF in the *appended* region leaves the
+prefix untouched, so containment holds. Neither is wrong; **both have a domain
+narrower than the hazard**, which is `c350` in yet another place.
+
+**Why it matters rather than being cosmetic.** `predict_union.py` counts entries
+with `^## \d{4}-\d{2}-\d{2}` anchored at a line start, and the trailing-newline
+gate exists because a welded heading is *"present, uncounted, and completely
+unremarkable in a diff"*. Mixed line endings are the same hazard by a different
+route: they are invisible in a rendered diff, they propagate to the next append,
+and this file is read by counting tools.
+
+**The consequence that makes it urgent rather than tidy-up.** These documents are
+append-only. **A defect in appended bytes may not be repairable**, because the
+repair would alter bytes the containment check requires to survive. Whether it is
+actually forbidden here is **not established** — a worktree test was
+inconclusive, because `check_append_only.py` reads committed blobs and never
+examined the uncommitted change. Establish that first: if normalisation is
+permitted, do it once and add the check; if it is not, the check is the *only*
+remedy and every future append inherits the mixed file.
+
+**Acceptance:** the existing terminator gate grows a second assertion — an
+append-only document contains no CRLF — with the same `CHECKED` tuple, so it
+covers `handoff.md`, `backlog.md` and `coordinator-register.md` together. Prove
+it by injection: add a CRLF, watch the gate name the file and go red, remove it,
+watch it pass. A gate that cannot be made to fail is worth nothing, and this one
+already shipped with a coverage hole once — the register was missing from
+`CHECKED` from the day the script was written until 2026-08-28.
+
+**Not the fault of the lane that introduced it.** It was writing on Windows,
+where `Add-Content` and most editors default to CRLF, and nothing told it
+otherwise. That is precisely the argument for a mechanical check rather than a
+convention.
 
 ### `field-name-guess-audit` - Auditing every field name guessed from a format rather than read from one
 
