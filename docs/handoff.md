@@ -30603,3 +30603,103 @@ which was `origin/main` at the time of writing.
 
 **Next:** coordinator. Code gate only; the tool produces no number a decision
 rests on - it recounts one that already exists.
+
+## 2026-08-28 - architect - Coordinating the overnight run: nine corrections to the repository's claims about itself, and the failure mode behind all of them
+
+**Written because nine commits landed on `main` today with no entry.** They were
+made directly rather than through a lane, so no lane's handoff covers them.
+
+### What merged, and who did it
+
+Six PRs from five lanes: `#119` the c354 adjudication, `#120` the league
+category table, `#121` the budget blocking edge, `#122` the unreadable-id fix,
+`#123` Route B, `#124` the fingerprint closure tool. Those are described by
+their own entries above and are not restated here.
+
+### The nine I made directly, and what they have in common
+
+`5c365cf` `dc0e7dd` `f5b7e29` `2f4a09c` `5d6a0ec` `8dde625` `0330f16` `92d4d69`
+`000edd0`.
+
+**Eight of the nine correct a claim this repository was making about itself**, and
+that is the finding rather than the commits:
+
+- the standup addendum health-checked port **8010**; the app serves **8000**, and
+  `vite.config.ts` proxies `/api` and `/health` to 8000 — so the runbook was
+  *unrunnable*, not merely stale. The port traces to one run recorded in this
+  file whose own text says *"that is not how anyone else will run it"*.
+- `docs/mocks/instrumented-capture.md` still called `player_external_id_unreadable`
+  "the known unfixed High" **after `#122` fixed it** — on the page the owner was
+  about to run.
+- `draft-tracker`'s status note named a dependency that had already shipped,
+  hiding that it had reached eight of nine.
+- my *own* replacement for that note, four hours later, called the remaining item
+  "a live defect rather than unbuilt work" — which Route B then inverted.
+- the `league-category-table` note said "in flight in a parallel lane" hours
+  after that lane shipped.
+
+**The pattern is `c350`:** the measured domain was narrower than the hazard, six
+times in eighteen hours, across four agents and me. Recorded there with the table
+and the mechanical remedy — derive checks from `git diff --name-only`, not from
+the area the work feels like it belongs to.
+
+**And then a seventh instance, inside the gate built to prevent it.** Appending
+`c350` to `coordinator-register.md` **without a trailing newline passed
+`check_doc_terminators.py`**, whose entire purpose is catching that: its
+`CHECKED` tuple had never included the register. Fixed at the generator, not the
+instance — adding the file is one value, but *nothing asserted what `CHECKED`
+contains*, because every existing test passes an explicit tuple and so proves the
+mechanism while saying nothing about where it is aimed.
+
+### Rulings recorded
+
+- **The `draft-tracker` -> `per-team-auction-budgets` edge stays**, on a new
+  justification. Its original one — a sale could be refused and the player never
+  added — is false since Route B. It survives on Q15's second noun: *"picks **and
+  budgets** tracked automatically"*, and every seat's figure derives from one
+  scalar while Q8 says budgets differ per team. **What would flip it is written
+  down**: the owner saying the shared scalar is close enough. Worth asking before
+  Route A's migration, not after.
+- **The category-table split is right.** `league-category-rate-table` done,
+  `league-category-table` pending behind `expected-games`, because his Q9 asks for
+  *expected performance* and what shipped ranks published per-game rates.
+
+### Filed, not started
+
+`bridge-status-strip` (the overlay work reachable before draft day — the bridge's
+failure mode is silence), `userscript-served-version-check`,
+`openapi-recorded-drift-check`.
+
+### One live defect found by the owner, not by us
+
+He asked why Tampermonkey said "no update available". `package.json` said
+**0.5.1**; the served `dist/` said **0.5.0**, built ten days earlier. Bumped and
+never built, and `dist/` is gitignored so nothing in CI can see it. He had been
+about to run a mock on a bridge predating the capture-durability hardening.
+Rebuilt; the backend now serves 0.5.1 with no secret in the bytes.
+
+### What I could not verify
+
+- **`83288af` — Route B's own merge commit — never had a full test run.** Its
+  `Backend` job was **cancelled 112s in** by concurrency, because I pushed
+  `41e6a9c` and `8dde625` in quick succession. `000edd0` contains the same code
+  and is green across all 11 gates, which closes it *by containment*, not by that
+  commit ever having been tested.
+- **The Route B lane's holdings answer arrived after I archived it.** I verified
+  its disk was empty; I could not verify what was only in its context. Its reply
+  did land and contained five things, including a deleted OpenAPI drift checker —
+  so the pre-archive question paid for itself, and the margin was luck.
+- **I never opened the category table on a populated board.** The probe I ran was
+  against draft 1, the all-unresolved control, so `cellsWithOrdinal: 5` is
+  consistent with correct behaviour and proves nothing about a ranked one.
+- **`review-calibration-5032bf1`** holds commit `9cc4711`, on no branch and
+  unreachable from `main`. Content *probably* landed as squash-merge `d8b2582`
+  (`#102`). **Not proved**, and not mine to remove.
+- **The 1664-vs-1656 leaf discrepancy is open**, with three leaves unaccounted
+  for even if the documented cause held. `cohort-manifest-leaf-count-discrepancy`.
+- **Two errors of mine, propagated before I caught them:** I told four lanes a
+  wall-clock time three hours wrong, having counted polling intervals instead of
+  reading `Get-Date`; and I repeated a register id `c354` from my own briefing
+  that **does not exist**, which the lane working it disproved along with my claim
+  that a test was "owed and not running" — it fails 2 of 7 on `main` and landing
+  it would have broken CI.
