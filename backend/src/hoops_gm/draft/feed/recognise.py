@@ -1242,6 +1242,14 @@ def recognise_official_draft_picks(
     unverified in ``docs/adapters/fantrax-official.md``, and duplicating them
     would give this repository two guesses that can drift apart instead of one.
 
+    **One of those guesses has since been settled, and it was wrong.** The live
+    read on 2026-08-28 returned ``{"currentDraftPicks":[]}``; the parser had
+    been looking for ``draftPicks`` or ``picks``. The *container* key is now
+    verified. Every **per-record** field name this reader consumes —
+    ``teamId``, ``playerId``, ``round``, ``overallPick``, an auction ``amount``
+    — remains a guess, because no populated row has ever been observed on this
+    path. Do not read "verified live" in the adapter doc as covering them.
+
     **That argument is about key names and does not extend to values.**
     Inheriting the parser also inherits how it *converts* what it finds, and
     that half is not free: see the falsified-justification note at the end of
@@ -1410,7 +1418,7 @@ def recognise_official_draft_picks(
                     # rather than backfilled from ``received_at``, which would
                     # invent a claim the source never made.
                     source_claimed_at=None,
-                    locator=f"draftPicks[{index}]",
+                    locator=f"getDraftPicks[{index}]",
                 ),
                 team_external_id=team_external_id,
                 player_label=player_label,
@@ -1429,7 +1437,7 @@ def recognise_official_draft_picks(
             UnrecognisedShape(
                 keys=("teamId",),
                 occurrences=unanchored,
-                example_locator="draftPicks[].teamId",
+                example_locator="getDraftPicks[].teamId",
                 reason="no_seat_anchor",
             )
         )
@@ -1438,7 +1446,7 @@ def recognise_official_draft_picks(
             UnrecognisedShape(
                 keys=("playerId", "playerName"),
                 occurrences=unnamed,
-                example_locator="draftPicks[]",
+                example_locator="getDraftPicks[]",
                 reason="record_names_no_player",
             )
         )
@@ -1450,7 +1458,7 @@ def recognise_official_draft_picks(
             UnrecognisedShape(
                 keys=tuple(sorted(unreadable_fields)),
                 occurrences=unreadable,
-                example_locator="draftPicks[]",
+                example_locator="getDraftPicks[]",
                 reason="field_too_large_to_record",
             )
         )
@@ -1459,5 +1467,9 @@ def recognise_official_draft_picks(
         unrecognised=tuple(unrecognised),
         coerced_to_kind=coerced,
         fields_dropped=tuple(sorted(dropped_names)),
-        notes=("getDraftPicks has never returned a verified real payload; see the module docs.",),
+        notes=(
+            "getDraftPicks was verified reachable on 2026-08-28 and returned "
+            "an empty list for a completed 216-pick draft; what a populated row "
+            "would mean is still unresolved. See the module docs.",
+        ),
     )

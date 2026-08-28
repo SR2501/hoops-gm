@@ -1,7 +1,9 @@
 # Adapter — Fantrax official API (`/fxea/general/`)
 
 **Status:** working. `getPlayerIds` and `getAdp` verified live 2026-08-17;
-`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` remains unverified.
+`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` **verified reachable
+live 2026-08-28 and returned an empty list for a completed 216-pick draft**; its
+meaning is unresolved.
 
 Base URL: `https://www.fantrax.com/fxea/general`
 Code: `backend/src/hoops_gm/ingest/fantrax_official/`
@@ -226,15 +228,55 @@ have to invent an identifier, and an invented identifier is how one read gets
 counted as two. `observed_at` is the same argument applied to time: a cache hit
 reported as fresh is a stale board that says it is live.
 
-**Two unknowns remain, and the feed is built to survive both.** First, the
-endpoint has still never returned a successful real payload (see "Not
-verified"). Second, `fantraxapi==1.0.1` models a "draft pick" as
-`round` + `year` + `origOwnerTeam` — that is a **tradeable future pick asset**,
-not a selection that happened. If `/fxea/general/getDraftPicks` shares that
-meaning, this endpoint corroborates nothing about a live draft board and the
-bridge is the only real feed. `parse_draft_picks` is therefore treated as a
-source that may legitimately return nothing useful, and the feed reports that
-as a silent source rather than as an error.
+**One unknown was settled on 2026-08-28 and the other survived intact.**
+
+The endpoint **is reachable**, and reachable *unauthenticated*: with only a
+non-secret `leagueId` it answered `HTTP 200`, `Content-Type: text/plain`, 24
+bytes —
+
+```json
+{"currentDraftPicks":[]}
+```
+
+`sha256:b5811c858f69d6f11a9f6e0d5a878d9622edd21fe1d6f202a9d2bf5cfb915fca`,
+recorded as `backend/tests/fixtures/fantrax_getdraftpicks_completed_snake_empty.json`.
+League `b2gyornvms4606iv` held a **completed 18-round, 12-team snake draft** at
+the time — 216 selections had happened. The endpoint reported none of them. No
+`userSecretId` was sent, so the empty list **cannot** be explained by
+authentication, and no owner credentials decision is needed to use this endpoint.
+
+**The container key was `currentDraftPicks`, which was not one of the two names
+this parser was guessing** (`draftPicks`, `picks`). That mattered independently
+of the emptiness: had the endpoint been publishing selections all along,
+`parse_draft_picks` would have returned zero of them and the feed would have
+reported a healthy, *silent* source — green tests, empty board. The observed key
+is now first in `_DRAFT_PICK_LIST_KEYS`; the other two are kept, because one real
+payload names one key and does not disprove the others.
+
+**What is still unresolved is meaning, and this read could not settle it.**
+`fantraxapi==1.0.1` models a "draft pick" as `round` + `year` + `origOwnerTeam` —
+a **tradeable future pick asset**, not a selection that happened. A completed
+draft has no unused picks left, so *both* readings predict the empty list that
+was observed:
+
+| Reading | Predicts `[]` for a completed draft? |
+|---|---|
+| Selections that happened | Yes — if the endpoint simply is not populated for this league |
+| Tradeable future pick assets a team owns | Yes — correctly, there are none left |
+
+The key name `currentDraftPicks` is *weak* evidence for the second reading and
+nothing more. **Do not record either as established.** Every per-record field
+name (`teamId`, `playerId`, `round`, `overallPick`, `amount`) is still a guess,
+because no populated row has ever been seen on this path.
+
+**One hypothesis was deliberately left untested.** The verified league is NFL and
+the request sends no `sport` parameter. Trying one would have been adjusting the
+request until it succeeded, which is precisely what the smoke was scoped to avoid,
+so it is recorded here rather than answered.
+
+`parse_draft_picks` is therefore still treated as a source that may legitimately
+return nothing useful, and the feed reports that as a silent source rather than
+as an error.
 
 ---
 
@@ -275,6 +317,25 @@ The matching live smoke bypasses cache when
 `HOOPS_GM_FANTRAX_LEAGUE_ID` is configured and fails on malformed required
 fields or newly appearing, unhandled rule-shaped paths.
 
+### The `getDraftPicks` fixture is a 24-byte recording and must stay one
+
+`fantrax_getdraftpicks_completed_snake_empty.json` is the raw response body,
+byte for byte, with **no trailing newline**. Its contract test asserts the
+SHA-256 as well as the bytes, because a reformatting would otherwise arrive
+looking like an ordinary content change: `json.dumps` of the same payload with
+default separators is 26 bytes, and that two-byte gap is the whole distance
+between a recording and a re-emission. If you re-capture deliberately, update
+`CAPTURED_SHA256` in `TestFantraxDraftPicks` and the manifest together.
+
+Its live smoke defaults to league `b2gyornvms4606iv` — the completed snake mock
+the finding came from — and is overridable with
+`HOOPS_GM_FANTRAX_DRAFT_LEAGUE_ID`. It does **not** skip when unset: a skipped
+smoke on the one endpoint whose behaviour the draft plan depends on is a silent
+degradation, and the Adapter gate asks this to fail loudly instead. It goes red
+in two directions and both are good news — the list becoming non-empty, or
+`currentDraftPicks` disappearing. The second is the one no offline test can
+catch, since an absent key and an empty list both parse to zero picks.
+
 ---
 
 ## Not verified
@@ -284,13 +345,20 @@ fields or newly appearing, unhandled rule-shaped paths.
 rolls the league forward; until then, downstream 2026–27 consumers must treat
 every setting as unavailable rather than reuse the historical snapshot.
 
-**`getDraftPicks` has not seen a successful real payload.** Its parser remains
-defensive and must be checked against both snake and auction responses before
+**`getDraftPicks` has never returned a populated payload.** It is reachable —
+verified live 2026-08-28, see the section above — but it returned `[]` for a
+league whose 216-pick draft was already complete, so **no row has ever been
+observed** and every per-record field name in `parse_draft_picks` remains a
+guess. It must be checked against real snake *and* auction responses before
 anything depends on it. Beyond shape, its *meaning* is unconfirmed: the pinned
 `fantraxapi` models a draft pick as a tradeable future asset
 (`round`/`year`/`origOwnerTeam`), so this endpoint may describe pick ownership
-rather than pick results. `hoops_gm.draft.feed` consumes it on the assumption
-that it may be either, and never treats its silence as failure.
+rather than pick results, and the observed empty list is consistent with both.
+`hoops_gm.draft.feed` consumes it on the assumption that it may be either, and
+never treats its silence as failure.
+
+**Whether `getDraftPicks` needs a `sport` parameter is untested.** The verified
+league is NFL and the request sends only `leagueId`.
 
 **The "ROTI" segment of `HEAD_TO_HEAD_ROTI_MULTI_WIN` remains semantically
 unconfirmed.** See "Scoring type and category evidence" above — the mapping to

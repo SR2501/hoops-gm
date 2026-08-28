@@ -30979,3 +30979,117 @@ contract and not a heuristic in the bridge.
   own checkout after merging**, or the backend keeps serving 0.5.1 and Tampermonkey
   keeps truthfully reporting no update available. That is exactly
   `userscript-served-version-check`, which is filed and is not this unit.
+
+---
+
+## 2026-08-28 - `getDraftPicks` verified live: it works, and it is empty
+
+**Agent:** `data-engineer`. **Unit:** `official-getdraftpicks-live-verification`.
+Owner approved at 13:54 CT and was at the keyboard.
+
+### What was done
+
+One live read of `GET https://www.fantrax.com/fxea/general/getDraftPicks?leagueId=b2gyornvms4606iv`,
+via `get_draft_picks_with_provenance`, against the owner's Fantrax NFL mock — a
+**completed 18-round, 12-team snake draft**, 216 selections. One request. No
+retry, no second league id, no parameter adjustment.
+
+### What came back
+
+**HTTP 200**, `Content-Type: text/plain`, **24 bytes**:
+
+```json
+{"currentDraftPicks":[]}
+```
+
+`sha256:b5811c858f69d6f11a9f6e0d5a878d9622edd21fe1d6f202a9d2bf5cfb915fca`,
+`observed_at 2026-08-28T19:01:40.124943+00:00`. `parse_draft_picks` → **0 picks**.
+
+Recorded byte-exact as
+`backend/tests/fixtures/fantrax_getdraftpicks_completed_snake_empty.json`.
+
+### Which failure class, stated so it can be checked
+
+- **Not authentication.** No 401/403, no error envelope, and the request carried
+  only a non-secret `leagueId` — confirmed in the captured index entry. **No owner
+  credentials decision is required**, and an empty list cannot be blamed on not
+  being logged in.
+- **Not transport.** Clean 200, well-formed JSON.
+- **An empty draft — and, separately, a shape nobody anticipated.**
+
+### Two findings, deliberately not blurred
+
+**The list is empty for a completed 216-pick draft.** That is the load-bearing
+one, and it means the official API does not carry the draft board.
+
+**The container key is `currentDraftPicks`.** `parse_draft_picks` was looking for
+`draftPicks` or `picks` and matched neither. This did *not* cause the zero — the
+list is empty under its real name too — but had the endpoint been publishing
+selections all along, the parser would have returned zero of them and the feed
+would have reported a healthy, *silent* source. **Green tests, empty board.**
+
+Measured, because the distinction is the whole point: against the real fixture
+the old reader and the new one **both** return zero picks. The recorded payload
+*cannot* pin the key name. Only two constructed cases discriminate — an
+empty-first-key payload (old `1`, new `0`) and a populated `currentDraftPicks`
+(old `0`, new `1`) — and those are what the contract test uses. A recorded
+fixture can only test what the source sent.
+
+### Changes
+
+- `parse_draft_picks` now selects the list key by **presence**, not by a truthy
+  `or` chain, which would step past an empty-but-present list to a later key —
+  the same defect class already recorded for the value aliases. `currentDraftPicks`
+  is first; `draftPicks` and `picks` are **kept**, because one real payload names
+  one key and does not disprove the others.
+- Contract tests pin the bytes *and* the SHA-256. `json.dumps` of this payload is
+  26 bytes against a recorded 24, and only the digest notices that gap — a
+  reformatting would otherwise arrive looking like an ordinary content change.
+- The live smoke now asserts the observed behaviour and **no longer skips** when
+  unset. It goes red in two directions and both are good news: the list becoming
+  non-empty, or `currentDraftPicks` disappearing. The second is the one no
+  offline test can catch, since an absent key and an empty list both parse to
+  zero picks.
+- `test_no_recorded_fantrax_draft_payload_exists_yet` fired, exactly as designed.
+  Its message said to point a recogniser at the fixture and delete it. **The
+  first half was done and the second was not**, because only half the claim
+  expired: a real response now exists, a *populated* one does not. It was
+  narrowed to `test_no_populated_fantrax_draft_payload_exists_yet` and now reads
+  the recorded bytes rather than trusting the manifest row. Retiring an alarm at
+  the moment its remaining half became the interesting one would have been the
+  wrong reading of its own instruction.
+- Corrected three claims that today made false: `fantrax-official.md:4`,
+  `recognise.py`'s result note, and the locators `draftPicks[]` /
+  `draftPicks[].teamId`, which named a key the endpoint does not send. They now
+  name the endpoint, which is the only part the recogniser can actually know —
+  it receives a parsed list and cannot see which key it came from.
+
+### Could not verify
+
+- **What a populated row would mean.** `fantraxapi` models a draft pick as a
+  tradeable future asset (`round`/`year`/`origOwnerTeam`), not a selection. A
+  completed draft has **no unused picks left**, so "selections made" and "future
+  picks owned" *both* predict the empty list observed. The key name
+  `currentDraftPicks` is weak evidence for the asset reading and nothing more.
+  One empty list cannot separate them, and I did not claim it could.
+- **Every per-record field name** — `teamId`, `playerId`, `round`, `overallPick`,
+  `amount`. All still guesses. No populated row has ever been observed on this
+  path, so the "verified live" in the adapter doc covers the endpoint and the
+  container key, and **nothing inside a row**.
+- **Whether `getDraftPicks` needs a `sport` parameter.** The league is NFL and
+  the request sends only `leagueId`. Trying one would have been adjusting the
+  request until it succeeded, which is what the unit was scoped to avoid.
+  Recorded, untested — and it is a live possibility that this is why the list
+  was empty.
+- **Whether an NBA league behaves the same.** Only one league was read, by
+  instruction.
+- **Whether the endpoint populates *during* a draft rather than after.** The
+  read happened after completion. Nobody has watched this endpoint mid-draft.
+
+### Consequence
+
+Both automatic pick-tracking paths are now negative — the bridge cannot read
+`/fxpa/req` at all, and the official API does not carry the board. **DOM parsing
+of the rendered board is the critical path to 4 October**, filed as
+`draft-board-dom-parser`. The consolation is real and worth keeping: the endpoint
+is reachable, unauthenticated, and cheap to poll if it ever populates.

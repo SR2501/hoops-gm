@@ -426,39 +426,62 @@ class TestFantraxOfficialIsAlive:
             f"{result.settings.unmapped_rule_paths}"
         )
 
-    def test_get_draft_picks_says_what_it_actually_returns(
+    def test_get_draft_picks_still_returns_an_empty_list(
         self, fantrax: FantraxOfficialClient
     ) -> None:
-        """FAILS IF: ``getDraftPicks`` starts working, or changes how it fails.
+        """FAILS IF: ``getDraftPicks`` starts returning picks, or is renamed.
 
-        This is the only test in this repository that can settle the open
-        question in ``docs/adapters/fantrax-official.md``: whether
-        ``getDraftPicks`` returns draft *results* — who took whom — or the
-        tradeable future pick assets ``fantraxapi`` models under the same name
-        (``round`` + ``year`` + ``origOwnerTeam``). The parser's key names are
-        guesses, and no recorded fixture can test a guess.
+        **Verified live on 2026-08-28, and the verification was negative.**
+        League ``b2gyornvms4606iv`` held a *completed* 18-round 12-team snake
+        draft — 216 selections — and this endpoint answered ``HTTP 200
+        text/plain`` with 24 bytes: ``{"currentDraftPicks":[]}``. No
+        ``userSecretId`` was sent, so an empty list cannot be blamed on
+        authentication.
 
-        It is written to be *informative on failure* rather than green. A
-        success here is the interesting outcome: it means the draft feed's
-        corroborating source has become real and the assertions below should be
-        replaced with ones about the payload's actual shape.
+        Two things this test is watching for, and a red here is **good news in
+        both directions**:
+
+        * **The list becomes non-empty.** The official API can carry the draft
+          board after all, DOM parsing stops being the critical path, and the
+          assertions here should be replaced with ones about the real shape.
+        * **``currentDraftPicks`` disappears.** The key was renamed upstream.
+          That has to be loud, because a committed fixture cannot notice it: an
+          absent key and an empty list both parse to zero picks, so
+          ``parse_draft_picks`` would keep reporting a healthy, silent source
+          forever. This live assertion is the *only* place that distinction is
+          checked against the real endpoint.
+
+        It also does **not** settle what a pick here would *mean*. ``fantraxapi``
+        models a draft pick as a tradeable future asset
+        (``round``/``year``/``origOwnerTeam``), and a completed draft has no
+        unused picks left — so "owned future picks" and "selections made" both
+        predict the empty list observed. If this ever goes non-empty, read the
+        rows before believing either.
         """
-        league_id = os.environ.get("HOOPS_GM_FANTRAX_LEAGUE_ID")
-        if not league_id:
-            pytest.skip("set HOOPS_GM_FANTRAX_LEAGUE_ID to smoke-test getDraftPicks")
+        league_id = os.environ.get("HOOPS_GM_FANTRAX_DRAFT_LEAGUE_ID", "b2gyornvms4606iv")
 
         payload = fantrax.fetch_json("getDraftPicks", {"leagueId": league_id}, max_age=NO_CACHE)
 
-        # Deliberately weak, because the point is to record what came back, not
-        # to pass. Any non-empty reply is worth reading by hand: attach it to
-        # the adapter doc and the feed's recogniser can stop guessing.
-        assert payload is not None, (
-            "getDraftPicks returned nothing at all. Previously it had never "
-            "returned a successful real payload; that is unchanged."
+        assert isinstance(payload, dict), (
+            f"getDraftPicks returned a {type(payload).__name__}. On 2026-08-28 "
+            "it returned a JSON object."
         )
-        assert isinstance(payload, dict | list), (
-            f"getDraftPicks returned a {type(payload).__name__}, which no "
-            "parser in this repository expects."
+        assert "currentDraftPicks" in payload, (
+            "getDraftPicks no longer carries 'currentDraftPicks'. That key is "
+            f"the only one ever observed; the payload now has {sorted(payload)}. "
+            "parse_draft_picks cannot see this - an absent key and an empty "
+            "list both yield zero picks - so fix the key list in "
+            "hoops_gm.ingest.fantrax_official.parsers before the draft."
+        )
+        rows = payload["currentDraftPicks"]
+        assert isinstance(rows, list), f"'currentDraftPicks' is a {type(rows).__name__}, not a list"
+        assert rows == [], (
+            f"**getDraftPicks has started returning {len(rows)} rows.** This is "
+            "the outcome the project wanted and did not get on 2026-08-28. "
+            "Read the rows by hand, record what they mean - selections made, or "
+            "tradeable future pick assets - and update "
+            "docs/adapters/fantrax-official.md, the recorded fixture and "
+            f"draft-board-dom-parser accordingly. First row: {rows[0]!r}"
         )
 
 

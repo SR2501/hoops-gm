@@ -17,6 +17,7 @@ the half of the Adapter gate that actually earns its keep.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -28,6 +29,7 @@ from hoops_gm.db.models.enums import DnpReason, ParticipationOutcome
 from hoops_gm.ingest.errors import SourceContractError, SourceRejected
 from hoops_gm.ingest.fantrax_official import (
     parse_adp,
+    parse_draft_picks,
     parse_league_info,
     parse_player_ids,
 )
@@ -341,6 +343,135 @@ class TestFantraxLeagueSettings:
         assert "userSecretId" not in metadata["params"]
         payload = load("fantrax_getleagueinfo_settings_sanitized.json")
         assert not set(metadata["removed_sections"]) & set(payload)
+
+
+class TestFantraxDraftPicks:
+    """``getDraftPicks`` — verified live 2026-08-28, and it returned nothing.
+
+    Every assertion here is pinned to one real response: league
+    ``b2gyornvms4606iv``, holding a **completed 18-round 12-team snake draft**,
+    answered ``HTTP 200 text/plain`` with 24 bytes — ``{"currentDraftPicks":[]}``.
+    216 picks existed. The endpoint reported none of them.
+
+    That is the finding, and these tests exist to stop it being quietly
+    forgotten or quietly "fixed".
+
+    **The fixture cannot, by itself, pin the key name.** Measured on the real
+    chain: against ``{"currentDraftPicks":[]}`` the old reader and the new one
+    both return zero picks, because an empty list looks identical to an absent
+    one. The key-name defect is therefore pinned by the two constructed cases
+    below, which do discriminate (``1`` vs ``0`` and ``0`` vs ``1``). A recorded
+    fixture cannot test a guess — it can only test what the source sent.
+    """
+
+    FIXTURE = "fantrax_getdraftpicks_completed_snake_empty.json"
+
+    #: The digest of the exact bytes the endpoint sent, carried out of the live
+    #: read alongside the payload. Pinned here so a later reserialisation cannot
+    #: arrive looking like an ordinary content change.
+    CAPTURED_SHA256 = "b5811c858f69d6f11a9f6e0d5a878d9622edd21fe1d6f202a9d2bf5cfb915fca"
+
+    def test_the_recorded_response_is_byte_exact(self) -> None:
+        """A recording that has been through a serialiser is not a recording.
+
+        24 bytes, no trailing newline, no re-indentation. Asserted on bytes and
+        on the capture's own digest rather than on the decoded value, because
+        everything this fixture is evidence *of* survives ``json.loads`` — and
+        the thing the Adapter gate was burned by (a capture tool substituting
+        its own representation for the producer's) does not show up in the
+        decoded value at all. ``json.dumps`` of this payload with default
+        separators is 26 bytes, not 24; that two-byte difference is the entire
+        distance between a recording and a re-emission, and only the digest
+        notices it.
+        """
+        raw = (FIXTURES / self.FIXTURE).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == self.CAPTURED_SHA256, (
+            "the fixture no longer hashes to the bytes Fantrax sent on "
+            "2026-08-28. If this was a deliberate re-capture, update "
+            "CAPTURED_SHA256 and the manifest together; if it was a formatter, "
+            "revert it - a reformatted capture is not evidence."
+        )
+        assert raw == b'{"currentDraftPicks":[]}'
+        assert not raw.endswith(b"\n")
+
+    def test_the_manifest_records_that_it_was_read_without_a_secret(
+        self, manifest: dict[str, Any]
+    ) -> None:
+        """The endpoint is unauthenticated — no owner credential decision.
+
+        This is load-bearing in the negative direction: because the read
+        succeeded with only a non-secret ``leagueId``, an empty list cannot be
+        explained away as "we were not logged in".
+        """
+        metadata = manifest[self.FIXTURE]
+        assert metadata["params"] == {"leagueId": "b2gyornvms4606iv"}
+        assert "userSecretId" not in metadata["params"]
+        assert metadata["http_status"] == 200
+        assert (FIXTURES / self.FIXTURE).stat().st_size == metadata["byte_size"]
+
+    def test_a_completed_216_pick_draft_still_parses_to_zero_picks(self) -> None:
+        """FAILS IF: someone makes this green by making the parser invent picks.
+
+        18 rounds x 12 teams = 216 selections had already happened when this was
+        captured. Zero is not the parser failing to read the payload; it is the
+        payload.
+        """
+        assert parse_draft_picks(load(self.FIXTURE)) == []
+
+    def test_the_real_key_is_currentDraftPicks_and_was_not_a_guess_we_had(
+        self,
+    ) -> None:
+        """The second, independent finding — and the dangerous one.
+
+        The parser looked for ``draftPicks`` or ``picks``. The live payload uses
+        neither. Had the endpoint been returning selections all along, this
+        parser would have returned zero of them and the draft feed would have
+        reported a healthy, silent source. **Green tests, empty board.**
+
+        This test asserts the shape of that near-miss so the key name cannot
+        drift back to a guess.
+        """
+        payload = load(self.FIXTURE)
+        assert set(payload) == {"currentDraftPicks"}
+        assert "draftPicks" not in payload
+        assert "picks" not in payload
+
+    def test_an_empty_first_key_is_not_stepped_over_for_a_later_one(self) -> None:
+        """FAILS IF: key selection goes back to a truthy ``or`` chain.
+
+        Constructed input, not a recording — it exercises the selection rule
+        that the real payload made reachable. Under ``a or b`` the empty
+        ``currentDraftPicks`` is falsy and the reader falls through to
+        ``draftPicks``, reporting a pick the source did not put under the key it
+        actually uses. Presence-based selection reports the empty truth instead.
+        """
+        picks = parse_draft_picks(
+            {
+                "currentDraftPicks": [],
+                "draftPicks": [{"teamId": "xwsfomdwms46061r", "overallPick": 91}],
+            }
+        )
+        assert picks == []
+
+    def test_a_populated_response_would_still_be_read(self) -> None:
+        """Constructed, and honest about it: no populated payload exists.
+
+        The field names come from the live *bridge* console on 2026-08-28
+        (``draftTeamId``/``scorerId``/``overallPick``), which is a different
+        recogniser and different vocabulary, so this asserts only that the
+        official reader is not inert — **not** that these keys are what
+        ``getDraftPicks`` would send. Nobody has seen what it would send.
+        """
+        picks = parse_draft_picks(
+            {"currentDraftPicks": [{"teamId": "xwsfomdwms46061r", "overallPick": 91}]}
+        )
+        assert len(picks) == 1
+        assert picks[0].team_id == "xwsfomdwms46061r"
+        assert picks[0].overall_pick == 91
+
+    def test_the_error_envelope_is_still_checked_before_parsing(self) -> None:
+        with pytest.raises(SourceRejected):
+            parse_draft_picks(load("fantrax_getleagueinfo_missing_league_id.json"))
 
 
 # ==========================================================================
