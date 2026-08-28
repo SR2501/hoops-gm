@@ -2,7 +2,13 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**58 done - 1 blocked - 107 pending - 166 total**
+**59 done - 1 blocked - 108 pending - 168 total**
+
+(Recomputed from the status markers in this finished file, never
+reconciled from two headers: 168 `###` headings and
+168 markers, 1:1, no duplicate item names. Neither side of a
+rebase conflict is a usable input here, because each was computed before
+the other lane's items landed.)
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2748,6 +2754,13 @@ performance, 1 to X in rebounds"*). Q9 says what it is for: *"so I can see
 categories I'm deficient in and excelling in"*, which is the input to his punt
 decision, not a scoreboard.
 
+**The rate-table half shipped on 2026-08-27** as
+`league-category-rate-table`: every seat ranked 1-to-N on the sum of the
+published per-game rates, with the screen stating in its own paragraph that this
+is not expected performance. **What remains is exactly the `expected-games`
+edge below** - the ranking is availability-blind, so a fragile star and a durable
+one count identically, and the seat-level totals are not depth-adjusted either.
+
 **The `expected-games` edge is the honest one and it is the expensive one.**
 Ranking on per-game rates alone is a different quantity, and ADR-002 forbids
 conflating the two. A per-game-rate table is a legitimate intermediate and must
@@ -3040,3 +3053,83 @@ them."* The report file itself is safe; it is written with `encoding="utf-8"`.
 **The prize is not the crash.** It is that a refusal is a user interface, and
 this one fires when an import has failed and the owner is reading the console to
 find out why.
+### `league-category-rate-table` - The per-game-rate half of the live category table
+
+- [x] **done** - Landed 2026-08-27 at `/draft/:draftId/categories`, linked from
+  the draft board. 45 tests across three files, 15 mutations driven red with
+  zero escaped.
+- **Depends on:** `draft-tracker-screen`, `projections-ui`
+
+**This is the intermediate `league-category-table` sanctions, not that item.**
+#118 filed `league-category-table` the same night this was built, independently,
+and its acceptance criterion is *"on expected performance"* - which this does not
+meet and does not claim to. Its own wording is the ruling this item obeys: *"a
+per-game-rate table is a legitimate intermediate and must be labelled as a rate
+table, never as expected performance."* So it is named for what it is, marked
+done for what it is, and `league-category-table` stays pending behind
+`expected-games`. Two lanes reached that distinction separately on the same
+night, which is worth more than either statement of it alone.
+
+Named by the owner twice, unprompted, and it had no backlog item until now -
+`docs/what-draft-day-looks-like.md` lists it first under "Named by him, and not
+in the backlog". **Q4:** *"some way to show me that of the 4 teams who still
+have not passed on a player, only one of them is really competitive in a top
+category."* **Q9:** *"Who is winning each category - a tier list for all of the
+owners, based on expected performance, 1 to X in rebounds. So I can see
+categories I'm deficient in and excelling in."*
+
+**Deliberately narrower than Q9, and this is the item's whole design
+constraint.** Q9 asks for *expected performance*, which is per-game production
+fused with expected games played. That fusion is permitted at exactly one seam
+(`expected-games`, ADR-002) and that seam is not built; `p(play)` does not exist
+either. So this screen ranks seats on **the sum of the per-game rates the
+projection source published for the players each seat holds**, and says so on
+screen in its own paragraph rather than letting the reader assume otherwise. The
+whole page is `+` and `÷` over published fields, which is what keeps it behind
+the **Code gate**. Adding a weighting, a spread, a z-score or an availability
+adjustment makes it a Model-gate unit needing a held-out backtest reporting
+calibration and a card in `docs/models/`.
+
+Three limitations are surfaced on screen rather than corrected, because
+correcting any of them means inventing a number:
+
+- **Not depth-adjusted.** A seat holding five players outranks one holding three
+  on a sum, for that reason alone. The joined-player count is drawn beside every
+  seat name. Correcting it means projecting the players nobody has drafted.
+- **Unranked is not last.** A seat with nothing joinable gets no rank, no tier
+  and no colour. This is not hypothetical: **every holding in the seeded demo
+  carries `player_id: null`**, because `seed_demo` invents draft names the
+  identity crosswalk cannot match, so the all-unranked board is what a
+  first-time reader meets. Nothing is matched by name, ever.
+- **The nine categories are unverified.** They come from
+  `docs/league/2025-26-rules-baseline.md`, which calls itself historical and not
+  verified for 2026-27. The served OpenAPI document exposes nineteen paths and
+  none carries league scoring configuration, so there is nothing to check them
+  against until `league-settings-ingest`.
+
+FG% and FT% are `Σ made ÷ Σ attempted` across the seat with the attempt volume
+printed beside them, never a mean of player percentages - volume-weighted by
+construction, which is the seat-level form of the bug `AGENTS.md` calls the most
+common in homebrew tools. TO ranks in reverse.
+
+### `draft-page-invalid-id-request` - Stopping the draft board requesting `/drafts/NaN`
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker-screen`
+
+`DraftPage.tsx` calls `useAsync` before the `isValidId` guard renders, so
+`/draft/not-a-number` fires a `GET /api/v1/drafts/NaN` and then draws the
+refusal. The screen looks correct either way; the wasted request is visible only
+in the network log, which is why reading did not find it.
+
+Found while building `league-category-table`, which copied the structure and
+inherited the defect - caught there by a test asserting *no request was made*,
+and fixed there by splitting the component so the hook only mounts for a valid
+id (`CategoriesPage.tsx`). The same two-line split applies here. **It was not
+done from that lane** because `DraftPage`'s fetcher carries the bundle-identity
+comparison the polling skip depends on, and disturbing it to fix one wasted
+request on a malformed URL is the wrong trade to make unreviewed under a
+deadline.
+
+Low impact: one request, on a URL nobody reaches by clicking. Worth fixing
+because the same guard-after-the-hook shape will be copied again.

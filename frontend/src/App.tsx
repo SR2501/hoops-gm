@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
+import { CategoriesPage } from './routes/CategoriesPage'
 import { DashboardPage } from './routes/DashboardPage'
 import { DraftPage } from './routes/DraftPage'
 import { DraftsPage } from './routes/DraftsPage'
@@ -25,6 +26,7 @@ export function App() {
         <Route path="reliability" element={<ReliabilityPage />} />
         <Route path="draft" element={<DraftsPage />} />
         <Route path="draft/:draftId" element={<DraftPage />} />
+        <Route path="draft/:draftId/categories" element={<CategoriesPage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

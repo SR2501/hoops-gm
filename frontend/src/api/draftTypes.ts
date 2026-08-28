@@ -26,7 +26,21 @@ export type DraftType = 'snake' | 'auction' | 'linear'
 
 export type DraftStatus = 'setup' | 'in_progress' | 'closed'
 
-export type DraftToolUsage = 'blind' | 'assisted' | 'tool_led'
+/**
+ * Recorded, never inferred: whether this tool was on the recorder's screen.
+ *
+ * **These are the backend's three values, and this type carried three different
+ * ones until 2026-08-27.** It said `'blind' | 'assisted' | 'tool_led'`; the
+ * served OpenAPI enum is `blind, partial, instrumented`. Nothing caught it —
+ * every committed fixture carries `blind`, the one value both spellings agree
+ * on, and `DraftPage` renders the field verbatim inside a `<code>`, so a
+ * `partial` draft would have displayed correctly while being unassignable to
+ * this type. Found by a `POST /drafts` that was refused with a `422` naming the
+ * real enum, which is the only reason it surfaced at all: the read path cannot
+ * see it. A `tool_usage` filter or badge map built against the old spelling
+ * would have silently matched nothing.
+ */
+export type DraftToolUsage = 'blind' | 'partial' | 'instrumented'
 
 export type DraftEventType = 'pick' | 'nomination' | 'bid' | 'sale' | 'void' | 'closed'
 
