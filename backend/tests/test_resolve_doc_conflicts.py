@@ -598,6 +598,7 @@ def test_writes_preserve_lf_and_do_not_flip_the_file_to_crlf(tmp_path: pathlib.P
     )
     assert written.count(b"\n") > 0, "the file should still have line endings at all"
 
+
 def test_the_recount_note_states_the_property_and_restates_no_count(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -649,6 +650,4 @@ def test_the_recount_note_states_the_property_and_restates_no_count(
     # `1:1` is the *ratio* the note asserts, not a count of anything, so it is
     # removed before the digit scan rather than carved out of the pattern - a
     # pattern excusing digits around a colon would also excuse `169:169`.
-    assert not re.search(r"\d", note.replace("1:1", "")), (
-        f"the note restates a count: {note!r}"
-    )
+    assert not re.search(r"\d", note.replace("1:1", "")), f"the note restates a count: {note!r}"
