@@ -29257,3 +29257,113 @@ by hash.
 **Next:** coordinator. Code gate only - no adapter fixture changed, no number a
 decision rests on moved, and the three new ADR-status documents are `Proposed`,
 which only the owner may change.
+
+## 2026-08-27 - architect - The budget refusal is on the apply path, and the requested edge was a cycle
+
+**Unit:** follow-up to #118, at the coordinator's request. Backlog only. No code
+changed, no number a decision rests on moved.
+
+### The finding I under-stated in #118, now driven to the bottom
+
+#118 recorded that `per-team-auction-budgets` has "a second derivation site" and
+that the second one refuses a bid. That was right and it was not far enough. Read
+rather than recalled:
+
+`_refuse_if_over_budget` (`draft/state.py:449-463`) computes `remaining` from the
+single draft-wide `fmt.auction_budget`. **Three call sites, with their enclosing
+functions resolved by walking backwards to the nearest `def`:** line 427 in
+`_apply_nomination`, line 493 in `_apply_bid`, and **line 564 in `_apply_sale`**.
+
+**Line 564 sits three lines before `board.add(...)` at 567.** A recorded sale
+above the assumed scalar raises `draft_budget_exceeded` and the player is
+**never added to the board**. The first two refuse something in flight; the third
+refuses a fact that already happened.
+
+Q8 says his league's budgets differ per team, so the scalar is wrong for most
+seats by construction and any richer seat loses its winning bids from the moment
+its spend passes the assumption. That is Q12 verbatim - *"shows me picks that
+already happened or misses one"* - inside the Q15 must-work item.
+
+Now a blocking edge on `draft-tracker`, on the rule
+`draft-feed-unreadable-id-surfacing` established: a caveat is text and
+`backlog_graph.py` fails on a dangling edge. Waiving it for the **more** likely
+defect would have been incoherent.
+
+**Both routes are written into the item and neither is chosen**, deliberately.
+Route A is the schema change. Route B is smaller and reversible: stop refusing on
+the apply path and report `over_assumed_budget` as a flag, because **a recorded
+sale that exceeds our assumed budget means our assumption is wrong, not that the
+sale did not happen** - which is ADR-014's shape (detect, do not lock) and Q7's
+(advise everywhere, override nowhere).
+
+### The edge I was asked for was a cycle, and the tool said so
+
+Adding `per-team-auction-budgets` to `draft-tracker` closed a loop:
+`draft-tracker` -> `per-team-auction-budgets` -> `draft-setup-screen` ->
+`draft-tracker`. `backlog_graph.py` refused it.
+
+**The cycle was mine and the tool was right.** I had written the plausible edge -
+you cannot set per-seat budgets until a screen exists to set them on - and it is
+false. `POST /api/v1/drafts` already accepts the full participant list and
+`hoops_gm.dev.seed_draft` already creates seats without a browser, so the schema
+and API half needs no screen. **The screen is downstream**, and its existing edge
+on `draft-tracker` already sequences it. Dropped the edge and recorded why in the
+item, so the next person who reaches for it meets the reasoning rather than the
+refusal.
+
+This is the second time in two units that a mechanical check corrected a
+plausible architectural claim of mine - the first being the import closure that
+reversed the fingerprint item's premise. Worth naming as a pattern rather than
+two anecdotes: **my errors here are not carelessness, they are confident
+inferences that nobody had priced against an artefact.**
+
+### Two answers received from the coordinator, folded in
+
+**The Basketball Monster header question is resolved, and it is the bad branch.**
+`BASKETBALL_MONSTER_2026_27_HEADERS` is the 22-column 19 August CSV sequence;
+the 27 August projections export is 48 columns and the 26 August actuals export
+is 37. **Neither matches**, so the guard refuses the actuals file *as schema
+drift* - the wrong reason, which invites widening the profile until it fits.
+
+And it is worse in a way that settles the item's design: the two exports are the
+**same BBM view configured differently**, the actuals file being the projections
+file minus eleven display columns the user can toggle. **A user who configures
+the two pages alike gets two byte-identical schemas holding different seasons.**
+Schema cannot separate them even in principle, so
+`projection-source-vintage-assertion` must be a **value-level** assertion against
+the prior season's ledger. Widening `expected_headers` is the plausible wrong fix
+and it closes nothing. Written into the item.
+
+**The 1664-vs-1656 leaf count is now `cohort-manifest-leaf-count-discrepancy`**,
+carrying both measurements, both dates, and the fact that the manifest has one
+commit so the artefact did not move. Filed rather than chased, with the cheapest
+first step named: diff the leaf *path sets*, not the counts.
+
+### Verified at this commit
+
+`backlog_graph.py` **exit 0**, recounted from the finished file to **58 done - 1
+blocked - 108 pending - 167 total**. `check_doc_terminators.py` exit 0.
+`per-team-auction-budgets` now has **23 unfinished items behind it** in the
+graph's own reckoning, which is the first time its weight has been visible.
+
+### What I could not verify
+
+1. **That Route B is safe.** I wrote it down as the smaller reversible option and
+   did **not** evaluate it. Admitting an over-budget sale to the board changes
+   what `spent_by` means for every downstream reader of `ParticipantState`, and I
+   traced none of them. **It is a candidate, not a recommendation.**
+2. **That three call sites is all of them.** I grepped
+   `_refuse_if_over_budget` in `draft/state.py` only. A caller in another module,
+   or a second budget derivation not routed through that helper, would be
+   invisible to that method - the same domain-narrower-than-hazard shape this
+   repository keeps finding, including twice in my own last two units.
+3. **Every Basketball Monster figure**, still. The header sequences above are the
+   coordinator's reading of files I cannot open. I folded them in because they
+   are checkable by anyone holding the export; I did not check them.
+4. **That `docs/backlog.md` will merge cleanly.** PR #120 edits the same file
+   with a header computed before #118 landed, so the two disagree by
+   construction. **Whoever merges second must recount from the merged file** -
+   neither side of that conflict is a usable input, which is the rule this file's
+   own header block exists to state. The coordinator holds merge order.
+
+**Next:** coordinator. Code gate only.
