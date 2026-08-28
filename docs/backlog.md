@@ -2740,7 +2740,7 @@ item look further away than anyone would like.
 
 ### `league-category-table` - Ranking every team 1-to-N in every category
 
-- [ ] **pending** - *in flight 2026-08-27 in a parallel lane; coordinate before starting*
+- [ ] **pending** - *the per-game-rate half shipped 2026-08-28 as `league-category-rate-table`; what remains is the fusion with expected games*
 - **Depends on:** `draft-tracker`, `expected-games`, `projection-blending`, `frontend-skeleton`
 
 **Acceptance:** for every seat in a live draft, a rank 1-to-N in each of the nine
