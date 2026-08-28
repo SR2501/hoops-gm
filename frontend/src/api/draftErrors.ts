@@ -105,12 +105,6 @@ export const DRAFT_ERRORS: Record<string, DraftErrorCopy> = {
     summary: 'A bid at or below the standing high bid is not a bid the room would have accepted.',
     action: 'Record the amount actually called. The standing high bid is shown on the open lot.',
   },
-  draft_budget_exceeded: {
-    summary:
-      'This seat cannot pay that price out of what it has left, given the sales already recorded against it.',
-    action:
-      'Check the price and the seat. If an earlier sale was recorded against the wrong seat, correct that first in the log below.',
-  },
   draft_roster_full: {
     summary: 'This seat already holds a full roster under the format this draft was recorded with.',
     action: 'Check the seat. If an earlier selection went to the wrong one, correct it below.',

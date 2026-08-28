@@ -183,7 +183,23 @@ def test_a_sale_below_a_recorded_bid_is_refused(session: Session) -> None:
     assert caught.value.code == "draft_sale_below_recorded_bid"
 
 
-def test_a_seat_cannot_spend_past_its_budget(session: Session) -> None:
+def test_a_sale_above_the_assumed_budget_is_recorded_and_reported(session: Session) -> None:
+    """Replaces ``test_a_seat_cannot_spend_past_its_budget``, which asserted
+    ``draft_budget_exceeded``. That assertion was removed deliberately.
+
+    **Why the old behaviour was wrong.** ``Draft.auction_budget`` is a single
+    scalar for the whole draft — ``DraftParticipant`` has no budget column —
+    and the owner's league sets budgets per seat from last season's final
+    totals (Q8: *"I think 200, but it's slightly different per team"*). So the
+    scalar is wrong for most seats **by construction**. The refusal fired in
+    ``_apply_sale`` three lines above ``board.add``, so any seat with a larger
+    real bank lost its winning bids the moment its spend passed our
+    assumption, and the board silently lacked a player it watched being sold.
+
+    A recorded sale above the assumed budget means **our assumption is wrong,
+    not that the sale did not happen**. So it is admitted, and the wrongness is
+    reported on the seat where a reader can see it.
+    """
     draft = _draft(session, _league(session, budget=Decimal("50.00")))
     seats = _seat_ids(draft)
     service.record_sale(
@@ -194,16 +210,88 @@ def test_a_seat_cannot_spend_past_its_budget(session: Session) -> None:
         player_label="Ansel Whitcombe",
     )
 
-    with pytest.raises(DraftLogError) as caught:
-        service.record_sale(
-            session,
-            draft,
-            participant_id=seats[1],
-            amount=Decimal("11.00"),
-            player_label="Dov Kestrel",
-        )
+    state = service.record_sale(
+        session,
+        draft,
+        participant_id=seats[1],
+        amount=Decimal("11.00"),
+        player_label="Dov Kestrel",
+    )
 
-    assert caught.value.code == "draft_budget_exceeded"
+    held = {seat.participant.team_slot: seat for seat in state.participants}
+    seat = held[1]
+    # The assertion the old behaviour could not satisfy: the player reached the
+    # board. Everything below is worthless without this one.
+    assert [holding.player_label for holding in seat.holdings] == [
+        "Ansel Whitcombe",
+        "Dov Kestrel",
+    ]
+    assert state.selections_made == 2
+    assert seat.spent == Decimal("51.00")
+    # Negative is the information, not an error: the assumption for this seat is
+    # wrong by exactly this much.
+    assert seat.remaining_budget == Decimal("-1.00")
+    assert seat.over_assumed_budget is True
+    # A flag, so a reader does not have to infer the condition from a sign.
+    assert [other.over_assumed_budget for other in state.participants] == [
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_the_seat_exactly_on_its_assumed_budget_is_not_flagged(session: Session) -> None:
+    """The boundary, driven rather than assumed.
+
+    Spending the assumption exactly is not exceeding it, so ``0.00`` remaining
+    must not raise the flag. Written because ``over_assumed_budget`` is a
+    strict ``< 0`` and an off-by-one there would cry wolf on every seat that
+    spends its whole bank — which in a real auction is most of them.
+    """
+    draft = _draft(session, _league(session, budget=Decimal("50.00")))
+    seats = _seat_ids(draft)
+    state = service.record_sale(
+        session,
+        draft,
+        participant_id=seats[1],
+        amount=Decimal("50.00"),
+        player_label="Ansel Whitcombe",
+    )
+
+    seat = {each.participant.team_slot: each for each in state.participants}[1]
+    assert seat.remaining_budget == Decimal("0.00")
+    assert seat.over_assumed_budget is False
+
+
+def test_a_bid_above_the_assumed_budget_is_recorded_too(session: Session) -> None:
+    """The refusal had three call sites and all three lost a fact.
+
+    Removing it from the sale alone would have left the recorder refused when
+    he types the bid and accepted when he types the sale that follows it —
+    incoherent, and still a fact the log cannot hold. A bid is an observation
+    of something that happened in the room, exactly as a sale is.
+
+    ``derive_state`` refuses on the *first* event it cannot apply, and
+    :mod:`hoops_gm.draft.service` validates an append by re-deriving, so a
+    refused bid is a bid that can never enter the log at all.
+    """
+    draft = _draft(session, _league(session, budget=Decimal("20.00")))
+    seats = _seat_ids(draft)
+    service.record_nomination(
+        session, draft, participant_id=seats[1], player_label="Ansel Whitcombe"
+    )
+
+    state = service.record_bid(session, draft, participant_id=seats[2], amount=Decimal("75.00"))
+
+    assert state.open_lot is not None
+    assert state.open_lot.high_bid_amount == Decimal("75.00")
+    assert state.open_lot.high_bid_participant_id == seats[2]
+    # A live bid is not a sale, so nothing is spent and nothing is flagged yet.
+    # ``spent`` counts recorded clearing prices and this lot has not cleared.
+    seat = {each.participant.id: each for each in state.participants}[seats[2]]
+    assert seat.spent == Decimal("0.00")
+    assert seat.over_assumed_budget is False
 
 
 def test_the_same_player_cannot_be_taken_twice(session: Session) -> None:

@@ -34,7 +34,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "62.00",
-      "remaining_budget": "138.00"
+      "remaining_budget": "138.00",
+      "over_assumed_budget": false
     },
     {
       "id": 2,
@@ -55,7 +56,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "35.00",
-      "remaining_budget": "165.00"
+      "remaining_budget": "165.00",
+      "over_assumed_budget": false
     },
     {
       "id": 3,
@@ -67,7 +69,8 @@
       "slots_filled": 0,
       "slots_remaining": 13,
       "spent": "0.00",
-      "remaining_budget": "200.00"
+      "remaining_budget": "200.00",
+      "over_assumed_budget": false
     },
     {
       "id": 4,
@@ -88,7 +91,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "48.00",
-      "remaining_budget": "152.00"
+      "remaining_budget": "152.00",
+      "over_assumed_budget": false
     },
     {
       "id": 5,
@@ -109,7 +113,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "22.00",
-      "remaining_budget": "178.00"
+      "remaining_budget": "178.00",
+      "over_assumed_budget": false
     },
     {
       "id": 6,
@@ -121,7 +126,8 @@
       "slots_filled": 0,
       "slots_remaining": 13,
       "spent": "0.00",
-      "remaining_budget": "200.00"
+      "remaining_budget": "200.00",
+      "over_assumed_budget": false
     },
     {
       "id": 7,
@@ -142,7 +148,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "41.00",
-      "remaining_budget": "159.00"
+      "remaining_budget": "159.00",
+      "over_assumed_budget": false
     },
     {
       "id": 8,
@@ -154,7 +161,8 @@
       "slots_filled": 0,
       "slots_remaining": 13,
       "spent": "0.00",
-      "remaining_budget": "200.00"
+      "remaining_budget": "200.00",
+      "over_assumed_budget": false
     },
     {
       "id": 9,
@@ -166,7 +174,8 @@
       "slots_filled": 0,
       "slots_remaining": 13,
       "spent": "0.00",
-      "remaining_budget": "200.00"
+      "remaining_budget": "200.00",
+      "over_assumed_budget": false
     },
     {
       "id": 10,
@@ -187,7 +196,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "18.00",
-      "remaining_budget": "182.00"
+      "remaining_budget": "182.00",
+      "over_assumed_budget": false
     },
     {
       "id": 11,
@@ -208,7 +218,8 @@
       "slots_filled": 1,
       "slots_remaining": 12,
       "spent": "29.00",
-      "remaining_budget": "171.00"
+      "remaining_budget": "171.00",
+      "over_assumed_budget": false
     },
     {
       "id": 12,
@@ -220,7 +231,8 @@
       "slots_filled": 0,
       "slots_remaining": 13,
       "spent": "0.00",
-      "remaining_budget": "200.00"
+      "remaining_budget": "200.00",
+      "over_assumed_budget": false
     }
   ],
   "open_lot": {

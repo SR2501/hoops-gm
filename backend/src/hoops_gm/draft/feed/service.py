@@ -1218,9 +1218,21 @@ def apply_observations(
     """Append the log entries the stored observations imply.
 
     Through :mod:`hoops_gm.draft.service` only, so every derivation rule the
-    tracker already enforces — turn order, roster limits, budget, a player
-    taken twice — applies unchanged to a machine-fed pick. There is no
-    fast path here that a hand-recorded pick does not also take.
+    tracker already enforces — turn order, roster limits, a player taken twice
+    — applies unchanged to a machine-fed pick. There is no fast path here that
+    a hand-recorded pick does not also take.
+
+    **Budget is deliberately not in that list any more.** It used to be, and it
+    was the worst rule to have here: ``Draft.auction_budget`` is one scalar for
+    the whole draft, so a seat with a larger real bank raised
+    ``draft_budget_exceeded``, and line 1295 below filed that into
+    ``skipped_reason`` — which nothing in this package ever clears, and which
+    ``pending`` above filters on. So the row was burned permanently: re-ingesting
+    the same capture deduped against the burned row instead of retrying it, and
+    the pick was gone from the board with no way back short of typing it by
+    hand. See ``hoops_gm.draft.state``, "Why spending past the budget is not a
+    refusal", and
+    ``test_a_sale_past_the_assumed_budget_is_applied_rather_than_burned``.
     """
     stamp = now or datetime.now(UTC)
     state = draft_service.load_state(session, draft)

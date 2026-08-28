@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 110 pending - 171 total**
+**60 done - 1 blocked - 111 pending - 172 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1791,6 +1791,44 @@ this closed, because `architect` found a second way a pick can vanish -
 `draft/state.py`'s budget check derives every seat's bank from one scalar, and
 the owner has told us his league's budgets differ per team.
 
+### `draft-feed-burned-row-recovery` - Letting a skipped observation be retried
+
+- [ ] **pending** - Filed 2026-08-28 by `backend` while landing `per-team-auction-budgets` Route B, and **driven rather than reasoned about**: `test_a_refusal_that_survives_still_burns_its_row_permanently` in `backend/tests/test_draft_feed.py` watches a `draft_roster_full` refusal burn a row and stay burned across a re-ingest.
+- **Depends on:** `draft-tracker-bridge-feed`
+
+**Acceptance:** an observation skipped for a reason the owner has since resolved
+returns to `pending` and is retried, without the identical capture having to
+arrive under a new artifact key.
+
+**The mechanism, named so it can be disproved in ninety seconds.**
+`apply_observations` in `backend/src/hoops_gm/draft/feed/service.py` sets
+`row.skipped_reason` on the `except DraftLogError` branch. `pending` in the same
+function is built by filtering `row.skipped_reason is None`. **No assignment of
+`skipped_reason = None` exists anywhere in the package** - grep it. So a skip is
+permanent, and re-ingesting the same capture dedupes on the artifact key against
+the burned row instead of retrying it.
+
+Two branches already work around this rather than through it, which is the
+evidence that it is a defect and not a design: the `draft_pick_out_of_turn` halt
+deliberately sets `blocked_reason` instead, and so does the contradicted-key
+path, each with a comment saying in as many words that `skipped_reason` is never
+cleared. Two special cases avoiding a general behaviour is the shape of a
+general behaviour being wrong.
+
+**Route B removed the worst input to it and nothing else.**
+`draft_budget_exceeded` was the one refusal that fired on a *correct* capture -
+it burned a real pick because our budget scalar was wrong. That code no longer
+exists. `draft_roster_full`, `draft_player_already_taken` and the rest still
+burn, and each of those is resolvable by hand: the owner voids the entry that
+filled the roster, re-runs, and the observation waiting behind it is silently
+gone rather than applied.
+
+**Not in scope for the lane that filed it**, which had a hard calendar
+constraint and an owner-approved unit that did not include this. Rows burned
+before this lands stay burned; a recovery path would have to decide whether to
+clear them retroactively, and that is a decision about data the owner may have
+already reconciled by hand.
+
 ### `draft-tracker` - Building the live draft tracker
 
 - [ ] **pending** — *umbrella; eight of nine dependencies are done as of 2026-08-28 and the one outstanding is `per-team-auction-budgets`, which is a live defect rather than unbuilt work*
@@ -2894,7 +2932,7 @@ dressed as a measurement. **That choice is the item.**
 
 ### `per-team-auction-budgets` - Giving each seat its own starting budget
 
-- [ ] **pending** - **Blocks `draft-tracker`.** A recorded sale can be refused and the player never added to the board.
+- [ ] **pending** — **Route B landed 2026-08-28; Route A is what remains.** Seats still have no budget column. The pick-loss is gone: a sale above the assumed scalar is now recorded and flagged, not refused.
 - **Depends on:** `draft-tracker-persistence`
 
 **Acceptance:** each seat's starting budget is stored on the seat, and every
@@ -2921,61 +2959,86 @@ inherited.** `DraftParticipant` carries `draft_id`, `team_slot`, `display_name`,
 is one `Numeric(10, 2)` on `Draft` (`db/models/draft.py:120`), copied from
 `League` at creation.
 
-#### The apply path, which is why this blocks rather than annoys
+#### The apply path, which is why this blocked rather than annoyed
 
-`_refuse_if_over_budget` (`draft/state.py:449-463`) computes
-`remaining = fmt.auction_budget - board.spent_by(participant.id)` from that one
-draft-wide scalar. **Three call sites, read rather than recalled:**
+**Everything in this section is history as of 2026-08-28.** It is kept because
+the mechanism is the argument for Route A, and deleting it would leave the item
+looking like a nicety. `_refuse_if_over_budget` (`draft/state.py:449-463`)
+computed `remaining = fmt.auction_budget - board.spent_by(participant.id)` from
+that one draft-wide scalar. **Three call sites, read rather than recalled:**
 
-| line | enclosing function | what it refuses |
+| line | enclosing function | what it refused |
 |---|---|---|
 | 427 | `_apply_nomination` | an opening bid |
 | 493 | `_apply_bid` | a bid |
 | **564** | **`_apply_sale`** | **a completed sale** |
 
-**Line 564 sits three lines before `board.add(...)` at 567.** So a recorded sale
-above the assumed scalar raises `draft_budget_exceeded` and **the player is never
-added to the board.**
+**Line 564 sat three lines before `board.add(...)` at 567.** So a recorded sale
+above the assumed scalar raised `draft_budget_exceeded` and **the player was
+never added to the board.**
+
+It was worse than a lost pick, and this half was established by grep and then
+driven: `apply_observations` filed that refusal into `skipped_reason`, `pending`
+is filtered on `skipped_reason IS NULL`, and **nothing in the package ever
+clears that column**. So re-ingesting the identical capture deduped against the
+burned row rather than retrying it. The pick was unrecoverable short of typing
+it by hand — inside the feature whose purpose is to stop him typing.
+`test_a_refusal_that_survives_still_burns_its_row_permanently` now drives that
+burn on a refusal that remains, so the mechanism is a red test away rather than
+a paragraph.
 
 In his league the scalar is wrong for most seats by construction, so any seat
-with a larger bank loses its winning bids from the moment its spend passes the
-assumption. The board then silently lacks a player it watched being sold. Asked
+with a larger bank lost its winning bids from the moment its spend passed the
+assumption. The board then silently lacked a player it watched being sold. Asked
 what would make him abandon the tool mid-auction, the owner answered *"it loses
 track of the draft - shows me picks that already happened or misses one"*; Q15
 names *"the live draft board with picks and budgets tracked automatically"* as
-the single thing that must work on 18 October. **This is that failure, inside
+the single thing that must work on 18 October. **That was that failure, inside
 that feature.**
 
-**The display derivation at `draft/state.py:671-682` is the lesser half.** A
-wrong `remaining_budget` on screen is a wrong number a human can notice. A
-refused sale is a missing fact, and nothing on the screen says so.
+**The display derivation at `draft/state.py:671-682` is the lesser half, and it
+is the half that is still wrong.** A wrong `remaining_budget` on screen is a
+wrong number a human can notice — and now one the screen labels as ours rather
+than as the seat's. A refused sale was a missing fact, and nothing on the screen
+said so. Route B fixed the second and left the first.
 
 **Recorded as a dependency edge on `draft-tracker` rather than as a caveat**, for
 the reason `draft-feed-unreadable-id-surfacing` established: a caveat is text,
 and `backlog_graph.py` fails on a dangling edge while a paragraph fails nothing.
-That rule was written for a defect that needs an unreadable id to fire. This one
-fires whenever a seat outspends an assumption that is wrong for most seats, so
-waiving the rule for the **more** likely defect would be incoherent.
+**The edge is deliberately left in place, and its original justification is
+spent.** It was added because a sale could vanish; that cannot happen now. Whether
+`draft-tracker` should still wait on real per-seat budgets is a sequencing call
+and belongs to `architect`, so this lane corrected the claim rather than quietly
+dropping the constraint the claim was holding up.
 
-#### Two routes. Do not pick one from this file.
+#### Two routes. Route B is done; Route A is the open half.
 
-**Route A - the schema change.** `DraftParticipant` gains a budget column, set at
-draft creation, and all three call sites plus the display derivation read it from
-the seat. Correct and complete; it is a migration, a create-path change, a
-`draft-setup-screen` change and a backfill decision for existing drafts.
+**Route A - the schema change. STILL OPEN, and this item is it.**
+`DraftParticipant` gains a budget column, set at draft creation, and the display
+derivation reads it from the seat. Correct and complete; it is a migration, a
+create-path change, a `draft-setup-screen` change and a backfill decision for
+existing drafts. Note that the three refusal call sites in the table above are
+**gone**, so Route A is now smaller than it was: there is nothing to re-point at
+a per-seat column except the derivation at the end of `derive_state`, and Route A
+should not reintroduce the refusal — the reason it was wrong is that a sale is a
+fact, and that is true whether the budget is per-seat or not.
 
-**Route B - stop refusing on the apply path, and report instead.** Smaller and
-reversible. **A recorded sale that exceeds our assumed budget means our
-assumption is wrong, not that the sale did not happen.** Admit it to the board
-and surface `over_assumed_budget` as a flag on the seat. Consistent with ADR-014
-(a read detects a moved cohort, it does not lock to prevent one) and with Q7
-(advise everywhere, override nowhere) - and it makes the tool's own wrong
-assumption *visible* rather than making the owner's real draft *invisible*.
+**Route B - stop refusing on the apply path, and report instead. DONE
+2026-08-28.** `_refuse_if_over_budget` is deleted with all three call sites;
+`remaining_budget` is signed; `ParticipantState.over_assumed_budget` /
+`ParticipantOut.over_assumed_budget` is a first-class `bool`, `False` in an
+ordered draft. The board screen renders a flagged seat as `$300.00 over` under
+*past the budget this tool assumed*, with a note saying no pick is missing —
+`$-300.00` under *left, of sales recorded* was the rendering this change would
+otherwise have shipped. Consistent with ADR-014 (a read detects a moved cohort,
+it does not lock to prevent one) and with Q7 (advise everywhere, override
+nowhere).
 
-Route B does not make Route A unnecessary; it makes the board correct while
-Route A is built, which matters because the calendar does not move. **The choice
-is owed to whoever picks this up, and is deliberately not made here** - both are
-written down so tomorrow starts with a decision rather than a rediscovery.
+**Route B did not make Route A unnecessary; it made the board correct while
+Route A is built**, which matters because the calendar does not move. **Seats
+still do not have their own budgets**, and every figure beside a seat is still
+derived from one scalar that is wrong for most of them. What changed is that the
+tool now says so instead of deleting the evidence.
 
 ### `owner-bias-feedback-loop` - Feeding his own tendencies back to him
 

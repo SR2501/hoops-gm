@@ -64,6 +64,10 @@ function seat(
     slots_remaining: 0,
     spent: null,
     remaining_budget: null,
+    // These seats carry no budget, so there is no assumption to have passed.
+    // `false` rather than a nullable, matching the API: `remaining_budget`
+    // already answers whether this draft has a budget at all.
+    over_assumed_budget: false,
   }
 }
 

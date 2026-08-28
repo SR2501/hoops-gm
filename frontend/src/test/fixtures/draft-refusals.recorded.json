@@ -39,14 +39,6 @@
       "request_id": "a6b993f968f64723867e513bfc25f057"
     }
   },
-  "budget-exceeded": {
-    "status": 422,
-    "body": {
-      "error": "draft_budget_exceeded",
-      "detail": "Bench Mob has 138.00 left and this is 999.",
-      "request_id": "7595778ff818415bb6957de405b14b47"
-    }
-  },
   "unknown-participant": {
     "status": 422,
     "body": {

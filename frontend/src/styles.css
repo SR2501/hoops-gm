@@ -1334,6 +1334,37 @@ a:focus-visible {
   border-top: 1px dashed var(--border);
 }
 
+/* A seat whose recorded spend has passed the budget this tool assumed.
+   ADR-013's reasoning for `--pending` applies here almost word for word: this
+   is **not a fault and must not borrow the vocabulary of one.** The seat did
+   nothing wrong, the recorder did nothing wrong, and the pick is safely on the
+   board — the single scalar we assumed for every seat is what is wrong.
+
+   `--error` is therefore excluded: red on the one seat that is behaving
+   normally would read as "this pick failed", which is the exact belief the
+   previous behaviour created and this change exists to remove.
+
+   `--warn` is excluded for a second, concrete reason: it already means "our
+   data is missing" on this screen, and `.seat__budget-live` uses it for the
+   live-bid caveat — which can appear on the *same seat* as this note. Two
+   caveats a reader most needs to tell apart must not be the same colour.
+
+   The colour sits on the figure and on the note, and **not** on a rule down
+   the side of the seat. This screen's own rule is that the words do the work
+   and that the presence of a caveat line is the signal; a coloured edge would
+   be a third, weaker restatement of what `$300.00 over` already says. */
+.seat__budget-over {
+  margin: var(--space-2) 0 0;
+}
+
+.seat__money--over {
+  color: var(--pending);
+}
+
+.seat__budget-over .seat__budget-label strong {
+  color: var(--pending);
+}
+
 .seat__money {
   font-size: 1.25rem;
   font-variant-numeric: tabular-nums;
