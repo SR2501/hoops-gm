@@ -29725,3 +29725,97 @@ written to detect. Driven by a link click instead.
   which is a cross-owner change rather than a test.
 - **That the +2 line delta in `backlog.md` is benign.** Every content check
   passes and I stopped there.
+
+## 2026-08-28 - frontend - the scope of the question, and the backlog header as a merge-queue mutex
+
+Two observations from rebasing #120 three times in one night. Neither is a
+defect in anyone's work; both are structural and invisible inside a single PR.
+
+### I reported a green that was true and answered the wrong question
+
+I wrote "lint, build and 380 tests green" and it was accurate - of the
+**frontend** suite. This branch's diff touches four gate families:
+
+    git diff --name-only origin/main...HEAD | ...
+      backend: 1   docs: 2   frontend: 15   scripts: 1
+
+The single backend file is `backend/tests/test_resolve_doc_conflicts.py`, and
+it is the one file I never ran the backend formatter against. CI failed on
+`ruff format --check` for a blank line and a one-line assert. The tooling was
+fine; **the scope of the question was wrong** - I ran the gates for the area I
+believed I was working in, while the diff had quietly crossed into another.
+
+The coordinator points out this was the most recurrent failure of the night
+across three other lanes: one grepped a single file and missed a second
+carrier, another grepped inside one function and could not see callers
+elsewhere. Same shape each time.
+
+**The cheap guard, which I have adopted and recommend: derive the gates from
+the diff, not from the work's self-image.** `git diff --name-only
+origin/main...HEAD`, map the top-level directories to CI jobs, run those. It is
+one command and it is mechanical, which is the point - "remember to also run
+the backend gates" is advice, and advice is what failed here.
+
+### `docs/backlog.md` is a global mutex on the merge queue
+
+**The mechanism, so it can be checked rather than taken on faith.** Every unit
+in this project edits `docs/backlog.md`. Its header is a *derived count* over
+the whole file, so any merge that adds or completes an item invalidates the
+header on every other open branch - and a header conflict is not
+auto-resolvable, because neither side is a usable input (each was computed
+before the other lane's items landed). So N ready PRs cost N **sequential**
+rebases, each carrying a recount that must be done correctly at whatever hour
+it lands. #120 paid it three times: `d33c0d1`, then `431cc71`, then `2ff50ff`,
+then `5c365cf`.
+
+Measured rather than asserted: on the third rebase, `backlog.md` merged
+**cleanly** and its header was correct only because #119 happened to add zero
+net items. That is luck, and a clean auto-merge is exactly the case where
+nobody re-checks. `backlog_graph.py` would have caught it - but only after I
+had read "no conflict" and believed it.
+
+**A second cost that is easy to miss.** The recount is not the whole tax. On the
+second rebase the item bodies conflicted too, and keeping both sides produced a
+file with exactly the 168 headings arithmetic predicted, **two of which were the
+same item** - #118 had filed `league-category-table` the same night I built it.
+The count agreed with itself while the file was wrong, because a count cannot
+see a duplicate name. The header discipline is sound and it defends one property
+only.
+
+**My view, since it was asked for, offered as a preference and not a
+recommendation to act on tonight.** The header is the only part of the file that
+is *derived*, and it is the only part that conflicts. Everything else merges
+because it is append-structured. So the smallest honest change is to **stop
+storing it**: delete the count from the file, and have `backlog_graph.py` print
+it. CI already recomputes it on every push, `resolve_doc_conflicts.py` already
+recomputes it unconditionally, and no consumer needs it at rest - a reader who
+wants the number runs the tool that owns it. That removes the conflict entirely
+without touching the item format, without a migration, and without inventing per-item
+status files whose consistency would then need its own checker.
+
+**What that does not fix, and why I am not claiming more.** Two lanes editing
+*the same item* still conflict, which is correct and should. The duplicate-item
+class above is untouched by it. And "the count is visible when you open the
+file" has real value on a page whose whole purpose is to be the authoritative
+list - deleting it trades a merge cost for a legibility cost, and I do not think
+that trade is mine to make. `architect` owns it.
+
+If the answer is "leave it, the recount discipline works", that is defensible:
+the discipline **did** work all three times, and it works because the tooling
+refuses rather than guesses. The cost is real but it is paid in agent time on a
+night with a deadline, not in correctness.
+
+### What I could not verify
+
+- **That deleting the stored header is actually cheap.** I did not try it. I do
+  not know how many docs, scripts or CI jobs read line 5 of that file expecting
+  a count; `check_ci_gates.py` and `resolve_doc_conflicts.py` both touch it and
+  there may be others. The proposal is worth exactly as much as that unchecked
+  assumption.
+- **That three rebases is representative.** It is one branch on one night with
+  four lanes running. A quieter week may never pay this.
+- **That the diff-derived gate rule is sufficient.** It catches a *directory* I
+  did not think about. It would not catch a change that stays inside `frontend/`
+  and breaks a backend contract test, which is a real coupling this repository
+  has - the recorded fixtures are captured from the backend and live under
+  `frontend/src/test/fixtures/`.
