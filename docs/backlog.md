@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 115 pending - 176 total**
+**60 done - 1 blocked - 116 pending - 177 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1739,6 +1739,51 @@ unpaired script and a refused envelope, and all three look identical from the
 Fantrax page: nothing happens. See `bridge-status-strip`, which surfaces the
 other two.
 
+### `official-getdraftpicks-live-verification` - Establishing whether the official API can carry the draft board
+
+- [ ] **pending**
+- **Depends on:** `fantrax-official-adapter`
+
+**This became the fork the whole draft-day story hangs on, on 2026-08-28.** The
+first instrumented capture established that the bridge **cannot** read Fantrax's
+`/fxpa/req`: those calls originate in Fantrax's own service worker, no userscript
+can observe them, and the one remaining escape route — Cache Storage — was
+verified empty on a live draft room (five `ngsw:` asset caches, no data group).
+
+So automatic pick tracking now rests on the **other** path, and that path has
+never been tested. `docs/adapters/fantrax-official.md:4` is explicit:
+*"`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` remains
+unverified."* `recognise.py:1462` says the same from the other end:
+*"`getDraftPicks` has never returned a verified real payload."*
+
+**Everything needed to answer it now exists.** `client.py:182`
+`get_draft_picks(league_id)` is implemented, `get_draft_picks_with_provenance`
+returns the payload digest the feed needs, `recognise_official_draft_picks` is
+wired into the feed, and the endpoint is documented and unauthenticated —
+`getLeagueInfo` returned a private league's settings without a `userSecretId` on
+2026-08-18, so there is precedent. The owner now has a **completed 18-round
+draft** in a real league to read.
+
+**Both answers are load-bearing, which is why not knowing is the expensive
+state:**
+
+- **It works** → the live board polls a documented endpoint. The bridge becomes
+  useful for what only it can see, and DOM parsing is not needed for picks.
+- **It fails** → DOM parsing of the rendered board becomes load-bearing for
+  `draft-tracker`, needs scoping, and is the critical path to 4 October. The 49
+  captured snapshots exist precisely so that work can be done offline.
+
+**Acceptance:** a live smoke against a real league id, a recorded fixture
+committed from whatever comes back, and a contract test. Under the Adapter gate,
+the live smoke must fail loudly and must not gate a merge. **If it returns
+nothing or refuses, that is the finding** — record it as such rather than
+retrying until something arrives, and say plainly whether the failure is
+authentication, an empty draft, or a shape nobody expected.
+
+**Do not widen scope to make it succeed.** If it needs a `userSecretId`, stop and
+say so: that is an owner decision about credentials, not an implementation
+detail.
+
 ### `draft-feed-team-alias-draftteamid` - Admitting the team id Fantrax actually sends
 
 - [ ] **pending**
@@ -1958,8 +2003,8 @@ already reconciled by hand.
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *umbrella; eight of nine dependencies are done as of 2026-08-28. The one outstanding is `per-team-auction-budgets`, and **the edge survives on a different justification than the one it was filed under** — see the ruling in that item*
-- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `per-team-auction-budgets`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
+- [ ] **pending** — *umbrella; **all nine dependencies are done as of 2026-08-28.** The `per-team-auction-budgets` edge was dropped by owner ruling that day. What remains is not a dependency but an open question: whether picks can be tracked automatically at all — see `official-getdraftpicks-live-verification`*
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
 
@@ -3087,6 +3132,31 @@ no seat's winning bid can be dropped because another seat's budget was assumed.
 **ARCHITECT RULING 2026-08-28 — the `draft-tracker` edge stays, on a new
 justification.**
 
+**SUPERSEDED THE SAME DAY BY THE OWNER. The edge is dropped.** The ruling below
+named its own flip condition — *"if he says the shared scalar is close enough,
+that he needs only his own bank tracked and reads the others off Fantrax, Q15 is
+satisfied without Route A and the edge should be dropped"* — and asked that he be
+put the question **before** Route A's migration was written rather than after.
+
+He was asked, and answered: **"Yes 200 is close enough."**
+
+So `draft-tracker` no longer depends on this item, and **all nine of its
+dependencies are now done.** This item stays open as ordinary unbuilt work: seats
+still have no budget column, and a seat whose real bank differs will still show a
+figure derived from the shared scalar — now with `over_assumed_budget` flagging
+it rather than a pick being lost, which is what Route B bought. It is no longer
+on the critical path to draft day.
+
+**What this ruling did not settle, and what replaced it as the open question.**
+Dropping the budget edge does not make the board work. On the same day the first
+instrumented capture established that the bridge **cannot** read Fantrax's
+`/fxpa/req` at all — service-worker originated, and Cache Storage verified empty.
+So "picks tracked automatically" is now contingent on
+`official-getdraftpicks-live-verification` rather than on any budget question.
+The reasoning below is kept because the argument it makes about Q15's two nouns
+is still the right frame; only its conclusion was overtaken.
+
+---
 **The original justification is now false and the Route B lane said so rather
 than quietly leaving it.** That edge was filed because a recorded sale could be
 refused and the player never added to the board — Q12's *"misses one"*. Route B
