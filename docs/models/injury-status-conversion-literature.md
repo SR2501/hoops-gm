@@ -396,6 +396,40 @@ proven to account for all 30** — the shortfall localises entirely to the legac
 era, which the three dropped games do not obviously explain. Tracked, not
 resolved here.
 
+**Correction, 2026-08-27, `data-engineer`: that last objection cited the wrong
+field, and with the right one the selection basis fits.** The sentence above and
+`docs/backlog.md`'s `cohort-canonical-count-reconciliation` both identify the
+dropped games as 2026-01-08 `MIA@CHI` and reject the hypothesis because that is
+*short-lead* era while the gap is entirely legacy. But 2026-01-08 `MIA@CHI` is
+`trusted_entry_cascade.unresolved_game_id_sample`, which is **unresolved player
+identity** - a different exclusion class that has nothing to do with tip-offs.
+
+The games actually dropped for want of a tip-off are `0022500259`, `0022500260`
+and `0022500261`, named identically by two independent fields of the committed
+manifest - `cross_source_tipoff_reconciliation.games_without_both_instants` and
+`store_assembly.receipt.cross_store_nba_games_reconciliation.tipoff_utc.absent_in_participation_ledger`
+- and a third artifact dates them:
+[`participation-ledger-2025-26-coverage.json`](../adapters/participation-ledger-2025-26-coverage.json)
+reports `games_unobserved: 3` with `unobserved_dates` all **2025-11-19**. That is
+before the 2025-12-22 boundary, so **the three dropped games are legacy era** and
+the all-legacy localisation is what the hypothesis predicts rather than evidence
+against it.
+
+Two corroborations, neither of them a proof: 30 observations over 3 games is
+**10.0 per game**, an ordinary size for one game's report rows; and differencing
+the census's `status_counts_by_game_date` against the committed artifact's
+`direct_outcome_counts_by_game_date` puts **2025-11-19 top of all 164 dates at
++30**, against +17 for the runner-up and a mean of 1.35.
+
+**This still does not prove the attribution**, and the reason is worth keeping:
+that per-date excess is canonical-minus-*direct*, so it mixes the dropped games
+with ordinary exclusions on the same date, and its agreeing with the gap at 30 is
+corroboration rather than identity. Closing it needs the manifest's canonical
+count for 2025-11-19, which no committed artifact publishes. What has changed is
+that the objection which killed the hypothesis is withdrawn: it was killed by
+implausibility, as the backlog item says of the *previous* wrong mechanism, and
+the implausibility was read off the wrong field.
+
 **Nothing in this section's verdict depends on which count is right.** The
 `doubtful` and `probable` figures — the two scarce statuses the go/no-go turns
 on — agree exactly between the two artifacts, and the held-out figures below are
