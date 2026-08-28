@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 112 pending - 173 total**
+**60 done - 1 blocked - 113 pending - 174 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1670,6 +1670,39 @@ already recorded for the scoring profile in `ownership.md`.
 - **Depends on:** `punt-builds`, `userscript-foundation`
 
 Shadow-DOM overlay rendering hoops-gm recommendations directly on Fantrax pages, so decisions surface where they are made.
+
+### `openapi-recorded-drift-check` - Giving the recorded OpenAPI document a capture script and a drift check
+
+- [ ] **pending**
+- **Depends on:** `backend-skeleton`, `frontend-skeleton`
+
+**`frontend/src/test/openapi.recorded.json` silently stopped describing the API
+on 2026-08-28 and nothing failed.** The only guard on it,
+`openapiEnums.recorded.test.ts`, partitions **enums** — and a newly added boolean
+property is not an enum, so the recording drifted with every check green. Its own
+test docstring already names manual re-recording as a real limit.
+
+**The comparison that makes this a gap rather than a preference:** the draft
+fixtures have both halves — `scripts/capture_draft_fixtures.py` regenerates them
+and its `--check` mode fails on drift, with a `_refusal()` helper that raises
+when a case stops refusing so a fixture cannot quietly become a lie. The
+OpenAPI recording has neither half. Two schema-touching units landed in one week
+(#120, #122) and only the second was noticed, by hand.
+
+**Acceptance:** a script that flattens both the served `app.openapi()` and the
+committed file to `dotted.path[index]` → leaf-value maps and reports **added /
+removed / changed** as three sorted key lists, plus a `--check` mode wired into
+CI. The re-recorder must **round-trip the committed file first and refuse to
+write if re-serialising does not reproduce it byte for byte**, so a reformat
+cannot be committed as though it were a content change.
+
+**Method already established, and it worked once.** The lane that found this
+wrote exactly that checker as a one-shot, used it to show its own change was
+**3 added / 0 removed / 0 changed, all three its own** — which is what made
+re-recording defensible rather than a blind snapshot absorbing inherited drift —
+and then deleted it. Roughly twenty lines. **The procedure survived only because
+it was asked for before that session was archived**, which is the argument for
+the pre-archive question rather than for this item.
 
 ### `userscript-served-version-check` - Failing when the served bridge build is older than the source
 
