@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**58 done - 1 blocked - 107 pending - 166 total**
+**58 done - 1 blocked - 108 pending - 167 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1757,7 +1757,7 @@ silently. Fix the surfacing, then close this item, then `draft-tracker` unblocks
 ### `draft-tracker` - Building the live draft tracker
 
 - [ ] **pending** — *umbrella; the two landed halves are now `draft-tracker-persistence` and `draft-tracker-screen`, and only `draft-tracker-bridge-feed` is outstanding*
-- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `per-team-auction-budgets`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
 
@@ -2846,11 +2846,23 @@ dressed as a measurement. **That choice is the item.**
 
 ### `per-team-auction-budgets` - Giving each seat its own starting budget
 
-- [ ] **pending**
-- **Depends on:** `draft-tracker-persistence`, `draft-setup-screen`
+- [ ] **pending** - **Blocks `draft-tracker`.** A recorded sale can be refused and the player never added to the board.
+- **Depends on:** `draft-tracker-persistence`
 
 **Acceptance:** each seat's starting budget is stored on the seat, and every
-derivation reads it from there rather than from the single scalar on `Draft`.
+derivation reads it from there rather than from the single scalar on `Draft`;
+no seat's winning bid can be dropped because another seat's budget was assumed.
+
+**`draft-setup-screen` is downstream of this, not upstream, and the graph is what
+established that.** The obvious edge - "you cannot set per-seat budgets until
+there is a screen to set them on" - is false and creates a cycle:
+`draft-tracker` -> `per-team-auction-budgets` -> `draft-setup-screen` ->
+`draft-tracker`, which `scripts/backlog_graph.py` refused on 2026-08-27 the
+moment the blocking edge above was added. The cycle is the tool telling the truth.
+`POST /api/v1/drafts` already accepts the full participant list, and
+`hoops_gm.dev.seed_draft` already creates seats without a browser, so the schema
+and API half needs no screen. The screen must **carry** per-seat budgets when it
+lands, and its existing edge on `draft-tracker` already sequences that.
 
 From Q8: *"I think 200, but it's slightly different per team based on last years'
 final totals."*
@@ -2859,17 +2871,63 @@ final totals."*
 inherited.** `DraftParticipant` carries `draft_id`, `team_slot`, `display_name`,
 `owner_draft_id` and `fantasy_team_id` - **no budget column.** `auction_budget`
 is one `Numeric(10, 2)` on `Draft` (`db/models/draft.py:120`), copied from
-`League`, and two places derive every seat's bank from it:
-`draft/state.py:671-682` for `remaining_budget`, and `draft/state.py:457` for
-`_refuse_if_over_budget`.
+`League` at creation.
 
-**The second site is the one that bites.** It is not a display path - it
-**refuses a recorded bid**. Against his real league it will reject a legitimate
-bid from a seat with a larger bank, or accept one from a seat with a smaller
-bank, and either way the board is wrong about a pick that happened. Q12 names
-that class of failure as the thing that makes him close the laptop, and Q15 asks
-for *"picks and budgets tracked automatically"* as the single thing that must
-work on 18 October.
+#### The apply path, which is why this blocks rather than annoys
+
+`_refuse_if_over_budget` (`draft/state.py:449-463`) computes
+`remaining = fmt.auction_budget - board.spent_by(participant.id)` from that one
+draft-wide scalar. **Three call sites, read rather than recalled:**
+
+| line | enclosing function | what it refuses |
+|---|---|---|
+| 427 | `_apply_nomination` | an opening bid |
+| 493 | `_apply_bid` | a bid |
+| **564** | **`_apply_sale`** | **a completed sale** |
+
+**Line 564 sits three lines before `board.add(...)` at 567.** So a recorded sale
+above the assumed scalar raises `draft_budget_exceeded` and **the player is never
+added to the board.**
+
+In his league the scalar is wrong for most seats by construction, so any seat
+with a larger bank loses its winning bids from the moment its spend passes the
+assumption. The board then silently lacks a player it watched being sold. Asked
+what would make him abandon the tool mid-auction, the owner answered *"it loses
+track of the draft - shows me picks that already happened or misses one"*; Q15
+names *"the live draft board with picks and budgets tracked automatically"* as
+the single thing that must work on 18 October. **This is that failure, inside
+that feature.**
+
+**The display derivation at `draft/state.py:671-682` is the lesser half.** A
+wrong `remaining_budget` on screen is a wrong number a human can notice. A
+refused sale is a missing fact, and nothing on the screen says so.
+
+**Recorded as a dependency edge on `draft-tracker` rather than as a caveat**, for
+the reason `draft-feed-unreadable-id-surfacing` established: a caveat is text,
+and `backlog_graph.py` fails on a dangling edge while a paragraph fails nothing.
+That rule was written for a defect that needs an unreadable id to fire. This one
+fires whenever a seat outspends an assumption that is wrong for most seats, so
+waiving the rule for the **more** likely defect would be incoherent.
+
+#### Two routes. Do not pick one from this file.
+
+**Route A - the schema change.** `DraftParticipant` gains a budget column, set at
+draft creation, and all three call sites plus the display derivation read it from
+the seat. Correct and complete; it is a migration, a create-path change, a
+`draft-setup-screen` change and a backfill decision for existing drafts.
+
+**Route B - stop refusing on the apply path, and report instead.** Smaller and
+reversible. **A recorded sale that exceeds our assumed budget means our
+assumption is wrong, not that the sale did not happen.** Admit it to the board
+and surface `over_assumed_budget` as a flag on the seat. Consistent with ADR-014
+(a read detects a moved cohort, it does not lock to prevent one) and with Q7
+(advise everywhere, override nowhere) - and it makes the tool's own wrong
+assumption *visible* rather than making the owner's real draft *invisible*.
+
+Route B does not make Route A unnecessary; it makes the board correct while
+Route A is built, which matters because the calendar does not move. **The choice
+is owed to whoever picks this up, and is deliberately not made here** - both are
+written down so tomorrow starts with a decision rather than a rediscovery.
 
 ### `owner-bias-feedback-loop` - Feeding his own tendencies back to him
 
@@ -2935,11 +2993,30 @@ a game, the file is actuals and must be refused as a projection source.
 **The existing guard does not cover this and may make it worse.**
 `BASKETBALL_MONSTER_PROFILE` pins an exact header sequence
 (`parser.py:115` refuses when `tuple(fieldnames) != profile.expected_headers`).
-Whether the actuals file matches that sequence exactly is **unverified**, and
-both branches are bad: if it matches, the exact-header guard accepts an actuals
-file as projections; if it does not, the guard refuses it as *schema drift*,
-which invites the next reader to widen the profile and let it in. A guard that
-gives the wrong reason is worse than one that is silent.
+**Resolved 2026-08-27 by the coordinator, who holds the files: neither new export
+matches it.** `BASKETBALL_MONSTER_2026_27_HEADERS` is the 22-column sequence
+`player_id, last_name, first_name, games, minutes, ... , comments` - the header
+row of the 19 August CSV. The 27 August projections export is **48 columns**
+beginning `Own, Round, Rank, Adv ADP, ...`; the 26 August actuals export is **37
+columns** beginning `Own, Round, Rank, Adv%, ...`. So the guard refuses the
+actuals file **as schema drift**, which gives the wrong reason and invites the
+next reader to widen the profile until it fits. A guard that gives the wrong
+reason is worse than one that is silent.
+
+**And no header check could ever be the answer, which is the load-bearing part of
+this item.** The two exports are *the same Basketball Monster view configured
+differently* - the actuals file is the projections file minus `Adv ADP`, `1W+-`,
+`Note`, `Inj Risk`, `Josh`, `Kyle`, `Matt`, `Conf`, `Tier`, `Role` and `b2b`,
+because BBM lets the user choose which columns to display. **A user who
+configures the two pages alike gets two byte-identical schemas holding different
+seasons.** Schema cannot separate them even in principle.
+
+**So implement this as a value-level assertion, not a header tweak.** Bind the
+vintage to the filename or an explicit operator declaration, then *check* that
+declaration against the data: if the incoming `g` column reproduces the prior
+season's participation ledger to within a game, the file is actuals and must be
+refused as a projection source. Widening `expected_headers` is the plausible
+wrong fix and it closes nothing.
 
 **The ledger arm must not pass vacuously.** `participation-ledger-population` has
 not run at scale, so the comparison has no data to run against yet. A check that
@@ -3040,3 +3117,37 @@ them."* The report file itself is safe; it is written with `encoding="utf-8"`.
 **The prize is not the crash.** It is that a refusal is a user interface, and
 this one fires when an import has failed and the owner is reading the console to
 find out why.
+
+### `cohort-manifest-leaf-count-discrepancy` - Explaining two different leaf counts for one manifest
+
+- [ ] **pending**
+- **Depends on:** `fingerprint-boundary-ruling`
+
+**Acceptance:** the two counts below are reconciled to a named cause, or the
+earlier one is shown to be a misreading; either way the answer is written down
+rather than re-measured by the next person who notices.
+
+Filed 2026-08-27 so this starts from evidence rather than from the memory of a
+discrepancy. **Two measurements of `manifest_leaf_diff.py` against
+`docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json`:**
+
+| date | leaves | context |
+|---|---|---|
+| 2026-08-26 | **1656** | coordinator register `c294`, regeneration with the `record_refresh` lineage fix applied, reporting exactly 1 differing leaf |
+| 2026-08-27 | **1664** | `architect`, control regeneration at the unmodified tree, 0 added / 0 removed / 1 changed against the committed file |
+
+**The manifest itself did not move.** `git log -- docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json`
+returns exactly one commit, `1912a3d` (#92). So the difference is in the
+generator, in what was on disk when each ran, or in how one of the two counts was
+read - **not** in the artefact.
+
+**Eight leaves is small, and that is the reason to look rather than the reason
+not to.** Both runs reported "1 changed" and used that to support a *negative*
+claim - that no cohort number moved. A negative claim from a whole-leaf
+comparison is only as good as the leaf set being the same set. This repository
+has twice found a small unexplained delta to be load-bearing, and neither time
+was it obvious in advance.
+
+Cheapest first step: re-run the control at `1912a3d` and at today's `main` and
+diff the two leaf *path sets*, not the counts. Path names will say immediately
+whether a section appeared, emptied, or was never counted the same way.
