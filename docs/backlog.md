@@ -1866,7 +1866,7 @@ already reconciled by hand.
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *umbrella; eight of nine dependencies are done as of 2026-08-28 and the one outstanding is `per-team-auction-budgets`, which is a live defect rather than unbuilt work*
+- [ ] **pending** — *umbrella; eight of nine dependencies are done as of 2026-08-28. The one outstanding is `per-team-auction-budgets`, and **the edge survives on a different justification than the one it was filed under** — see the ruling in that item*
 - **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `per-team-auction-budgets`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
@@ -2991,6 +2991,40 @@ dressed as a measurement. **That choice is the item.**
 **Acceptance:** each seat's starting budget is stored on the seat, and every
 derivation reads it from there rather than from the single scalar on `Draft`;
 no seat's winning bid can be dropped because another seat's budget was assumed.
+
+**ARCHITECT RULING 2026-08-28 — the `draft-tracker` edge stays, on a new
+justification.**
+
+**The original justification is now false and the Route B lane said so rather
+than quietly leaving it.** That edge was filed because a recorded sale could be
+refused and the player never added to the board — Q12's *"misses one"*. Route B
+removed that: the sale is admitted and the assumption is flagged instead. The
+lane declined to drop the edge itself on the grounds that re-sequencing is
+`architect`'s call and that removing a constraint while fixing the sentence
+holding it up is the wrong half to do unilaterally. That was correct.
+
+**Ruling: the edge stays, and the reason is Q15's second noun.** The owner's
+answer to what must work on 18 October is *"the live draft board with picks **and
+budgets** tracked automatically."* Picks are now tracked correctly. Budgets are
+not: `Draft.auction_budget` is one scalar, his Q8 answer is *"slightly different
+per team based on last years' final totals"*, and so every seat's remaining
+figure is wrong for most seats by construction. The board reports **spend**
+correctly and **remaining** against an assumption it knows is wrong — which is
+why Route B publishes `over_assumed_budget` rather than hiding it.
+
+So `draft-tracker` cannot honestly be called done while half of what the owner
+named is derived from a number that does not describe his league.
+
+**What would flip this.** If the owner says the shared scalar is close enough —
+that he only needs *his own* bank tracked and can read the others off Fantrax —
+then Q15 is satisfied without Route A and the edge should be dropped. That is
+his call, not an inference from these words, and it is worth asking before Route
+A's migration is written rather than after.
+
+**Recorded rather than acted on:** nothing about the edge changes today, and
+`draft-tracker` stays pending either way. What changed is that the justification
+in force is now stated, so the next reader does not find a dependency resting on
+a sentence that has been corrected out from under it.
 
 **`draft-setup-screen` is downstream of this, not upstream, and the graph is what
 established that.** The obvious edge - "you cannot set per-seat budgets until
