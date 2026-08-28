@@ -31566,3 +31566,200 @@ went to the lane as well as into the file.
   the other direction** - one that under-counts consistently, so that both the
   real count and the seeded count are wrong by the same amount. The control
   asserts a delta of exactly one, which such a counter would still satisfy.
+
+## 2026-08-28 - bridge - Pre-archive: what the lane held, and two claims about the snapshot budget that are wrong
+
+Written in answer to the coordinator's pre-archive question. Everything below
+was in a worktree or in my head and is now here, which is the point.
+
+### The truncation marker does not survive, and the mechanism is worse than filed
+
+`bridge-snapshot-budget` says `buildDomSnapshotHtml` appends its marker after
+`html.slice(0, limit)`, so a cut landing mid-attribute folds the marker into an
+attribute value. **I confirmed the consequence by parsing, not by reading**, and
+the mechanism is one step worse than that.
+
+Probe: build a `<main>` of 200 repeated `<div class="draft-cell"
+data-player="Player Name Here">x</div>` cells, cut at a limit landing inside
+`data-player="Player Name`, and parse the result with Python's
+`html.parser.HTMLParser` - the same parser the board lane's first
+implementation used.
+
+    cut lands here : 't-cell" data-player="Player Name'
+    tail           : 'player="Player \n<!-- hoops-gm bridge: truncated at 546 chars -->'
+    marker present as a string      : True
+    marker is a COMMENT node        : False
+    marker inside an attribute value: False
+
+Control, cutting at a tag boundary instead: `marker is a COMMENT node: True`.
+
+**It is not folded into an attribute value.** The attribute's opening quote is
+never closed, so the start tag never completes: `handle_starttag` never fires
+either. The tokenizer stays in the attribute-value state to end of input and
+emits **no node at all** for the entire trailing region. The marker is not
+misplaced, it is unreachable - a consumer sees neither a comment nor an
+attribute, only a document that ends early and looks complete.
+
+So the filed conclusion holds and its remedy is unchanged: detect truncation on
+the raw string, never as a parsed node. `docs/backlog.md` should carry the
+refined mechanism, because "in an attribute value" suggests the marker is
+recoverable from the DOM with effort, and it is not.
+
+### "Manual export is not capped" is true of one branch and false of the other
+
+`bridge-snapshot-budget` records manual export as uncapped, and the standup
+framing calls it *"the only capture path that provably cannot lose the board"*.
+**`captureManualSnapshot` has two branches with different budget behaviour**
+(`capture.js`, the `readExposedAppState` block):
+
+- **app-state branch** - `raw = appState.json`. Genuinely uncapped. Nothing
+  truncates it.
+- **DOM branch** - `raw = buildDomSnapshotHtml(doc)`, called with **no
+  `maxChars`**, so it defaults to `DOM_SNAPSHOT_MAX_CHARS = 500_000`. Capped,
+  and it carries the truncation-marker defect above.
+
+Which branch runs is decided by `APP_STATE_GLOBALS = ["__NEXT_DATA__",
+"__NUXT__", "__INITIAL_STATE__", "__APOLLO_STATE__"]` - Next.js, Nuxt, a
+generic convention, and Apollo. **Not one of them is an Angular global**, and
+Fantrax is Angular; that is established independently by the five `ngsw:`
+service-worker caches behind the Cache Storage removal. On Fantrax I expect
+`readExposedAppState` to return `null` and manual export to take the **DOM
+branch** - capped at 500,000 and sharing the bug.
+
+**That contradicts the measurement in the item**, which reports three manual
+exports at 727 KB. A 727 KB `body.raw` cannot come from the DOM branch, whose
+ceiling is 500,000 characters plus a ~50-character marker.
+
+**One query settles it**, and the content type is the discriminator because the
+two branches set it differently (`application/json` vs `text/html`):
+
+    SELECT id, response_content_type, length(body_raw)
+    FROM bridge_payloads WHERE source = 'manual-export';
+
+- `application/json` -> the app-state branch ran, Fantrax exposes one of those
+  four globals after all, and **which one** is worth recording, because it is a
+  structured-JSON source nobody expected to exist and it is strictly better
+  evidence than scraped HTML.
+- `text/html` -> the DOM branch ran, the 727 KB figure is measuring something
+  other than `body.raw` (the stored envelope, or the raw payload column), and
+  **the guaranteed fallback is capped at 500,000 with invisible truncation** -
+  which makes it not guaranteed on a board that renders past that.
+
+I could not run this: the database is the owner's, not in the repository.
+
+### The 250,000 auto cap has no recorded rationale
+
+`AUTO_SNAPSHOT_MAX_CHARS = 250000` entered at `1c88325` with the message
+*"add bounded rendered-view capture"*. The bound is justified; **the number is
+not, anywhere**. So: accidental in the only sense that matters - nothing
+records why 250,000 rather than any other figure, and nothing would notice if
+it were wrong.
+
+Against the 208 KB finished football board that is roughly 17% headroom, and I
+would not rely on it. Two reasons, and the second is the one that bites:
+
+1. **The comparison mixes units.** 208 KB is bytes; the cap counts JavaScript
+   string length, which is UTF-16 code units. For ASCII they run together, and
+   NBA rosters are not ASCII - `Jokic`, `Doncic`, `Sengun` and friends carry
+   multi-byte UTF-8 names. That direction favours us (bytes overstate
+   characters), but nobody has checked which way the NBA board actually lands.
+2. **Exceeding it is silent.** Truncation is invisible to a parser, per the
+   probe above. So the failure mode of a too-small cap is not a short capture
+   that announces itself; it is a board that reads complete and is not.
+
+Likely-enough and invisible is the combination worth fixing, and the fix is
+cheap: detect truncation on the raw string.
+
+### A near-miss worth more than the holdings: a PR whose body and diff disagreed
+
+Landing the two holdings above, I pushed them with an explicit refspec to a new
+branch and then opened a pull request with the app's `create_pull_request`
+tool. **The tool opens against the session's tracked branch, not the branch the
+refspec pushed to.** So the PR carried a body describing a slug-set differ and
+a handoff addendum, and a diff consisting of the entire already-merged previous
+PR - `capture.js` +667, the version bump, none of the work described.
+
+The coordinator caught it by measuring `git diff --stat origin/main...pr` and
+comparing it against the body. **Nothing else would have.** The branch was
+real, the commits were real, the CI run was real and would have gone green,
+because every gate this repository has answers *"is this branch sound?"* and
+none answers *"is this branch the one the description is about?"*.
+
+That is the same shape as the two Cache Storage tests that kept passing after
+the code they covered was deleted: a check that is green for a reason unrelated
+to the claim it appears to support. Here the claim lived in prose a reviewer
+trusts, and the gate could not see the prose at all.
+
+**The mechanical lesson:** after opening a pull request, verify the head SHA it
+actually points at rather than the one you pushed -
+`gh pr view <n> --json headRefName,headRefOid` against `git rev-parse HEAD`.
+Pushing with `HEAD:refs/heads/<other-branch>` and then opening a PR through a
+session-bound tool is precisely the combination that separates them.
+
+
+
+- Cache Storage on the live draft room held **five** entries, all `ngsw:`
+  Angular service-worker asset caches - `assets:app:cache`,
+  `assets:assets:cache`, plus their meta and control databases. Already in
+  `capture.js` and the README; repeated here because it is the whole evidential
+  basis for the removal.
+- **No `Content-Security-Policy` header is recorded anywhere in this
+  repository.** I checked (`git grep -il content-security-policy` returns
+  nothing). See below.
+
+### What I tried that did not work, and what I never tried
+
+- **I never opened a browser.** I have no browser in this environment and the
+  49 captures are in the owner's private folder, not in the repository. Every
+  status-strip test runs against a fake DOM in `node:vm`. So the CSP argument
+  for CSSOM styling is a **spec claim I did not observe**: correct as written -
+  CSP governs stylesheet and inline-style *loading*, not `CSSStyleDeclaration`
+  mutation - but unverified against fantrax.com's actual header. **I did not
+  look, and could not have.** Capturing that header is a five-second DevTools
+  job on the next live run and converts the argument into a check.
+- **`GM_addElement` was never exercised.** It is already granted, unchanged by
+  this work, and is the escape hatch if the strip renders invisible. I did not
+  test it because testing it needs the browser I do not have.
+- **I did not attempt any further route to `/fxpa/req`.** The service-worker
+  boundary is a platform property, not a gap in effort; the only remaining
+  documented idea is IndexedDB, which is untouched and still not code.
+- **A first version of my own removal test passed against the *comments* that
+  record the removal**, because this checkout is CRLF and my comment-stripping
+  regex split on `"\n"` - a trailing `\r` is a line terminator `.` cannot
+  cross, so every `//` comment survived the strip and the assertion read the
+  prose it was meant to ignore. Fixed by splitting on `/\r?\n/`. Same family as
+  `append-only-docs-line-ending-check`, which landed today.
+
+### Beliefs I hold that are in no docstring
+
+- **The rendered-view path is now the whole game, and it was designed as a
+  fallback.** Its rate limits - 5s navigation, 60s mutation - were chosen when
+  it was the *lower-confidence* backup to a raw RPC feed that turned out not to
+  exist. On a live board where picks land every two minutes, a 60-second
+  mutation floor is a sampling interval, not a safety margin, and nobody has
+  revisited it since the thing it backed up was ruled out.
+- **I expect the strip to render.** The riskiest part is not CSP but
+  `position: fixed` inside an Angular app that may itself use a full-viewport
+  fixed overlay at a higher stacking context; I used `z-index: 2147483000`,
+  which loses only to a literal `2147483647`.
+
+### What I would do with another hour
+
+Fix `bridge-snapshot-budget` in my own file - detect truncation on the raw
+string and emit it as an envelope field rather than an HTML comment, so it
+cannot depend on parseability at all - then run the one SQL query above and
+settle which manual-export branch Fantrax actually takes. Both are small and
+the second changes what `draft-board-dom-parser` should read.
+
+### Could not verify
+
+- **Everything in the first two sections is about code, not about Fantrax.**
+  The probe proves what `buildDomSnapshotHtml` does to a synthetic string. It
+  does not prove any *recorded* capture was truncated - that needs the owner's
+  database, and if no real capture ever exceeded its cap, the defect is latent
+  rather than active. I did not check and cannot.
+- **The Angular-globals inference is an inference.** I did not observe
+  `readExposedAppState` returning `null` on Fantrax; I observed that none of
+  the four names it looks for is an Angular convention. The 727 KB measurement
+  is genuine evidence *against* my inference, which is exactly why the query
+  above is worth running rather than assuming I am right.
