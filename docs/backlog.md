@@ -3279,6 +3279,76 @@ returns exactly one commit, `1912a3d` (#92). So the difference is in the
 generator, in what was on disk when each ran, or in how one of the two counts was
 read - **not** in the artefact.
 
+**Narrowed 2026-08-28, and this is the part that makes the item cheap.** The
+committed manifest reads **1664 leaves at `1912a3d` and 1664 today**, 0 added /
+0 removed / 0 changed between them. So `1664` is the artefact's own count and
+has been since it was published. **`1656` therefore describes something other
+than the committed file** - most likely the regenerated output of that run,
+which would mean that regeneration produced a manifest **8 leaves smaller** than
+the one on disk.
+
+**If that is what happened, "1 differing leaf" and "1656 leaves" cannot both be
+right about the same pair of documents**, because a file 8 leaves short reports
+8 *removed*, not 1 *changed*. One of the two numbers in `c294` is describing a
+different comparison than the other.
+
+**The obvious hypothesis was tested and it does not fit.**
+`scripts/manifest_leaf_diff.py`'s own docstring records a section silently
+emptying when the generator is run from `backend/` rather than the data root -
+*"three files' sizes and hashes vanished from the manifest with nothing marking
+their absence"*. That section is `operational_artifacts`, and it holds
+**7 leaves** today (`directory_present`, plus `files` at 6 = three files x two
+fields). Collapsed it would hold **2** (`directory_present`, plus `files` as an
+empty container, which this tool counts as one leaf by design). **That is a loss
+of 5, not 8.** So the emptying-section story is insufficient on its own, and the
+next reader should not spend the hour I nearly did on it.
+
+Reproduce the 1664 measurement:
+
+```
+python scripts/manifest_leaf_diff.py \
+  docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json \
+  $env:TEMP\cohort-control-regen.json
+```
+
+`manifest_leaf_diff.py` accepts `<ref>:<path>` as well as a path on disk, so the
+history side needs **nothing checked out**:
+
+```
+python scripts/manifest_leaf_diff.py \
+  1912a3d:docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json \
+  docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json
+```
+
+**Regenerating the comparison side, and the trap in it.** The control regen is:
+
+```
+cd backend
+$env:PYTHONPATH="$PWD\src"
+$env:DATABASE_URL="sqlite+pysqlite:///C:/Users/steverones/hoops-gm-data/cohort-merged-2025-26.db"
+python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 \
+  --start 2025-10-21 --end 2026-04-12 --out $env:TEMP\cohort-control-regen.json \
+  --repo-root .. --raw-root "C:\Users\steverones\hoops-gm-data\data\raw" \
+  --report-dir "C:\Users\steverones\hoops-gm-data\data\reports" \
+  --merge-receipt "C:\Users\steverones\hoops-gm-data\cohort-merged-2025-26.db.merge-receipt.json"
+```
+
+**`--raw-root` is the trap and it has already cost this project a wrong
+conclusion.** Its default is `backend/data/raw`, **which does not exist**, and
+that default is exactly what coordinator register `c294` records a lane
+misreading as "regeneration requires live `stats.nba.com` calls" - a claim that
+reached a docstring and was quoted back as grounds for a ruling before being
+driven and found false. Pointed at `hoops-gm-data\data\raw` (3,045 files, 53.8 MB)
+it runs offline, exit 0. **What makes it offline is that `--allow-fetch` is off
+by default**, so a view the raw store never captured is *reported* rather than
+fetched; nothing suppresses the network, the tool simply does not reach for it.
+And `--report-dir` matters for the same reason the emptying section above does.
+
+**`$env:TEMP\cohort-control-regen.json` is the artefact behind the 1664 count and
+is a temp file.** It will not survive a reboot. If it matters, **regenerate it
+with the command above rather than going looking for it** - the command is the
+durable thing, which is the whole reason it is written here instead of a path.
+
 **Eight leaves is small, and that is the reason to look rather than the reason
 not to.** Both runs reported "1 changed" and used that to support a *negative*
 claim - that no cohort number moved. A negative claim from a whole-leaf
@@ -3286,9 +3356,12 @@ comparison is only as good as the leaf set being the same set. This repository
 has twice found a small unexplained delta to be load-bearing, and neither time
 was it obvious in advance.
 
-Cheapest first step: re-run the control at `1912a3d` and at today's `main` and
-diff the two leaf *path sets*, not the counts. Path names will say immediately
-whether a section appeared, emptied, or was never counted the same way.
+Cheapest first step, given the narrowing above: **stop counting and start naming.**
+Diff the leaf *path sets* between the committed manifest and a fresh regen. Path
+names say immediately whether a section appeared, emptied, or was never counted
+the same way - and since `operational_artifacts` collapsing accounts for only 5
+of the 8, the remaining 3 are somewhere a count can never point at.
+
 ### `league-category-rate-table` - The per-game-rate half of the live category table
 
 - [x] **done** - Landed 2026-08-27 at `/draft/:draftId/categories`, linked from
