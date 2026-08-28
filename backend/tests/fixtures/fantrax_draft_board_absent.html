@@ -1,0 +1,20 @@
+<!--
+hoops-gm test fixture. THIS IS A REDUCTION OF A REAL CAPTURE, NOT AN INVENTION.
+
+Source: a live 12-team, 18-round Fantrax snake draft room, captured by
+userscript/src/capture.js on 2026-08-28 as a `rendered-view` snapshot. Reduced by
+scripts/reduce_draft_board_fixtures.py, which documents exactly what it keeps
+and what it replaces; the markup below is otherwise the Angular output Fantrax
+served, unaltered in structure.
+
+ADR-006 turns on this distinction. A fixture assembled from a reading of a
+format can only ever confirm the reading. This one was recorded off the wire,
+so it is able to disagree with us -- and it did: it is what established that
+the board renders all 216 cells before a single pick is made.
+
+What it still cannot prove is that a future Fantrax build looks like this one.
+Nothing in the DOM announces its own version.
+
+Ground truth, watched by the owner: not the draft room at all: the league home page. There is no board element, which is a different fact from a board holding zero picks.
+-->
+<body class="theme--dark"><app-root ng-version="20.3.7" class="fx-layout"><app-league-draft class="draft ng-star-inserted"><app-league-home class="content content--hidable-ad-column ng-star-inserted"><headline id="fx-headline" tabindex="-1" title="" class="fx-headline fx-headline--has-subtitle"><div class="fx-headline__rows"><!----><h2 class="text--ellipsis ng-star-inserted"><span>Home</span><!----></h2><!----><h4 class="text--ellipsis ng-star-inserted"> 2026-27 NFL<span class="ng-star-inserted">Mock Draft - PPR (574)</span><!----><!----></h4><!----></div><!----><div class="fx-headline__filters"><!----><button mat-icon-button="" color="sport--shadow" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-menu-trigger button--xl mat-sport--shadow" mat-ripple-loader-uninitialized="" mat-ripple-loader-class-name="mat-mdc-button-ripple" mat-ripple-loader-centered="" aria-haspopup="menu" aria-expanded="false"><span class="mat-mdc-button-persistent-ripple mdc-icon-button__ripple"></span><mat-icon role="img" class="mat-icon notranslate material-icons mat-ligature-font mat-icon-no-color" aria-hidden="true" data-mat-icon-type="font">more_horiz</mat-icon><span class="mat-focus-indicator"></span><span class="mat-mdc-button-touch-target"></span></button><!----></app-league-home></app-league-draft></app-root></body>

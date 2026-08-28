@@ -31093,3 +31093,308 @@ Both automatic pick-tracking paths are now negative — the bridge cannot read
 of the rendered board is the critical path to 4 October**, filed as
 `draft-board-dom-parser`. The consolation is real and worth keeping: the endpoint
 is reachable, unauthenticated, and cheap to poll if it ever populates.
+## 2026-08-28 - backend - The draft board is parseable, and the reason the first pass thought otherwise was one space
+
+`draft-board-dom-parser`, at `backend/src/hoops_gm/draft/feed/board_dom.py`,
+with five recorded fixtures, 23 contract tests and the script that reduced them.
+
+This unit is the critical path. Both automatic routes to live pick data were
+falsified within four hours on 2026-08-28 - `/fxpa/req` is service-worker
+private and unobservable from a userscript, Cache Storage holds only Angular
+asset groups, and the official `getDraftPicks` answers `{"currentDraftPicks":[]}`
+against a *finished* 216-pick draft. What is left is the rendered DOM.
+
+**It works, and against the real thing rather than against my own fixtures.**
+Driven over all 49 captured payloads: **42 parsed, 7 refused, 0 disagreements**
+with an independently written count. The 7 refusals are exactly the 7 snapshots
+of other pages - a team roster and a league home - which is the right answer.
+The final snapshot yields **216 picks, 18 rounds, 12 seats**, which is the board
+the owner watched happen.
+
+### The first pass's central claim was wrong, and cheaply
+
+The brief said, as established fact not to be re-derived: *"A naive regex for
+board coordinates (`>12-7<`) finds **zero**. Angular does not expose them that
+way."* The first half is true and the second does not follow. Angular exposes
+them exactly that way:
+
+```html
+<mark class="ng-star-inserted"> 12-7</mark>
+```
+
+`raw.count(">12-7<")` is 0 and `raw.count("> 12-7<")` is 1. **One leading
+space.** The conclusion drawn from a null result was about Angular; the actual
+cause was the search string. This is the `c350` shape again - the domain
+measured was narrower than the hazard - and it is worth naming because a null
+result is the easiest thing in this repository to over-read. Nothing was lost
+except the day, and I record it because the same reasoning nearly stopped this
+unit before it started: the brief invited me to accept it and build around it.
+
+Real DOM work was still required, for a different reason than the one given.
+The coordinate is `round-pickInRound`; it never names the seat. The seat is the
+column the cell sits in, and there is no team id anywhere in the markup to
+confirm it with.
+
+### Why the count can be trusted, which is the only interesting question
+
+A parser that returns a plausible number is worthless here. The property that
+makes the count checkable is one I did not expect and had to observe:
+
+**Fantrax renders the whole grid before anybody picks.** All 216 cells carry
+their coordinate from the moment the room loads. Verified across 42
+board-bearing captures: cell count was 216 in **every** one while picks climbed
+0 -> 7 -> 26 -> ... -> 216. **The board is not virtualised.** That is what the
+brief's escape hatch was about, and it is the answer that makes the rest
+possible: a *missing* cell is damage rather than a row that has scrolled out of
+view, so the parse can demand that the coordinates cover `rounds x seats`
+exactly once each and refuse when they do not.
+
+On top of that, the column and the coordinate are two independent encodings of
+the same fact, related by the snake rule. They agreed 216 times out of 216 on
+the finished board. Nothing forces that except Fantrax rendering consistently,
+which is precisely why a disagreement is worth refusing on.
+
+### The arithmetic is corroborated from outside the parser
+
+`overall` is computed here, because the board does not carry it. Asserting my
+own formula would prove that the code does what the code does. Fantrax's chat
+pane, however, announces every pick as `drafted - 16-4 [184]` - the same fact,
+their arithmetic, a different subtree. Across all 49 captures that yields **749
+independent statements of `overall`**, and `(round - 1) * seats +
+pick_in_round` agreed with **every one of them, 749/749, zero disagreements.**
+The test re-runs whatever subset survives in the fixture, and asserts the subset
+is non-empty first so it cannot pass vacuously.
+
+### Three findings that belong to other lanes
+
+1. **The snapshot cap is one league size from eating the board.** The finished
+   216-pick board rendered to **208 KB** of `AUTO_SNAPSHOT_MAX_CHARS`'s 250,000,
+   leaving 42 KB. **22 of 42 board-bearing captures were truncated** - the cap is
+   reached routinely. Every cut happened to land past the board. Filed as
+   `bridge-snapshot-budget`.
+
+2. **A truncated capture does not look truncated to an HTML parser.**
+   `buildDomSnapshotHtml` builds `html.slice(0, limit)` then appends
+   `<!-- ... truncated ... -->`, and the cut lands wherever it lands. In the
+   recorded captures it lands **inside an attribute value** - `aria-describedby="cd`
+   then the marker - so any parser folds the marker into that attribute and never
+   emits a comment node. My first implementation detected truncation in
+   `handle_comment`. It would have reported **every truncated capture on record
+   as untruncated.** Found because the truncated fixture refused with the
+   underlying structural reason instead of `snapshot_truncated`; the fixture
+   caught it, and the fixture only caught it because it reproduces the cut the
+   way `capture.js` makes it rather than the way a comment is supposed to look.
+
+3. **A seat's displayed name is not an identity.** Four seats changed name
+   mid-session as owners entered the room and Fantrax's own `Mock Drafter N`
+   placeholder was replaced by the real team name. Column order never moved. The
+   DOM carries **no team id at all** - `draftTeamId` and `cellTeamId` are console
+   vocabulary and appear nowhere in the markup - so the column ordinal is the
+   only stable key available, and `seat_name` travels as a label beside it.
+
+### The fixtures, and the claim they make about themselves
+
+Five, reduced from real captures rather than invented, with every fantasy team
+name, player name, scorer id, league id and pro-team slug replaced. **The
+reduction script is committed** at `scripts/reduce_draft_board_fixtures.py`,
+which is the point: the fixtures' header comment claims to be a reduction rather
+than an invention, and ADR-006 turns on that claim, so it should be checkable
+rather than asserted. Running the script against the captures reproduces the
+committed bytes exactly - **empty `git diff`** - so the claim is now a control
+rather than prose. It takes the capture directory as an argument and hardcodes
+no path into the owner's private folder.
+
+Two independent leak checks ran, and the second exists because the first was
+wrong. A raw substring scan reported a leak on `NE` - a team-defence scorer name
+is a two-letter pro-team code and matches inside unrelated words. The primary
+check re-extracts values from the reduced markup *in the positions they mean
+something* and requires none to be real; the substring scan is kept only for the
+high-entropy values, where a false positive is impossible. A separately written
+scanner, which does not share the builder's maps, confirmed all five clean.
+
+### Controls, each confirmed present in the file before the run was read
+
+Four guards removed one at a time from `board_dom.py`. Each removal failed
+**exactly one** test, and a **different** one each time:
+
+| guard removed | test that went red |
+|---|---|
+| unpicked-cell-with-player | `...[the class marking a filled cell is renamed]` |
+| ragged-columns | `test_a_deleted_cell_refuses...` |
+| chat lower-bound | `test_a_board_read_as_empty_is_caught_by_the_chat_pane` |
+| picked-cell-without-player | `...[the element holding the player name is renamed]` |
+
+Separated deliberately. A single control across all four would have been
+satisfied by any one of them, and I would have called one guard four exclusions.
+The harness aborts if its target string is not **uniquely** present, and prints
+the applied-mutation check before the result - the lesson from the entry above
+about a PowerShell regex that matched nothing and read as a clean control.
+
+The drift tests themselves each assert three things in order: the fixture parses
+to 216 *before* the mutation, the mutation demonstrably changed the markup, and
+only then that the parse refuses. Without the middle assertion a rename that
+matched nothing would leave the happy path intact and pass.
+
+### Verified at working head, base `4f8724e`, from `backend`
+
+`python -m ruff check .` clean over 232 files; `ruff format --check` clean;
+`ruff check ../scripts` and `format --check ../scripts` clean over 19 files;
+`python -m mypy` clean over **228 source files**; new tests **22 passed**;
+`test_draft_board_dom.py` + `test_draft_feed.py` together **136 passed**;
+`scripts/backlog_graph.py` exit 0 at **61 done / 1 blocked / 119 pending / 181
+total**, recounted from the finished file rather than reconciled.
+
+### What I could not verify
+
+1. **That any of this survives a new Fantrax build.** Nothing in the DOM
+   announces its own version, so there is no drift detector here, only a
+   refusal. Every fixture, every count and every invariant comes from **one
+   session on one day of one league**. The parse asserts a rectangular grid with
+   a complete coordinate cover because that is what 42 captures showed; if
+   Fantrax ships virtualisation the parse refuses, correctly, and the tool stops
+   working on draft day with no warning beforehand.
+
+2. **That an NBA draft room renders the same markup as an NFL one.** Every byte
+   of evidence is football. The class names are sport-neutral and the headshot
+   path contains the literal `NFL`, which I match with `[A-Za-z0-9]+` rather
+   than pin - but that is me guessing at generality from one instance, which is
+   exactly the `field-name-guess-audit` shape. The cheapest thing that would
+   close it is one snapshot of any NBA draft room, mock or real, and I did not
+   have one.
+
+3. **That it holds for an auction.** `layout` is derived rather than assumed and
+   reports `snake`, `linear` or `other`, but an auction board may not be a grid
+   of round-by-seat cells at all. Nominations, bids and prices are completely
+   unobserved. If the owner's league is an auction, the applicability of this
+   entire unit is unestablished, not merely untested.
+
+4. **That refusing is the right behaviour on draft night.** I argued it and
+   built it, and I believe a silent short list is worse than a visible refusal.
+   But a refusal mid-draft means the owner has *nothing* rather than something
+   wrong, and nobody has watched that happen at 7pm on 18 October. The owner
+   should decide whether a refused parse should fall back to the last good
+   reading with a stale marker, which is a product decision I did not make.
+
+5. **That the chat lower-bound guard fires when it matters.** It catches a board
+   read as empty while the chat announces picks. Five recorded snapshots have
+   picks and **no chat pane at all** - the `/draft/board` route does not render
+   it - so on that route the guard is vacuous and the cell-level checks are
+   alone. It degrades to no-guard rather than to a false refusal, which is the
+   safe direction, but it is weaker than the table above makes it look.
+
+6. **That the fixtures carry no identifying data.** Two independent scans say
+   they do not, and I read samples by hand. Neither scan can see a leak in a
+   position neither expression looks at - a team name inside an image URL, say.
+   I checked the URLs that exist today; I cannot check the ones I did not think
+   to look for.
+
+7. **That the full backend suite is green.** It was still running when this
+   entry was written and is reported separately below.
+
+### Late addition - the chat guard was one render tick from blanking the board
+
+Written after the entry above, and it changes a decision in it.
+
+I measured the slack the chat lower-bound guard actually had on real data,
+rather than resting on "it never fired". Across the **28 recorded captures whose
+chat announced any pick**, the chat's highest overall equalled the board's pick
+count **exactly, in 17 of them**. Zero fired spuriously — but zero slack in 61%
+of cases is not a comfortable margin, it is the boundary.
+
+And the equality is **structural, not lucky**: the same pick that fills a cell
+posts the chat line, so `announced == picks` is the steady state for most of a
+draft. Written as `announced > picks`, the guard would have sat on its own
+threshold continuously, and one render tick with the message painted before the
+cell would refuse a perfectly good board. Mid-draft, that is a blank screen
+caused by the safety check rather than by the hazard — the owner's worst
+outcome, self-inflicted.
+
+The guard now tolerates a lead of one, `_CHAT_LEAD_TOLERANCE`. That costs
+nothing against what it exists for, which is not off-by-one: it is a board read
+as *empty* while the chat says two hundred picks have happened. Pinned by a
+two-sided control - tightening the constant to 0 and loosening it to 5 each
+failed the same test, so the test pins both edges rather than one.
+
+**What made this findable was measuring the margin instead of the outcome.**
+"The guard never fired on 42 captures" was true and would have shipped a guard
+that was one paint away from firing on all of them. The reading that mattered
+was the distance to the threshold, not whether it had been crossed.
+
+### Run results
+
+**Full backend suite at the rebased head, `origin/main` at `fb35201`:
+2325 passed, 1 skipped, 41 deselected in 586 s.** Closing item 7 of the list
+above, which was open when the entry was written. (Measured on a tree whose
+only difference from the pushed commit is this paragraph. An earlier run at
+`39ea327` gave 2324 passed; the extra test is the tolerance control below.)
+
+That run predates the tolerance change by one edit, so the claim is stated
+precisely rather than rounded up. `parse_draft_board` has **exactly one caller
+in the repository** — `tests/test_draft_board_dom.py`, confirmed by search
+rather than assumed — so no other test can reach the constant. That file is
+green at exact head: **23 passed**. `ruff check` and `ruff format --check` clean
+over 251 files across `backend/` and `scripts/`; `mypy` clean over 228 source
+files; `backlog_graph.py` exit 0; `check_append_only.py` OK with byte
+containment; `check_no_secrets.py` clean over 489 tracked files.
+
+**The backlog conflict was recounted, not reconciled.** `origin/main` claimed
+`60 done - 0 blocked - 120 pending - 180 total` and this branch claimed
+`61 - 1 - 119 - 181`; neither is a usable input, and the merged file counts
+**61 done - 0 blocked - 121 pending - 182 total**. Separately, the slug set was
+compared against the merge base `4f8724e` rather than against `origin/main`,
+because a recount of a finished file agrees with itself perfectly after a
+deletion: 179 slugs at the base, 180 on main, 182 merged, **none dropped**,
+`fantrax-auction-capture` in from the other lane and two added here.
+
+**One leak that got past the fixture pipeline and was caught by a separate
+check.** Both fixture leak scanners came back clean, and a third script - which
+reads the real values out of the captures and greps every file this branch
+touches, docs included - found a real Fantrax scorer id sitting in a docstring
+example in `board_dom.py`. Neither fixture scanner could have seen it: they
+search fixtures. The lesson is not "write three scanners", it is that the
+checks were scoped to where I expected the data to be rather than to where the
+branch had been.
+
+### One more thing I could not verify
+
+9. **That one pick of tolerance is the right number.** It is defensible against
+   the measurement I have and it is not derived from one. Every recorded
+   snapshot was taken after `capture.js`'s 2-second settle, so none of them can
+   show me what a mid-render capture looks like, and a manual export has no
+   settle at all. If Fantrax's auto-draft can post two chat lines inside one
+   paint - and the recording shows auto-picks firing in bursts - the tolerance
+   is one short. I have no evidence either way, and the failure it would cause
+   is a false refusal rather than a wrong number.
+
+### Found while scanning my own diff: the league id is already on `main`
+
+The brief for this unit said, twice, not to commit the league id. A scanner
+written to enforce that on this branch reported it in `docs/handoff.md` — at
+**byte 2,015,559, which is inside `origin/main`'s content, not inside anything
+this branch appended.** It arrived with the `getDraftPicks verified live` lane,
+which recorded the live URL verbatim:
+`GET .../fxea/general/getDraftPicks?leagueId=<id>`. It is in `docs/backlog.md`
+on `main` as well, once each.
+
+**Three things about it, in descending order of how much they matter.**
+
+It is the **mock football league**, not the owner's real NBA league, so the
+practical exposure is a throwaway 12-team PPR mock. That is the reason this is
+a note rather than an escalation.
+
+`check_no_secrets.py` passes on it, and correctly — a Fantrax league id is not
+a credential and that gate is not wrong to ignore it. The rule it breaks is the
+coordinator's instruction to the lanes, which no gate implements. **Every lane
+was told the same thing and one of them did it anyway**, which is the usual
+evidence that an instruction repeated in prose is not a control.
+
+And it may not be **repairable**. Both files are append-only, and removing
+bytes from an already-merged region is what `check_append_only.py` exists to
+refuse. That is exactly the consequence `append-only-docs-line-ending-check`
+raises about CRLF, arriving independently and on the same day by a different
+route: *a defect in appended bytes may not be removable at all.* Two instances
+now, which makes it a property of the format rather than a coincidence.
+
+I have not touched either file's existing bytes. Flagged for the owner, who is
+the only person who can decide whether the mock league's id is worth a history
+rewrite, and it is very likely not.
