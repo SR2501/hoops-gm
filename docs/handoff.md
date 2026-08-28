@@ -29434,3 +29434,150 @@ Corroborating, and explicitly not proving: 30 over 3 games is **10.0 observation
 **STILL NOT CLOSED, AND THE REASON MATTERS.** That per-date excess is canonical-minus-*direct*, so it mixes the three dropped games with ordinary exclusions on the same date; its agreeing with the gap at exactly 30 is corroboration, not identity. No committed artifact publishes the manifest's canonical count for 2025-11-19, which is the one number that would settle it. `cohort-canonical-count-reconciliation` stays open with that named as the remaining step.
 
 **The pattern is the point.** The item records that the *first* mechanism offered "was killed by **implausibility, not by verification**". The second was killed the same way - by reading an era off a field nobody re-checked was the right field. Two artifacts, two documents and one backlog item carried the error, and it survived because *the shape of the claim was right*: there really are exactly three dropped games, they really do differ from the census, and a date really was cited. **Validation of form cannot catch errors of meaning**, and a field name is a self-describing value like any other.
+## 2026-08-27 - frontend - league-category-table: every seat ranked 1-to-N, and the one number I refused to invent
+
+The owner named this twice, unprompted, in Q4 and Q9 of
+`docs/what-draft-day-looks-like.md`, and it had no backlog item until this
+commit. It is now `/draft/:draftId/categories`, linked from the draft board.
+
+### The decision the whole unit turns on
+
+**Q9 asks for "expected performance". I did not build expected performance, and
+that is deliberate rather than a shortfall I am hiding.**
+
+Expected performance is per-game production fused with expected games played.
+ADR-002 permits that fusion at exactly one seam - `expected-games` - and that
+seam does not exist; neither does `p(play)`. The projections route publishes
+`source_games_played_assumptions`, and its own docstring says why that array is
+not the loophole: for a season-total source the assumption is the exact divisor
+the importer used, so `rate x assumption` reconstructs the source's published
+season total. Joining it *is* the forbidden fusion, dressed as a join.
+
+So the screen ranks seats on **the sum of the per-game rates the source
+published for the players each seat holds**, and says so in its own paragraph
+above the table. The entire page is `+` and `/` over published fields, with no
+fitted parameter, no weighting, no spread and no distribution - which is what
+keeps it behind the **Code gate**. A held-out backtest of "the sum of a list of
+numbers" would report nothing, because there is no calibration question to ask.
+The moment someone adds a weight or an availability adjustment, that stops being
+true and this becomes a Model-gate unit.
+
+`leagueCategoryModel.ts` does not import the assumption type at all. That is the
+structural half; `CategoriesPage.recorded.test.tsx` is the behavioural half, and
+it checks two families of forbidden value - the per-player product **and the
+seat-level sum of those products**, which is what "expected performance" would
+actually be.
+
+### What I found by opening the page rather than by testing it
+
+**The lede rendered "ranked 1-to-0".** It interpolated `rankedSeatCount` into a
+range, and on the seeded demo that count is zero, so the first sentence a reader
+meets read like a bug. Every test was green. Now pinned by
+`does not say "ranked 1-to-0" when nothing can be ranked`.
+
+### Three things that were true and that I expected not to be
+
+1. **Every holding in the seeded demo carries `player_id: null`.** All three
+   committed draft fixtures, and the live seed: `unresolved_player_count` is 7,
+   12 and 7. `seed_demo` invents draft names and the identity crosswalk matches
+   none of them, so **the all-unranked board is the state a first-time reader
+   actually meets**, not an edge case. The screen names it, counts it, and
+   explains that nothing is matched by name - a browser guessing which
+   projection row a typed name meant would attribute one player's rates to
+   another and rank a seat on them.
+2. **The demo's drafts are not in the league that has projections.** Drafts sit
+   in leagues 2 and 3; `SchedulePage` and `ProjectionsPage` hardcode
+   `LEAGUE_ID = 1`. A fourth screen copying that constant would have joined a
+   league-2 draft against a league-1 cohort and ranked seats on another league's
+   players with nothing on screen looking wrong. This page reads
+   `state.league_id`, and a test asserts it requests league 2 and not league 1.
+3. **No endpoint publishes the league's scoring categories.** Nineteen paths in
+   the served OpenAPI document, none of them league scoring configuration. The
+   nine categories are a frontend constant sourced from
+   `docs/league/2025-26-rules-baseline.md`, which calls itself *"Historical
+   reference only. Not verified for 2026-27."* That is the least-defended claim
+   on the screen and the screen says so, with the file path, in the key.
+   `league-settings-ingest` is what closes it.
+
+### A contract drift nothing was positioned to catch
+
+`frontend/src/api/draftTypes.ts` declared
+`DraftToolUsage = 'blind' | 'assisted' | 'tool_led'`. The served OpenAPI enum is
+`blind, partial, instrumented`. **Two of the three values were wrong and 362
+tests were green**, because every committed fixture carries `blind` - the one
+value both spellings share - and `DraftPage` renders the field verbatim inside a
+`<code>`, so even a `partial` draft would have *displayed* correctly.
+
+It surfaced only because a `POST /drafts` was refused with a `422` naming the
+real enum. **The read path cannot see this class of defect at all**: a union too
+narrow on the receiving side is invisible until a value outside it arrives, and
+no recorded fixture carried one. Fixed, and the new fixture carries `partial`
+specifically so the old spelling can no longer come back green.
+
+### Percentage categories
+
+`Sigma made / Sigma attempted` across the seat, never a mean of player
+percentages, with the attempt volume drawn beside every ratio. That is
+volume-weighted by construction - a 90%-on-one-attempt shooter contributes 0.9
+to the numerator and 1.0 to the denominator and moves the seat by almost
+nothing - and it is also exactly what an H2H category is scored on. The test
+that pins it asserts 51.9% for a case where the mean-of-percentages bug gives
+70%, so a test asserting the bug would be visibly asserting it.
+
+### Gate evidence
+
+Lint, `tsc --noEmit`, `vite build` and 369 tests green. 45 new tests across
+`leagueCategoryModel.test.ts` (24), `CategoriesPage.recorded.test.tsx` (14) and
+`CategoriesPage.test.tsx` (7). New fixture
+`draft-auction-resolved-state.recorded.json`, captured as raw bytes via
+`HttpClient.GetByteArrayAsync` to `File.WriteAllBytes` with no serialiser in
+between.
+
+**15 mutations, 15 caught by the test whose name claims to establish the
+property, 0 escaped, tree reverted to original bytes and green afterwards.** The
+harness asserts the anchor is present before mutating and reports a stale anchor
+as a **failure** - which earned its place immediately: the first run reported
+four `ANCHOR MISSING` because the tree is CRLF and my anchors were LF. Four of
+fifteen mutations had silently not applied. A harness that scored those as skips
+would have reported 11/11 caught and looked complete.
+
+The recorded ADR-002 detector has a **tripwire test**: it plants a known
+forbidden product in the rendered DOM and asserts the detector finds it, then
+removes it and asserts green again. Without that, `[]` from a detector looking
+in the wrong place is indistinguishable from `[]` from a clean screen. Its first
+version also reported **fifteen false violations** - it did not know the screen
+renders a stored `0.4456` as `44.6`, so a per-player season total of 44.5 blocks
+collided with a drawn percentage. A check that cries wolf on a correct screen
+gets loosened by whoever meets it next, so the fix was to teach it the displayed
+forms rather than to widen the tolerance.
+
+### What I could not verify
+
+- **That the ranking is useful.** Everything above establishes that the numbers
+  are the ones I claim they are. It establishes nothing about whether ranking
+  seats on an availability-blind, depth-unadjusted sum helps him at a live
+  auction. Only he can say, and the honest test is a mock draft.
+- **That it is readable at a full board.** 48 of 156 slots, 12 seats, on one
+  laptop screen at 1268px. Nothing here says the table works at 156 filled
+  slots, at a longer team name, or on the external monitor he actually uses.
+- **That the nine categories are this league's nine.** They are 2025-26's,
+  unverified for 2026-27, and there is no endpoint to check them against.
+- **That the demo distribution resembles anything.** The seat sizes
+  (8, 6, 6, 6, 4, 4, 4, 4, 2, 2, 2, 0) were chosen to exercise paths. Only the
+  player names are real; every rate is invented by `seed_demo`, which says so.
+- **The sparse-rate path against a recording.** Every rate in the Basketball
+  Monster cohort is non-null by construction - a row missing a required rate is
+  rejected rather than stored - so `omittedPlayers` is never non-zero in the
+  fixture and the `-n` marker has never rendered outside a hand-built payload.
+- **That `DraftPage`'s identical bug is harmless.** It fires
+  `GET /api/v1/drafts/NaN` on a malformed id before drawing the refusal. I
+  inherited the shape, caught it in my own page with a test asserting no request
+  was made, and fixed it there by splitting the component. **I did not fix it on
+  the draft board**, because that fetcher carries the bundle-identity comparison
+  the polling skip depends on and I was not willing to disturb it unreviewed
+  under a deadline. Filed as `draft-page-invalid-id-request`.
+- **Whether a separate route was the right call.** Q4 wants this while he is
+  nominating, and a second tab is a context switch. I chose a route over a panel
+  because a 12x9 table wants width the draft board has already lost an argument
+  about, and because it keeps `DraftPage`'s "this screen recommends nothing"
+  sentence true. He may want it embedded; that is his call, not mine.

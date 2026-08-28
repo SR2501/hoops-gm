@@ -370,10 +370,29 @@ def resolve_backlog(path: pathlib.Path) -> None:
         f"{counts['pending']} pending - {total} total**"
     )
     if had_conflict:
+        # **The integers that used to be interpolated here are gone, and their
+        # absence is the point.** This note read
+        # "{len(headings)} `###` headings and {len(markers)} markers, 1:1", which
+        # is a second copy of the count, in prose, in the file whose entire
+        # header discipline is that a second copy is stale on arrival.
+        # `backlog_graph.py` checks only the header *line*, so the prose copy was
+        # the one nothing guarded.
+        #
+        # The `demo-one-command` lane deleted exactly this restatement from
+        # `docs/backlog.md` on 2026-08-23 and wrote down why — "the property is
+        # worth stating and the integers were not". **It fixed the artefact and
+        # not the generator**, so this function put them straight back on the
+        # next conflict, which is what happened on 2026-08-27 and is how this was
+        # found. AGENTS.md: "Do not restate that count here or anywhere else."
+        #
+        # The property is still stated. Only the numbers are gone, and the
+        # 1:1 correspondence they claimed is *enforced* twelve lines above by the
+        # `sys.exit` on `len(headings) != len(markers)` — which is a check rather
+        # than a sentence, and cannot go stale.
         note = (
             "(Recomputed from the status markers in this finished file, never\n"
-            f"reconciled from two headers: {len(headings)} `###` headings and\n"
-            f"{len(markers)} markers, 1:1, no duplicate item names. Neither side of a\n"
+            "reconciled from two headers; the `###` headings and the status markers\n"
+            "correspond 1:1, with no duplicate item names. Neither side of a\n"
             "rebase conflict is a usable input here, because each was computed before\n"
             "the other lane's items landed.)"
         )

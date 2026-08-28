@@ -40,7 +40,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { getDraft, getDraftEvents } from '../api/draftEndpoints'
 import { describeDraftError, isRetryableDraftError } from '../api/draftErrors'
 import type { DraftEvent, DraftState } from '../api/draftTypes'
@@ -204,6 +204,12 @@ const DraftBoardView = memo(function DraftBoardView({
           <li>
             {state.is_mock ? 'Mock draft' : 'Real draft'} · tool usage recorded as{' '}
             <code>{state.tool_usage}</code>
+          </li>
+          <li>
+            <Link to={`/draft/${String(state.id)}/categories`} data-testid="draft-categories-link">
+              League category table
+            </Link>{' '}
+            — every seat ranked 1-to-N in each category, on published per-game rates only
           </li>
         </ul>
         {state.notes !== null ? <p className="page__note">{state.notes}</p> : null}
