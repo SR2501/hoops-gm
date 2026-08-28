@@ -31479,3 +31479,90 @@ unaccepted decision into the code would be the same laundering one level down.
   `board_dom.py:171` records that four seats changed their displayed name across
   the captures. If seat *index* is also unstable, the digest moves without the
   board changing, and content-deduping stops working. Not tested.
+
+## 2026-08-28 - architect - An append that adds CRLF now fails, and I proved it by making every mistake it describes
+
+`check_append_only.py` already printed `CR in base blob` and `CR in head blob`
+and never compared them. It does now: `head_cr > base_cr` is a failure, with a
+seeded-CRLF control asserting the counter moves. `eab1d7b`, corrected in
+`5e32b3b`.
+
+**Why now rather than filed.** PR #130's handoff append carried **171 new CR**
+with containment intact and every gate green. That is the second instance on
+2026-08-28 and the second from the same lane as the first, whose 149 are already
+on `main` and, the file being append-only, may not be removable at all. The
+second one was still on a branch, so it was still cheap. Caught in review, which
+is not a system.
+
+**It is a delta, not "contains no CRLF".** A zero-tolerance gate would be red on
+`main` from the day it landed because of the existing 149, and a gate that is red
+on `main` is one everybody learns to route around. The claim that is both true
+and checkable is that *this change* added none.
+
+**Neither existing gate could have caught it, and both are right about what they
+check.** CONTAINMENT passes because CRLF in the appended region leaves the prefix
+untouched. `check_doc_terminators.py` passes because it asks only whether the
+last byte is a newline. I re-ran both against an injected CRLF append to confirm
+that rather than assert it: the new check exits 1 naming exactly 3 added CR,
+`check_doc_terminators.py` exits 0 on the same input.
+
+## Three errors I made landing it, all of the same family
+
+**One: I put the only copy of my work on the branch I was about to destroy.** I
+stashed the gate, popped it onto a throwaway branch to run the negative control,
+committed it there, and deleted the branch with `-D`. The backlog note landed in
+`f6e85a2` describing code that was not in the commit. It survived only as a
+dangling object. **Commit first, then prove on a branch that holds nothing.**
+This is precisely the question I had spent the afternoon putting to four lanes
+before archiving their worktrees, and I walked into it while doing so.
+
+**Two: the experiment leaked.** The control commit used
+`git -c core.autocrlf=false add`, so its blob holds CRLF verbatim. Recovering the
+file with `git checkout 0498bc0 -- scripts/check_append_only.py` wrote those bytes
+straight back, and I committed a **source** file with 176 CRLF against a previous
+blob of 0. A deleted branch does not take its blobs with it, and anything
+recovered from them carries the experiment's line endings. Caught only because a
+42-line change reported "176 insertions, 136 deletions" and the diffstat looked
+wrong.
+
+**Three: the gate I had just written could not see it.** `DEFAULT_PATHS` is
+`docs/handoff.md` alone - correct for a containment check, and it means the domain
+was narrower than the hazard *inside a gate written twenty minutes earlier to
+close that class*. ruff and mypy both pass on a fully-CRLF Python file.
+
+I have **not** added a repository-wide line-ending check. One self-inflicted
+instance does not justify it, and I would rather record the reasoning than build
+on it. A second instance would.
+
+## Measurement, not counting
+
+Reading a blob with `git cat-file blob <sha>:docs/handoff.md | Out-String`
+reports **31,400** for a file whose true count is **149**: PowerShell normalises
+line endings crossing the pipeline, so the instrument rewrites the sample it
+measures. I acted on that number briefly. It reads as an 81-line regression
+rather than as noise, and the natural response is to "repair" bytes that are
+already correct - in an append-only file, where the repair breaks containment.
+
+Redirect through `cmd.exe` and use `[System.IO.File]::ReadAllBytes`, or just run
+`check_append_only.py`, which reads blobs in binary and is the reference
+implementation. The instruction I had already given a lane - "confirm the CR delta
+is zero" - has the broken method as its obvious implementation, so the correction
+went to the lane as well as into the file.
+
+**Could not verify.**
+
+- **Why CRLF reaches blobs here at all.** `core.autocrlf` is `true` in this
+  checkout, which should normalise on commit, and yet 149 and 171 got through.
+  I did not establish the mechanism and the gate does not depend on knowing it.
+- **That `.gitattributes` would help.** There is none in the repository, so line
+  endings rest entirely on each machine's config. I reasoned that adding
+  `* text=auto eol=lf` would make git want to normalise the existing 149 on the
+  next commit touching `docs/handoff.md`, breaking containment - so any
+  `.gitattributes` must exclude the append-only documents. **Reasoned, not
+  tested.** Establish it on a throwaway branch before acting.
+- **Whether the 149 already on `main` can ever be removed.** Unchanged from
+  this morning. The gate deliberately does not depend on the answer.
+- **Whether the seeded-CRLF control would catch a broken counter that fails in
+  the other direction** - one that under-counts consistently, so that both the
+  real count and the seeded count are wrong by the same amount. The control
+  asserts a delta of exactly one, which such a counter would still satisfy.
