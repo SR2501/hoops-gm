@@ -30703,3 +30703,130 @@ Rebuilt; the backend now serves 0.5.1 with no secret in the bytes.
   that **does not exist**, which the lane working it disproved along with my claim
   that a test was "owed and not running" — it fails 2 of 7 on `main` and landing
   it would have broken CI.
+
+## 2026-08-28 - architect - The first instrumented capture: what a live Fantrax draft room actually returns
+
+**The owner ran an NFL snake mock on Fantrax with the userscript loaded.** 49
+payloads captured over five hours. This is the first time anything in this
+project has observed a real draft room, and it moved five claims from asserted to
+observed and one from unverified to closed.
+
+**The payloads are not in this repository and will not be.** They carry his
+league, his team names and his draft. They live in his private folder with a
+findings write-up; the *findings* below are safe to publish, the bodies are not.
+
+### The defect that would have emptied the board on 18 October
+
+`FIELD_ALIASES["team_external_id"]` lists `teamId`, `fantasyTeamId`,
+`franchiseId`, `teamID`. Fantrax emits **`draftTeamId`** on every
+`processScorerDrafted` and **`cellTeamId`** on every `Board cell MATCHED`.
+Neither is in the tuple.
+
+By `recognise.py`'s own contract a record with no resolvable buyer disqualifies
+the entire list it is in. So every pick refuses as `no_seat_anchor`, the board
+stays empty, and freshness still reports the transport healthy. **That is the
+owner's Q12 answer, and no test in this repository could have caught it**,
+because a test only exercises payloads we already imagined. Filed as
+`draft-feed-team-alias-draftteamid`.
+
+**The player alias was right.** `scorerId` is in the tuple and is exactly what
+Fantrax sends; it arrived from `fantraxapi`'s NHL heritage and the vocabulary
+really is scorer-shaped across sports. A guess made from a reading of the format
+matched the format.
+
+### The correction, recorded because the mistake is the more useful half
+
+**An earlier reading claimed the player alias was ALSO wrong** - that Fantrax
+sent `scoreId` and the recogniser guessed `scorerId`, a one-character miss. That
+was **false**. It came from a downscaled screenshot of the console, and a
+higher-resolution capture of the same log line shows `scorerId` plainly.
+
+The shape is `c350` exactly: **the domain measured was narrower than the
+hazard.** A compressed image cannot resolve one character and was read as though
+it could. Had the fix been written on that evidence, a correct alias would have
+been replaced with an incorrect one, guarded by a test asserting the wrong
+string.
+
+What prevented it was a rule already in force - *do not edit `FIELD_ALIASES`
+from console vocabulary, confirm against a captured body first* - **held for a
+different reason than the one that saved it.** It was written because their
+client might rename fields on ingest, not because a screenshot might be misread.
+
+### `/fxpa/req` is unreachable, and Cache Storage is now closed rather than unverified
+
+49 of 49 payloads were `rendered-view` or `manual-export`. **Zero** contained
+`fxpa`. `capture.js:51-61` predicted this and was right: those calls originate in
+Fantrax's own service worker, and no browser API or Tampermonkey grant lets a
+userscript observe another origin-scoped script's internal `self.fetch()`. A
+first-load console message corroborates independently - *"cross-world service
+worker resource mismatch"*.
+
+**Capture path 1 was checked on the live room and is verified absent.** Cache
+Storage holds five `ngsw:` entries, all Angular service-worker **asset** groups,
+with no data group. Angular's config distinguishes `assetGroups` from
+`dataGroups`; Fantrax configured only the former. This is their caching
+configuration, not a timing or permissions problem, and it will not change on a
+retry. The 5-second poller that checks it is filed for removal as
+`bridge-drop-cache-storage-poller`.
+
+**Consequence: automatic pick tracking cannot come from the bridge.** It rests
+entirely on the official `getDraftPicks` path, which two places in this
+repository independently record as never having returned a verified real payload.
+Filed as `official-getdraftpicks-live-verification` and dispatched as the highest
+-value open unit, because both answers are load-bearing and not knowing is the
+expensive state.
+
+### Five claims that were assertions and are now observations
+
+- the userscript runs on a live draft room; `@match` covers `/fantasy/league/*/draft`
+- **pairing survives a version update** - 0.5.0 to 0.5.1 kept the stored secret,
+  which the frozen `@name`/`@namespace` contract was written to guarantee
+- transport reaches the local backend during a live draft, 49 times
+- the manual export path (capture path 4) works on a real room
+- **capture survives SPA navigation** - the URL moved `/draft` to `/draft/board`
+  mid-draft and snapshots continued without interruption, exercising the
+  `isFantraxLeaguePage` re-check `capture.js` performs at capture time
+
+### Smaller things, and one downgraded on the owner's own objection
+
+- `pickNumber` is `undefined` on **every** `processScorerDrafted` line, beside
+  `pickNumberTemp` and `overallPick`. Three ordinal fields, one permanently
+  absent. A parser trusting `pickNumber` reads nothing.
+- `overallPick` and `pickNumberTemp` are independent: one monotonic to 216, one
+  resetting each round. The snake wrap is visible in the data.
+- Team ids are alphanumeric strings (`xwsfomdwms46061r`), not integers; external
+  ids are `String(64)` with no charset restriction, so this is fine.
+- **Team-defence ids use a different format** - `20050#1090`, `20161#1090`, a
+  constant `#1090` suffix - **and the owner correctly pointed out this is
+  football-only.** NBA has no defences. The only transferable claim would be
+  "Fantrax id formats are not uniform within one draft", for which there is **no
+  NBA evidence**; it is a hypothesis borrowed from another sport. Recorded as an
+  observation about the capture, not as a risk, and not filed.
+- Auto-picks may serialise differently from manual ones; both are in this
+  capture. Nothing in the codebase anticipates the distinction.
+- Fantrax returned 504s on several resources pre-draft, including `draft:1`.
+
+### Draft-day operating notes, learned rather than assumed
+
+- **Keep the Fantrax tab visible.** Snapshots run on `MutationObserver` and
+  `setTimeout`, which browsers throttle in hidden tabs. `onVisibilityChange`
+  forces a fresh snapshot on return, so the final state survives - but the
+  intermediates that say *which* pick happened *when* do not.
+- **Start the backend before opening the browser.** Tampermonkey's update check
+  fails **silently** if `127.0.0.1:8000` is down. That is precisely how the owner
+  spent ten days on a stale 0.5.0 build while being told "no update available",
+  which was true of the bytes it fetched.
+
+### What this capture cannot establish
+
+- **Anything about auctions.** `isAuction=false`, 12-team snake. Nominations,
+  bids, prices and budget derivation - the entire half Route B rewrote the day
+  before - remain completely unobserved. Any Fantrax auction mock in any sport
+  would close it; the envelope is platform-level.
+- **Anything about NBA player identity.** The crosswalk was never exercised.
+- **The wire format**, as distinct from console vocabulary. Every field name here
+  comes from Fantrax's own logging, which may rename on ingest.
+- **Whether the rendered board is parseable.** The snapshots contain team and
+  player names, but a first pass found no trivially extractable board cells.
+  That work is now possible offline against real evidence, which is the point of
+  keeping 49 of them.
