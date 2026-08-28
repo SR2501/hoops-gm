@@ -62,9 +62,20 @@ The dashboard is not a background service; it is started by hand and dies with
 the machine. Confirm by request rather than by assumption.
 
 ```
-backend   http://127.0.0.1:8010/health
+backend   http://127.0.0.1:8000/health
 frontend  http://127.0.0.1:5173/schedule
 ```
+
+**8000 is not arbitrary and changing it breaks the frontend.** `vite.config.ts`
+proxies both `/api` and `/health` to `http://127.0.0.1:8000` unless
+`VITE_API_PROXY_TARGET` says otherwise, so a backend on any other port leaves
+every screen unable to reach its data. If you must move it, move both.
+
+*(This line read `8010` until 2026-08-28. That port came from a single run
+recorded in `docs/handoff.md`, in an entry that says of itself "that is not how
+anyone else will run it" — an atypical one-off lifted into the canonical
+runbook. Following it produced a health check that reads DOWN on a working
+dashboard, and a dashboard that could not load anything.)*
 
 If it is down, the seed runs entirely from committed fixtures and reaches the
 same screen:
