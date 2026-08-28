@@ -29367,3 +29367,56 @@ graph's own reckoning, which is the first time its weight has been visible.
    own header block exists to state. The coordinator holds merge order.
 
 **Next:** coordinator. Code gate only.
+
+## 2026-08-27 - data-engineer - adjudicating the stranded injury-report branch: both branch-only files are superseded, and the rule that was actually unenforced was a third one
+
+Sent to adjudicate register entry `c354` and land `backend/tests/test_disclosure_surface.py` from `origin/sr2501-injury-report-history` (`dbad3b3`) "unless genuinely superseded". **Both branch-only files are superseded. I landed neither. What I landed instead is a guard for the rule that turned out to have nothing executable behind it.**
+
+### There is no `c354`
+
+The register's highest entry before mine is `c348`, and nothing anywhere in the file mentions the census, the branch, or the disclosure surface. The only `c354` in the repository is an incidental substring in `backend/tests/fixtures/fantrax_getplayerids_nba.json`. The coordinator had re-derived the facts itself and they were right, so the substance survived - but an entry id is checkable in ten seconds and was not checked. My adjudication is filed as **`c349`**.
+
+### The diff was taken against the wrong base, and that is the reusable lesson
+
+`git diff origin/main <branch>` showed ~200 files differing, nearly all `D`. Those are **main's later work, absent from an old branch** - not deletions the branch made. The branch's own delta is against the merge-base:
+
+    git diff --name-status $(git merge-base origin/main <branch>) <branch>
+
+which is **14 files**, not 200. Anyone auditing a stranded branch should start there. Distance re-measured as **64** commits (`git rev-list --count <branch>..origin/main`); `docs/backlog.md`'s `cohort-canonical-count-reconciliation` item records "188 commits behind" and I could not reproduce 188 under rev-list, total-commit, or symmetric-difference counts.
+
+### Verdict 1 - the census JSON is superseded, and was held back on purpose
+
+`docs/adapters/nba-injury-report-2025-26-status-census.json` publishes **canonical** status counts. Preregistration §2 lines 160-174 makes the gate's unit **direct outcomes** and rejects canonical observations by name as the looser bound; the census's own `verdict_is_an_upper_bound: true` agrees. Its `activation_floor_check.held_out_status_counts` dominates the committed `nba-injury-report-cohort-admissibility-2025-26.json` at every status - available 469>=467, doubtful 84>=83, out 2,979>=2,963, probable 92=92, questionable 335=335 - over an identical window. **An upper bound on a quantity whose exact value is published, same cohort, same window, informs no decision.** It can only prove a cohort inadmissible; this one is admissible, measured, at 2.77x on the binding status.
+
+I re-derived the disagreement figures from the two artifacts **before** reading any prose about them, and they match `injury-status-conversion-literature.md` §4.2 and the open backlog item exactly: 13,819 against 13,789 canonical observations, 1,230 against 1,227 games, `doubtful` and `probable` identical. Two independent derivations agreeing is worth more than either alone.
+
+### Verdict 2 - the disclosure-surface test is superseded, and would have gone red
+
+Superseded by `test_cohort_admissibility.py::TestTheDisclosureSurfaceIsClosed` plus `TestOutcomeKeyedDetection`, which are stronger on four axes: they glob `docs/**/*.json` rather than one directory; the allow-list is keyed `(filename, dotted path)` rather than by path alone, so a permitted field cannot migrate between artifacts; list indices normalise to `[]` rather than vanishing; detection is by intersection on mapping keys, with a test proving a subset test is evadable.
+
+**Established by mutation rather than by reading docstrings.** Five mutations, each a one-key JSON edit: an outcome-keyed field added to an unrelated published JSON; an outcome breakdown added to a record inside the probe artifact's `observations` list (the branch file's own M3, the exact attack it was written for); an allow-listed field deleted from the manifest; the probe's `observations` emptied; an allow-listed field copied into a second file. **All five caught by main's guards, zero survivors.** The harness's restore was itself verified - unmutated baseline re-run to green, working tree confirmed clean - because a harness with a broken restore scores every mutation as caught.
+
+**And it would not merely add nothing.** Checked out verbatim onto `main` it fails 2 of its 7 tests: its allow-list does not know `seasons[].outcomes` or `seasons[].reasons` from `participation-ledger-2025-26-coverage.json`, and it asserts *exactly one* artifact carries outcome-keyed fields where main legitimately has two. Landing it would put two guards in disagreement about a frozen set, and the only repair - editing its allow-list - is what §2 forbids without a v3.
+
+**I briefly read that red as "the disclosure surface grew while the rule was unenforced" and was wrong.** The second carrier is declared in `cohort_admissibility.py:159-207` with its reasoning attached. I caught it by going to look for the mechanism before writing the finding down, which is the only reason it is not in this document as a discovery.
+
+### The rule that really was unenforced
+
+The coordinator's premise - *a test owed under a frozen protocol and not running in CI is an unenforced rule* - is right, and pointed at the wrong file. §2's disclosure surface **is** enforced. The **held-back decision** was not.
+
+Measured: commit the held-back census into `docs/adapters/`, run every guard that could plausibly see it (`test_cohort_admissibility.py`, `test_cohort_evidence.py`, `test_injury_report_archive_reach.py`), and **133 tests pass**. Nothing stopped the artifact §4.2 took care to hold back.
+
+`backend/tests/test_status_census_reconciliation.py` closes that, as a **reconciliation and not a banned filename**: it selects on the artifact's own `kind` discriminator rather than its name, compares whole-season totals against the committed manifest, and passes the moment the two agree. It therefore permits the outcome `cohort-canonical-count-reconciliation` is open for - land the census once the 30 observations are attributed - and blocks only the undated-disagreement one. The finder and the reconciler are each exercised against a known non-zero case, because a broken finder reports the same zero a clean tree does.
+
+### The three differing files needed no reconciliation
+
+Main is correct in all three (`test_injury_report_archive_reach.py`, `injury-status-conversion-literature.md`, `nba-injury-report.md`): 242 insertions against **4** deleted lines, all four inspected - a stale backlog id, a missing end-of-file newline, and two lines citing the uncommitted census, replaced by the reconciliation table. Two further files differ that the brief did not list, `test_live_smoke.py` and `docs/models/README.md`; main is correct in both, the deletions being em-dash-to-hyphen normalisations plus one refinement.
+
+### What I could not verify
+
+- **That the 30-observation gap is the selection-basis difference.** `cohort_evidence.py:915` selects over `ready` while `in_scope` is `[*ready, *missing_tipoff]`, which is the standing hypothesis. I did not measure it, and the all-legacy localisation still does not fit cleanly under it. `cohort-canonical-count-reconciliation` stays **open**, and my test deliberately does not prejudge which artifact is right - it fails on disagreement, not on the census existing.
+- **That "188 commits behind" was ever true.** I measured 64 and could not find a counting method that yields 188. I did not audit whether `main` was rewritten between 2026-08-24 and now, which is the obvious remaining explanation.
+- **That `docs/**/*.json` is the whole published disclosure surface.** Both guards assume the surface is committed JSON under `docs/`. An outcome marginal published in a committed Markdown table, or in a JSON outside `docs/`, is invisible to both. I did not look for one.
+- **That the five mutations are the right five.** They were chosen to cover the branch file's own stated attacks plus the file-migration case its allow-list shape cannot express. A mutation set reached by enumerating a predecessor's attacks is exactly the thing §2 warns goes stale.
+- **That my `git show` extraction of the branch files was byte-faithful.** I verified blob identity with `git ls-tree` hashes rather than trusting the extracted copies, after noticing a 221-byte size difference that was a PowerShell redirection artifact. The decisive runs used `git checkout <ref> -- <path>`, not the extraction.
+- **Anything about the frontend, userscript, or Postgres CI legs.** My change is one backend test file; I ran the backend suite and the gate scripts, and let CI cover the rest.
