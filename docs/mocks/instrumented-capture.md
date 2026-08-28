@@ -98,7 +98,7 @@ produces one, that is the finding — write down which, and against which file:
 | `no_record_list` | The envelope parsed, but nothing inside it looked like a list of picks. Likely a different block batched into the same response. |
 | `no_seat_anchor` | A pick was found but could not be attributed to a team. **Note this is produced by two independent mechanisms** — do not assume which one fired without reading. |
 | `record_names_no_player` | A pick with a seat but no identifiable player. |
-| `player_external_id_unreadable` | The player is named but the id is not readable. This is the known unfixed High: the record is counted at ingest and **not surfaced on `GET`**, so the board goes silently short a player. It is a hard dependency edge on `draft-tracker` (#109). **If this fires on a real capture, say so loudly.** |
+| `player_external_id_unreadable` | The player is named but the id is not readable. **Fixed 2026-08-28 (#122):** such a record now arrives as an instant carrying `skipped_reason`, is surfaced on `GET`, is never applied and never joins identity matching. It no longer goes silently missing, so if this fires you should *see* it — **and seeing it is still the finding**, because it means real Fantrax ids are not readable by the recogniser, which is a different and larger problem than the surfacing bug that was fixed. Say so loudly. |
 | `field_too_large_to_record` | A value exceeded its column. Real Fantrax data is the only way to find out whether our bounds are wrong. |
 | `artifact_key_too_long_to_record` | The capture's own locator exceeded its column. |
 | `page_error:<code>` | Fantrax returned an error inside a `200`. |
