@@ -2808,3 +2808,57 @@ Corroborating, and explicitly not proving: 30 over 3 games is **10.0 observation
 **STILL NOT CLOSED, AND THE REASON MATTERS.** That per-date excess is canonical-minus-*direct*, so it mixes the three dropped games with ordinary exclusions on the same date; its agreeing with the gap at exactly 30 is corroboration, not identity. No committed artifact publishes the manifest's canonical count for 2025-11-19, which is the one number that would settle it. `cohort-canonical-count-reconciliation` stays open with that named as the remaining step.
 
 **The pattern is the point.** The item records that the *first* mechanism offered "was killed by **implausibility, not by verification**". The second was killed the same way - by reading an era off a field nobody re-checked was the right field. Two artifacts, two documents and one backlog item carried the error, and it survived because *the shape of the claim was right*: there really are exactly three dropped games, they really do differ from the census, and a date really was cited. **Validation of form cannot catch errors of meaning**, and a field name is a self-describing value like any other.
+
+## `c350` - THE DOMINANT FAILURE MODE OF 2026-08-27/28: THE MEASURED DOMAIN WAS NARROWER THAN THE HAZARD, SIX TIMES IN EIGHTEEN HOURS
+
+**Recorded because it existed only in chat.** Six independent instances in one
+overnight run and morning, across four different agents and the coordinator.
+Every one had working tooling, an honest operator, and a check that **could not
+have failed**, because the thing it examined was not the thing at risk.
+
+| # | What was measured | What was at risk | How it surfaced |
+|---|---|---|---|
+| 1 | The frontend suite (380 tests green) | A diff that added a **backend** test file | `ruff format --check` red in CI on PR #120 |
+| 2 | `PRAGMA table_info`, to avoid guessing column types | Postgres' **strict boolean**, which SQLite accepts as `1` | ADR-001's Postgres job red on PR #122, minutes after opening |
+| 3 | `mypy` against `scripts/fingerprint_closure.py` | The **test file** shipped alongside it | Caught during a rebase, before CI |
+| 4 | `_refuse_if_over_budget` callers **within `draft/state.py`** | A caller or second derivation **elsewhere in the tree** | Coordinator grep across all of `backend/src`; three sites was in fact all of them, but the method could not have shown it |
+| 5 | `package.json` vs `package-lock.json` (`build.mjs` refuses a mismatch) | The **built artifact** in gitignored `dist/`, ten days stale at 0.5.0 while source said 0.5.1 | Owner asked why Tampermonkey said "no update available" |
+| 6 | `check_ci_gates.py` exit code | **Which base** that green was computed against | PR #120 sat at exit 0 and `CONFLICTING` simultaneously |
+
+**The unifying shape.** In each case the operator chose a check that was correct,
+ran it correctly, and read the result correctly. The defect is upstream of all
+three: the *scope of the question* was drawn from the area the work felt like it
+belonged to, rather than from the surface the change actually touched. Instance 2
+is the purest form - a guard adopted specifically to stop guessing at column
+types, which then could not fail on the engine it was run against.
+
+**Why this is not "be more careful".** Five of the six were caught by a machine,
+and the sixth by the owner noticing a version string. Vigilance did not catch any
+of them; a strict engine, a formatter, a type checker and a human did. The
+remedy that follows is mechanical, not attitudinal:
+
+> **Derive the checks to run from `git diff --name-only <base>...HEAD`, mapped to
+> gate families - not from the area the work belongs to.** A diff naming
+> `backend/`, `frontend/`, `scripts/` and `docs/` is exposed to four gate
+> families whatever the unit was called.
+
+That was adopted by one lane mid-run and it worked: it ran the backend gates
+first on its next push and stayed green. **Not proposed as a new gate here** -
+`coordinator-rules-distillation` is the open item that owns whether register
+rules become gates, and adding a sixth gate on the strength of one good night is
+exactly the over-correction this register exists to slow down.
+
+**The specific corollary for CI, which cost a merge.** `check_ci_gates.py` exit 0
+answers "did the jobs pass", not "against what". Pair it with
+`git merge-base --is-ancestor $(git rev-parse origin/main) <head>` **and**, when
+the branch touches a derived count, compute the merge with
+`git merge-tree --write-tree` and recount **out of the merged tree**. A clean
+auto-merge on a derived count is the case nobody re-checks; on 2026-08-28 it was
+correct only because one side happened to add zero net items.
+
+**What this entry cannot claim.** Six instances in eighteen hours is a rate
+measured during an unusually parallel run with five lanes and three rebases each;
+it is not evidence the rate is that high normally. And the six were *found*,
+which selects for the detectable kind - the same failure in a domain with no
+strict engine behind it would still be sitting there unrecorded, which is
+precisely the argument for the mechanical remedy over the attitudinal one.

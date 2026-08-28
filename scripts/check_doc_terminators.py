@@ -50,9 +50,21 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 #: Files whose readers anchor on a line start, so a missing terminator welds the
-#: next append onto the last line. Both are append-heavy and both are read by a
-#: counting tool.
-CHECKED = ("docs/handoff.md", "docs/backlog.md")
+#: next append onto the last line. All three are append-heavy and all three are
+#: read by a counting tool.
+#:
+#: `docs/governance/coordinator-register.md` was **added on 2026-08-28, after an
+#: unterminated append to it passed this very check.** It had been omitted since
+#: the file was written, and the omission is the same class of defect the check
+#: exists to catch: the register is appended to by the same `## ` heading
+#: convention as the handoff, is counted by the same `^## ` pattern, and is
+#: larger than either of the other two. The gate's domain was narrower than the
+#: hazard it was built for. See `c350`.
+CHECKED = (
+    "docs/handoff.md",
+    "docs/backlog.md",
+    "docs/governance/coordinator-register.md",
+)
 
 
 def unterminated(paths: tuple[str, ...] = CHECKED) -> list[str]:

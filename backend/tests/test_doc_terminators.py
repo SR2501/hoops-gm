@@ -119,3 +119,33 @@ def test_the_welding_it_prevents_is_real(checker: ModuleType) -> None:
 def test_the_repository_s_own_files_are_terminated(checker: ModuleType) -> None:
     """The live check, against this repository rather than a fixture."""
     assert checker.unterminated() == []
+
+
+def test_every_append_only_doc_is_actually_in_checked(checker: ModuleType) -> None:
+    """`CHECKED` must name every file the repository appends dated entries to.
+
+    **This test exists because the coordinator register was missing from
+    `CHECKED` from the day the script was written**, and the omission surfaced
+    on 2026-08-28 only when an unterminated append to it passed this very check.
+    The register is appended to by the same `## ` heading convention as the
+    handoff, is counted by the same `^## ` pattern, and is larger than either
+    file that *was* covered.
+
+    Every other test in this module passes an **explicit tuple**, so they prove
+    the mechanism works on whatever they are handed and say nothing about what
+    the gate is pointed at. That is the gap: the check could not fail for a file
+    it was never given. Asserting the membership is the only part that catches a
+    fourth append-only document being added and not registered here.
+
+    Deliberately a membership assertion and not an equality one: adding a file
+    to `CHECKED` should not require editing this test, but *removing* one should.
+    """
+    required = {
+        "docs/handoff.md",
+        "docs/backlog.md",
+        "docs/governance/coordinator-register.md",
+    }
+    missing = required - set(checker.CHECKED)
+    assert not missing, (
+        f"append-only documents absent from CHECKED and therefore unguarded: {sorted(missing)}"
+    )
