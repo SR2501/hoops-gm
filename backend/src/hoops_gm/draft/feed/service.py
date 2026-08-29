@@ -17,7 +17,8 @@ Fantrax anything but a GET.
 provenance of.
 
 **The one decision made here, stated so it can be argued with.** An observed
-selection is appended to the log automatically. It is not held for
+RPC selection with an independently anchored team id is appended to the log
+automatically. It is not held for
 confirmation. The unit exists because the owner cannot both think about value
 and be a keyboard at 7:14pm, and a feed that requires a click per pick is a
 keyboard with extra steps. The safety of that is not "we trust the recogniser";
@@ -30,6 +31,11 @@ wrong claim is refused by ``draft.state``'s derivation before it is written.
 an ordered draft stops applying at the first out-of-turn pick rather than
 skipping it, because skipping desynchronises every subsequent pick and the
 owner would find out at pick 30 rather than pick 8.
+
+Rendered-board selections are the explicit exception. Their column ordinal has
+no established binding to ``DraftParticipant``, so they are stored as
+``source_board_evidence_only`` and exposed through :func:`source_board_evidence`;
+they never enter the application queue.
 """
 
 from __future__ import annotations
@@ -39,21 +45,25 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import lock_refresh_scope
 from hoops_gm.db.models import (
     BridgePayload,
     Draft,
     DraftFeedObservation,
     DraftFeedTransport,
     DraftParticipant,
+    DraftSourceBoardReading,
+    DraftSourceBoardState,
     DraftStatus,
     FantasyTeam,
     League,
+    RefreshArtifactType,
 )
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed.observations import (
@@ -68,11 +78,13 @@ from hoops_gm.draft.feed.observations import (
     publication_order,
 )
 from hoops_gm.draft.feed.recognise import (
+    BOARD_RECOGNISER,
     RPC_CAPTURE_SOURCES,
     SNAPSHOT_CAPTURE_SOURCES,
     RecognitionContext,
     league_id_in,
     league_id_in_page_url,
+    recognise_board_snapshot,
     recognise_bridge_payload,
     recognise_official_draft_picks,
 )
@@ -110,6 +122,24 @@ DEFAULT_SILENCE_THRESHOLD = timedelta(minutes=2)
 #: is the safe direction — it degrades to the instant clock.
 _CONTACT_SCAN_LIMIT = 50
 
+#: How many *board snapshots* one ingest parses, newest first.
+#:
+#: Separate from :data:`BRIDGE_SCAN_LIMIT`, and much smaller, because the two
+#: bound different costs. Reading an RPC body is a dictionary walk; reading a
+#: board is an HTML parse of the whole page, measured at **49 ms** on the
+#: recorded 216-pick, 225 KB board. At the 400-capture scan limit that is twenty
+#: seconds of CPU on a request the owner is making mid-draft.
+#:
+#: Eight bounds cost, not evidence. In the ordinary case a board reading is
+#: cumulative, but ADR-020 decision 4 exists because a newer reading can regress.
+#: Regressions are derived from rows already stored by earlier runs; on the first
+#: run, an older reading outside this window can still be omitted. That limit is
+#: published rather than described as harmless.
+#:
+#: Truncation is reported rather than inferred — see
+#: :attr:`SourceOutcome.board_scan_truncated`.
+BOARD_SCAN_LIMIT = 8
+
 
 class DraftPickSource(Protocol):
     """The narrow slice of the official client this package needs.
@@ -141,8 +171,7 @@ class SourceOutcome:
     #: userscript, or check the configured league id.
     artifacts_scanned: int = 0
     artifacts_examined: int = 0
-    #: Captures for this league that are page snapshots rather than RPC bodies,
-    #: and so cannot be read as picks however well the recogniser works.
+    #: Captures for this league that are page snapshots rather than RPC bodies.
     #:
     #: These are invisible to ``artifacts_examined`` by construction: a snapshot
     #: is stored under the *page* URL, not ``/fxpa/req``, so the league
@@ -155,11 +184,35 @@ class SourceOutcome:
     #: saying the same thing back, on the screen, at the moment it costs money.
     #:
     #: A non-zero value here alongside ``artifacts_examined == 0`` means the
-    #: draft room's traffic is being served by Fantrax's service worker
-    #: (``fx-sw.js``) and never reaching page script. That is a known
-    #: possibility, not a bug in this unit, and it has a different remedy from
-    #: every other zero on this screen.
+    #: bridge is carrying rendered HTML rather than an RPC body. ``boards_read``
+    #: says whether the board recogniser could turn that HTML into evidence.
     snapshots_for_this_league: int = 0
+    #: Page snapshots of this league that parsed as a draft board.
+    #:
+    #: Kept apart from ``artifacts_examined``, which counts RPC bodies and
+    #: keeps that meaning, because the two answer different questions and the
+    #: remedies for a zero differ. ``examined 0, boards_read 12`` is the state
+    #: ADR-020 was written for and is **healthy**: Fantrax serves the draft room
+    #: from its service worker, no RPC body is observable, and the picks are
+    #: coming off the rendered page. ``examined 0, boards_read 0`` with
+    #: ``snapshots_for_this_league`` non-zero is the state the service-worker
+    #: note describes, and is not.
+    boards_read: int = 0
+    #: Why a page snapshot of this league did not become a board reading, by
+    #: reason and count.
+    #:
+    #: Non-empty is not automatically bad — a snapshot of the league home is
+    #: ``board_refused:no_board_element`` and that is the right answer. It turns
+    #: bad when it is the *only* thing here, because then the owner is looking at
+    #: a draft room that this feed cannot read, and the reason names whether
+    #: Fantrax renamed the markup or the capture was cut mid-grid.
+    board_refusals: dict[str, int] = field(default_factory=dict)
+    #: True when board snapshots were dropped by :data:`BOARD_SCAN_LIMIT`.
+    #: Published for the same reason as ``scan_truncated``: a bounded scan that
+    #: does not say it was bounded is indistinguishable from a complete one.
+    #: Previously stored readings still participate in regression detection,
+    #: but an older reading outside the first ingest's window can be omitted.
+    board_scan_truncated: bool = False
     #: Instants stored with a field dropped because their ``kind`` forbids it —
     #: a price on a snake pick, ordinals on an auction sale. Non-zero is a hint
     #: that the draft's snapshotted format disagrees with what the source
@@ -285,12 +338,9 @@ def build_context(session: Session, draft: Draft) -> RecognitionContext | str:
     """The facts a candidate payload is checked against, or why there are none.
 
     Everything here is read from our own tables. ``team_external_ids`` comes
-    from ``fantasy_teams.fantrax_team_id`` for the seats *this draft* declared,
-    which is the independently-held fact that makes the recogniser's anchor an
-    anchor rather than a hope. A draft whose seats are not linked to Fantrax
-    teams — every mock against strangers — returns ``"seats_not_linked"`` and
-    is not fed. That is a refusal, not a degradation: without the anchor the
-    recogniser would be matching on guessed key names alone.
+    from ``fantasy_teams.fantrax_team_id`` for the seats *this draft* declared.
+    RPC recognition refuses when that set is empty; rendered-board recognition
+    does not need it because it publishes source columns without attribution.
     """
     league = session.get(League, draft.league_id)
     if league is None:  # pragma: no cover - FK makes this unreachable
@@ -305,9 +355,6 @@ def build_context(session: Session, draft: Draft) -> RecognitionContext | str:
         .where(FantasyTeam.fantrax_team_id.is_not(None))
     ).all()
     external_ids = frozenset(str(row[0]) for row in rows if row[0])
-    if not external_ids:
-        return "seats_not_linked"
-
     return RecognitionContext(
         fantrax_league_id=league.fantrax_league_id,
         team_external_ids=external_ids,
@@ -344,6 +391,7 @@ def _store(
     participants: dict[str, int],
     existing: set[tuple[str, str, str]],
     bridge_payload_ids: dict[str, int] | None = None,
+    stored_skip_reason: str | None = None,
 ) -> tuple[int, int, int, int]:
     """Write recognised instants as observations.
 
@@ -389,6 +437,8 @@ def _store(
             bridge_payload_id=(bridge_payload_ids or {}).get(provenance.artifact_key),
             kind=instant.kind,
             team_external_id=instant.team_external_id,
+            source_seat=instant.source_seat,
+            source_seat_label=instant.source_seat_label,
             participant_id=participants.get(instant.team_external_id or ""),
             player_label=instant.player_label,
             player_external_id=instant.player_external_id,
@@ -401,7 +451,7 @@ def _store(
             # it would leave the row pending in between -- an application
             # candidate, which is exactly what ``blocked_reason`` would have
             # made it and why that route was rejected.
-            skipped_reason=instant.skipped_reason,
+            skipped_reason=instant.skipped_reason or stored_skip_reason,
         )
         try:
             with session.begin_nested():
@@ -419,9 +469,144 @@ def _store(
             rejected_rows += 1
             continue
         written += 1
-        if instant.skipped_reason is not None:
+        if instant.skipped_reason is not None or stored_skip_reason is not None:
             skipped_rows += 1
     return written, already, rejected_rows, skipped_rows
+
+
+def _record_board_attempt(
+    session: Session,
+    draft: Draft,
+    result: RecognitionResult,
+    *,
+    contact_at: datetime,
+    bridge_payload_id: int,
+) -> None:
+    """Persist board contact and each unique successful content reading.
+
+    A reading gets its own row because an empty board has no pick observations.
+    Repeated content advances contact but creates no reading and does not move
+    the latest-content pointer; that preserves ADR-020's documented
+    exact-content undo blind spot rather than pretending a duplicate key is new
+    evidence.
+    """
+    state = session.get(DraftSourceBoardState, draft.id)
+    if state is None:
+        state = DraftSourceBoardState(
+            draft_id=draft.id,
+            latest_bridge_payload_id=bridge_payload_id,
+            recogniser=BOARD_RECOGNISER,
+            contact_at=contact_at,
+        )
+        session.add(state)
+        session.flush()
+    latest_attempt = bridge_payload_id >= state.latest_bridge_payload_id
+    if latest_attempt:
+        state.latest_bridge_payload_id = bridge_payload_id
+        state.contact_at = contact_at
+    if result.rejected is not None:
+        if latest_attempt:
+            state.refusal_reason = result.rejected
+        return
+
+    board = result.source_board
+    if board is None:  # pragma: no cover - recogniser contract
+        if latest_attempt:
+            state.refusal_reason = "board_metadata_missing"
+        return
+    if latest_attempt:
+        state.refusal_reason = None
+
+    existing_reading = session.scalar(
+        select(DraftSourceBoardReading).where(
+            DraftSourceBoardReading.draft_id == draft.id,
+            DraftSourceBoardReading.artifact_key == board.artifact_key,
+        )
+    )
+    if existing_reading is not None:
+        if latest_attempt and state.artifact_key == board.artifact_key:
+            # Same current content, newly observed. Mutable labels and board
+            # freshness may advance without manufacturing another reading.
+            state.recogniser = board.recogniser
+            state.board_observed_at = board.observed_at
+            state.layout = board.layout
+            state.seat_count = board.seat_count
+            state.round_count = board.round_count
+            state.picks_made = board.picks_made
+            state.seat_labels = list(board.seat_labels)
+        return
+
+    occupied_slots = sorted(
+        (
+            {
+                "source_seat": instant.source_seat,
+                "round_number": instant.round_number,
+                "pick_in_round": instant.pick_in_round,
+                "player_label": instant.player_label,
+                "player_external_id": instant.player_external_id,
+            }
+            for instant in result.instants
+        ),
+        key=lambda slot: (
+            int(slot["source_seat"] or 0),
+            int(slot["round_number"] or 0),
+            int(slot["pick_in_round"] or 0),
+        ),
+    )
+    if len(occupied_slots) != board.picks_made:  # pragma: no cover - recogniser contract
+        raise ValueError("source board pick summary does not match picks_made")
+
+    reading = DraftSourceBoardReading(
+        draft_id=draft.id,
+        bridge_payload_id=bridge_payload_id,
+        artifact_key=board.artifact_key,
+        recogniser=board.recogniser,
+        observed_at=board.observed_at,
+        layout=board.layout,
+        seat_count=board.seat_count,
+        round_count=board.round_count,
+        picks_made=board.picks_made,
+        seat_labels=list(board.seat_labels),
+        occupied_slots=occupied_slots,
+    )
+    try:
+        with session.begin_nested():
+            session.add(reading)
+            session.flush()
+    except IntegrityError:
+        # A concurrent ingest may have won the unique (draft, artifact) race.
+        # Any other constraint failure is not a duplicate and must stay loud.
+        if (
+            session.scalar(
+                select(DraftSourceBoardReading.id).where(
+                    DraftSourceBoardReading.draft_id == draft.id,
+                    DraftSourceBoardReading.artifact_key == board.artifact_key,
+                )
+            )
+            is None
+        ):
+            raise
+        return
+
+    if latest_attempt:
+        state.artifact_key = board.artifact_key
+        state.recogniser = board.recogniser
+        state.board_observed_at = board.observed_at
+        state.layout = board.layout
+        state.seat_count = board.seat_count
+        state.round_count = board.round_count
+        state.picks_made = board.picks_made
+        state.seat_labels = list(board.seat_labels)
+
+
+def _lock_board_scope(session: Session, draft: Draft) -> None:
+    """Serialize one draft's board ingestion before its singleton exists."""
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key=f"draft-source-board:{draft.id}",
+        season=draft.league.season,
+    )
 
 
 def _tally(counter: dict[str, int], reason: str) -> None:
@@ -434,8 +619,18 @@ def ingest_bridge(
     context: RecognitionContext,
     *,
     scan_limit: int = BRIDGE_SCAN_LIMIT,
+    board_scan_limit: int = BOARD_SCAN_LIMIT,
 ) -> SourceOutcome:
-    """Read stored captures for this draft's league and store what they claim."""
+    """Read stored captures for this draft's league and store what they claim.
+
+    Two readers on one transport, which is ADR-020 decision 1 in code:
+    ``recognise_bridge_payload`` for an RPC body and
+    ``recognise_board_snapshot`` for a rendered board. Both produce
+    ``BRIDGE_CAPTURE`` instants — they arrive down the same pipe and calling
+    them two transports would let the DOM board and a future ``/fxpa/req``
+    capture witness each other, from the same browser, the same page and the
+    same script. They are told apart by ``provenance.recogniser``.
+    """
     rows = list(
         session.execute(
             select(BridgePayload)
@@ -445,6 +640,17 @@ def ingest_bridge(
         .scalars()
         .all()
     )
+    # A state row cannot lock its own first insertion. The independent scope
+    # serializes both creation and update through commit on SQLite and Postgres.
+    # It is taken after the bounded capture read so an older request that was
+    # delayed here can still be identified by payload id and refused permission
+    # to move the singleton backwards.
+    if any(
+        row.source in SNAPSHOT_CAPTURE_SOURCES
+        and league_id_in_page_url(row.request_url) == context.fantrax_league_id
+        for row in rows
+    ):
+        _lock_board_scope(session, draft)
     # Selected newest-first so ``scan_limit`` keeps the *recent* window, then
     # walked oldest-first so observations are written in publication order.
     #
@@ -470,6 +676,7 @@ def ingest_bridge(
     # order is that, but only if it is actually recorded in arrival order.
     rows.reverse()
     participants = _participant_by_external_id(session, draft)
+    draft_format = draft_service.format_from_snapshot(draft)
     existing = _existing_keys(session, draft)
 
     rejected: dict[str, int] = {}
@@ -484,6 +691,10 @@ def ingest_bridge(
     rejected_rows = 0
     sale_instants = 0
     skipped_rows = 0
+    boards_read = 0
+    board_refusals: dict[str, int] = {}
+    board_notes: list[str] = []
+    board_rows: list[BridgePayload] = []
 
     for row in rows:
         # Cheap pre-filter on the URL, which carries the league id. Skipping
@@ -502,6 +713,7 @@ def ingest_bridge(
                 and league_id_in_page_url(row.request_url) == context.fantrax_league_id
             ):
                 snapshots += 1
+                board_rows.append(row)
             continue
         examined += 1
         result = recognise_bridge_payload(
@@ -537,24 +749,95 @@ def ingest_bridge(
         rejected_rows += refused
         skipped_rows += unreadable_rows
 
+    # The board pass runs second and over its own, much smaller window. Kept
+    # oldest-first within that window for the same reason the whole scan is:
+    # observation ``id`` is the tie-break every ordering falls back on when two
+    # captures share a second, and writing the newest board first would elect
+    # the stale reading.
+    board_scan_truncated = len(board_rows) > board_scan_limit
+    for row in board_rows[-board_scan_limit:] if board_scan_limit else []:
+        result = recognise_board_snapshot(
+            url=row.request_url,
+            html=row.body_raw,
+            received_at=row.created_at,
+            captured_at=row.captured_at,
+            context=context,
+            draft_format=draft_format,
+        )
+        _record_board_attempt(
+            session,
+            draft,
+            result,
+            contact_at=row.created_at,
+            bridge_payload_id=row.id,
+        )
+        if result.rejected is not None:
+            # Deliberately **not** merged into ``rejected``, which is documented
+            # as artifacts examined on the RPC path. A snapshot of the league
+            # home refusing with ``no_board_element`` is the correct answer and
+            # would read there as a draft payload we could not understand.
+            _tally(board_refusals, result.rejected)
+            continue
+        boards_read += 1
+        recognised += result.recognised_count
+        unrecognised.extend(result.unrecognised)
+        for note in result.notes:
+            if note not in board_notes:
+                board_notes.append(note)
+
+        stored, seen, refused, unreadable_rows = _store(
+            session,
+            draft,
+            result,
+            participants=participants,
+            existing=existing,
+            # Keyed by the board digest, not the capture's ``dedupe_key``, so
+            # this link is to whichever capture first showed this board. A later
+            # snapshot of the same board writes no rows and the link is not
+            # rewritten — the row points at bytes that really did contain it.
+            bridge_payload_ids={
+                instant.provenance.artifact_key: row.id for instant in result.instants
+            },
+            # A source column has no established participant binding. Keep the
+            # evidence visible and permanently outside the application queue.
+            stored_skip_reason="source_board_evidence_only",
+        )
+        written += stored
+        already += seen
+        rejected_rows += refused
+        skipped_rows += unreadable_rows
+
     notes: list[str] = [
         f"Scanned the {scan_limit} newest captures; older ones were not examined."
         if len(rows) >= scan_limit
         else "Scanned every stored capture."
     ]
-    if snapshots and examined == 0:
+    notes.extend(board_notes)
+    if board_scan_truncated:
+        notes.append(
+            f"{len(board_rows)} page snapshot(s) for this league were stored and the "
+            f"newest {board_scan_limit} were parsed. Previously stored board readings "
+            f"still participate in regression detection, but an older reading outside "
+            f"this first-ingest window may hold evidence the parsed window does not."
+        )
+    if snapshots and examined == 0 and boards_read == 0:
         notes.append(
             f"{snapshots} capture(s) for this league are page snapshots rather than "
-            "RPC bodies, and no RPC capture for this league was found. Rendered HTML "
-            "is not the JSON the recogniser reads, so this feed can see the draft "
-            "room being captured and still read nothing from it. The usual cause is "
-            "Fantrax serving the draft room from its service worker, where page "
-            "script cannot observe the response."
+            "RPC bodies, no rendered board parsed, and no RPC capture for this league "
+            "was found. Fantrax's service worker is the known reason page script may "
+            "see no RPC body; inspect board_refusals separately for why the rendered "
+            "HTML produced no board evidence."
+        )
+    elif snapshots and boards_read == 0:
+        notes.append(
+            f"{snapshots} capture(s) for this league are page snapshots and none of "
+            "them parsed as a draft board; only their RPC siblings were read."
         )
     elif snapshots:
         notes.append(
-            f"{snapshots} capture(s) for this league are page snapshots and were not "
-            "read; only RPC bodies are."
+            f"{boards_read} of {snapshots} page snapshot(s) for this league parsed as "
+            "a draft board. The markup carries no Fantrax team id; each column is "
+            "stored as source_seat and is not attributed to DraftParticipant."
         )
     if sale_instants:
         # Non-heuristic by construction: conditioned only on a fact already
@@ -594,6 +877,9 @@ def ingest_bridge(
         artifacts_scanned=len(rows),
         artifacts_examined=examined,
         snapshots_for_this_league=snapshots,
+        boards_read=boards_read,
+        board_refusals=board_refusals,
+        board_scan_truncated=board_scan_truncated,
         coerced_to_kind=coerced,
         fields_dropped=tuple(sorted(dropped_names)),
         observations_rejected=rejected_rows,
@@ -735,6 +1021,8 @@ def _to_instant(row: DraftFeedObservation) -> ObservedInstant:
             sequence=row.id,
         ),
         team_external_id=row.team_external_id,
+        source_seat=row.source_seat,
+        source_seat_label=row.source_seat_label,
         player_label=row.player_label,
         player_external_id=row.player_external_id,
         overall_pick=row.overall_pick,
@@ -852,9 +1140,24 @@ def _admit(row: DraftFeedObservation) -> _Admitted | str:
     an admission rule implemented in two places that were meant to agree is
     the single defect this package's reviews have found most often — rounds
     four, seven and eight were all that shape at different depths.
+
+    **The two team refusals are separate because their causes are.**
+    ``no_seat_for_team_external_id`` means the source named a team and we have
+    no seat linked to it, which the owner fixes by linking the Fantrax team.
+    ``source_named_no_team`` means the reading names nobody to attribute the
+    pick to at all, which he cannot fix, and which is the ordinary state of
+    every rendered-board observation: the Fantrax draft board carries no team id
+    in its markup — ``draftTeamId`` and ``cellTeamId`` are console vocabulary —
+    so the column ordinal is the only seat identity it offers and this unit is
+    not entitled to map that onto one of our participants. Reporting both under
+    one string would send the owner to relink a team that is already linked.
     """
     if row.participant_id is None:
-        return "no_seat_for_team_external_id"
+        return (
+            "source_named_no_team"
+            if row.team_external_id is None
+            else "no_seat_for_team_external_id"
+        )
     if not row.player_label:
         # The log requires a verbatim label for anything naming a player, and
         # inventing one from an external id would be a resolution this package
@@ -1422,11 +1725,23 @@ class FeedStatus:
     blocked: tuple[str, ...]
     skipped: tuple[tuple[str, int], ...]
     last_sequence: int
+    #: Board slots an earlier reading filled and the newest one does not.
+    #:
+    #: ADR-020 decision 4. Empty is the ordinary case. Non-empty means the
+    #: rendered board went backwards, which is the owner's own words for the
+    #: failure this whole feed exists to catch — *"it loses track of the
+    #: draft"* — and nothing is retracted on the strength of it. Published on
+    #: ``GET`` as well as on the ingest response because a live board polls
+    #: ``GET``, and a finding that reaches only the ``POST`` caller is a finding
+    #: the screen never shows.
+    board_regressions: tuple[BoardRegression, ...] = ()
 
 
 def _transport_contact(
     session: Session,
     context: RecognitionContext | str,
+    *,
+    board_is_a_source_here: bool = False,
 ) -> dict[SourceTransport, datetime]:
     """Proof-of-life per transport, independent of any draft instant.
 
@@ -1447,15 +1762,45 @@ def _transport_contact(
       a neighbouring league whose id merely has ours as a prefix, and our id
       appearing in any unrelated query parameter. ``autoescape=True`` because
       an id containing ``_`` or ``%`` is otherwise a LIKE wildcard.
-    * **Only RPC capture sources count.** A ``rendered-view`` HTML snapshot is
-      stored under the *page* URL and proves the userscript is alive, but not
-      that the data endpoint is being read.
+    * **Only RPC capture sources count, until a board has been read.** See
+      below.
     * **Contact never rescues a source that has produced nothing.** That rule
       lives in :func:`freshness_of`; see the comment there.
 
     Together these exclude the defect that matters: *a feed that has read zero
     picks reporting itself as not silent* because some capture mentioning this
     league happened to land.
+
+    ## Why a page snapshot counts once, and only once, a board has been read
+
+    ADR-020 decision 3 puts board liveness on this clock, and it has to: a board
+    reading is keyed on the board's content, so a four-minute deliberation
+    produces snapshot after snapshot and **no new observation at all**. Judged
+    on the instant clock the bridge would read ``silent`` through every
+    deliberation of a draft it is capturing perfectly — the exact cry-wolf
+    failure ``contact_at`` was added to remove, arriving by a new route.
+
+    So ``board_is_a_source_here`` widens what counts, and the gate is a fact
+    rather than a hope: it is true only when this draft already holds an
+    explicit successful board reading, including a valid zero-pick board.
+    Before that, a page snapshot is exactly the service-worker case — the
+    userscript is alive and this feed can read nothing from it — and it still
+    proves nothing, which is what
+    ``test_proof_of_life_ignores_captures_that_are_not_proof_of_this_feed``
+    pins. After it, a snapshot of this league's page is evidence that the pipe
+    which *is* delivering picks is still delivering.
+
+    **The widening is deliberately not narrowed to snapshots that parsed as a
+    board, and that is a real loss of precision.** Any page snapshot of this
+    league counts once the gate is open, including a snapshot of the league
+    home. Narrowing it would mean either re-parsing every candidate at status
+    time — 49 ms of HTML parse each, on the one endpoint a live board polls — or
+    reading which snapshots produced rows, which is precisely the thing content
+    keying makes impossible: an unchanged board writes no row, so the snapshots
+    that matter most here are the ones with nothing pointing at them. What keeps
+    this safe is not this function's precision but :func:`freshness_of`'s
+    asymmetry, which lets contact suppress ``silent`` only for a transport that
+    has already produced an instant.
 
     For a contact time to be wrong in the remaining direction -- a dead bridge
     reported live -- a ``bridge_payloads`` row would have to appear with a
@@ -1470,19 +1815,276 @@ def _transport_contact(
     """
     if isinstance(context, str):
         return {}
+    sources = set(RPC_CAPTURE_SOURCES)
+    if board_is_a_source_here:
+        sources |= set(SNAPSHOT_CAPTURE_SOURCES)
     candidates = session.execute(
-        select(BridgePayload.created_at, BridgePayload.request_url)
+        select(BridgePayload.created_at, BridgePayload.request_url, BridgePayload.source)
         .where(
-            BridgePayload.source.in_(RPC_CAPTURE_SOURCES),
+            BridgePayload.source.in_(sources),
             BridgePayload.request_url.contains(context.fantrax_league_id, autoescape=True),
         )
         .order_by(BridgePayload.created_at.desc())
         .limit(_CONTACT_SCAN_LIMIT)
     ).all()
-    for created_at, request_url in candidates:
+    for created_at, request_url, source in candidates:
+        if source in SNAPSHOT_CAPTURE_SOURCES:
+            if league_id_in_page_url(request_url) == context.fantrax_league_id:
+                return {SourceTransport.BRIDGE_CAPTURE: created_at}
+            continue
         if league_id_in(request_url) == context.fantrax_league_id:
             return {SourceTransport.BRIDGE_CAPTURE: created_at}
     return {}
+
+
+@dataclass(frozen=True, slots=True)
+class BoardRegression:
+    """A board slot that an earlier reading filled and the newest one does not.
+
+    ADR-020 decision 4: **store the reading, publish this, retract nothing.**
+    Refusing a regressed board would discard evidence of the exact failure the
+    owner named — *"it loses track of the draft"* — and clearing the pick
+    automatically would let a repaint delete a real selection.
+
+    ``last_seen_artifact_key`` is the board digest of the newest reading that
+    still held this slot, so the raw capture behind it is findable.
+    """
+
+    source_seat: int
+    round_number: int
+    pick_in_round: int
+    player_label: str | None
+    last_seen_artifact_key: str
+
+
+def load_board_readings(session: Session, draft: Draft) -> list[DraftSourceBoardReading]:
+    """Load explicit successful board readings in first-seen order."""
+    return list(
+        session.execute(
+            select(DraftSourceBoardReading)
+            .where(DraftSourceBoardReading.draft_id == draft.id)
+            .order_by(DraftSourceBoardReading.bridge_payload_id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def board_regressions(
+    readings: list[DraftSourceBoardReading],
+) -> tuple[BoardRegression, ...]:
+    """Slots the board has lost, derived from explicit successful readings.
+
+    One derivation, two callers — :func:`ingest_bridge`'s caller reports it on
+    the ``POST`` response and :func:`feed_status` publishes it on ``GET`` —
+    following :func:`_admit` rather than computing the same question twice. Two
+    passes meant to agree about a payload is the defect every review round on
+    this package has found.
+
+    A reading is a parent row even when it contains zero picks. Its
+    ``occupied_slots`` JSON is a compact source-coordinate summary, not a set of
+    placeholder observations. Anything filled in an earlier reading and absent
+    from the newest is a regression. Union rather than pairwise, so a slot lost
+    two readings ago and still missing is still reported.
+
+    **What this cannot see, stated because it is not obvious.** Content keying
+    means a board that goes *back to a state already stored* writes no new
+    reading row, so an undo that lands exactly on a previous board is invisible.
+    ADR-020 already records that a repaint, an undo and a capture cut look
+    identical at the DOM; this is that limit in its most concrete form. The case
+    it does catch is the one with evidence behind it: a board that has lost a
+    slot no earlier reading was missing.
+    """
+    if len(readings) < 2:
+        return ()
+
+    contents: list[dict[tuple[int, int, int], str | None]] = []
+    for reading in readings:
+        slots: dict[tuple[int, int, int], str | None] = {}
+        for raw in reading.occupied_slots:
+            source_seat = raw.get("source_seat")
+            round_number = raw.get("round_number")
+            pick_in_round = raw.get("pick_in_round")
+            if not (
+                isinstance(source_seat, int)
+                and isinstance(round_number, int)
+                and isinstance(pick_in_round, int)
+            ):  # pragma: no cover - rows are written only by _record_board_attempt
+                continue
+            player_label = raw.get("player_label")
+            slots[(source_seat, round_number, pick_in_round)] = (
+                player_label if isinstance(player_label, str) else None
+            )
+        contents.append(slots)
+
+    newest = contents[-1]
+    lost: dict[tuple[int, int, int], BoardRegression] = {}
+    for reading, slots in zip(readings[:-1], contents[:-1], strict=True):
+        for slot, label in slots.items():
+            if slot in newest:
+                continue
+            # Later earlier-readings overwrite, so the recorded key is the
+            # newest reading that still held the slot rather than the first.
+            lost[slot] = BoardRegression(
+                source_seat=slot[0],
+                round_number=slot[1],
+                pick_in_round=slot[2],
+                player_label=label,
+                last_seen_artifact_key=reading.artifact_key,
+            )
+    return tuple(lost[slot] for slot in sorted(lost))
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBoardPick:
+    """One pick exactly as the rendered source board located it."""
+
+    source_seat: int
+    round_number: int
+    pick_in_round: int
+    overall_pick: int
+    player_label: str | None
+    player_external_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBoardColumn:
+    """One rendered source column; its label is mutable display evidence."""
+
+    source_seat: int
+    mutable_label: str | None
+    picks: tuple[SourceBoardPick, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBoardSnapshot:
+    artifact_key: str
+    recogniser: str
+    observed_at: datetime
+    layout: str
+    seat_count: int
+    round_count: int
+    picks_made: int
+    columns: tuple[SourceBoardColumn, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBoardEvidence:
+    """Read-only source-board evidence, explicitly separate from draft state."""
+
+    draft_id: int
+    as_of: datetime
+    status: Literal["available", "refused", "no_reading"]
+    refusal_reason: str | None
+    contact_at: datetime | None
+    contact_age_seconds: float | None
+    board: SourceBoardSnapshot | None
+    board_age_seconds: float | None
+    regressions: tuple[BoardRegression, ...]
+    caveats: tuple[str, ...]
+
+
+_SOURCE_BOARD_CAVEATS = (
+    "source_seat is a rendered column ordinal, not DraftParticipant.team_slot or identity",
+    "seat labels are mutable display evidence and are never matched to participants",
+    "an exact-content undo reuses an existing artifact key and cannot appear as a new regression",
+    "evidence is from one football snake draft; NBA and auction board support is unestablished",
+)
+
+
+def source_board_evidence(
+    session: Session,
+    draft: Draft,
+    *,
+    now: datetime | None = None,
+) -> SourceBoardEvidence:
+    """Return the latest source board without changing draft state or events."""
+    stamp = now or datetime.now(UTC)
+    state = session.get(DraftSourceBoardState, draft.id)
+    rows = load_observations(session, draft)
+    readings = load_board_readings(session, draft)
+    regressions = board_regressions(readings)
+    if state is None:
+        return SourceBoardEvidence(
+            draft_id=draft.id,
+            as_of=stamp,
+            status="no_reading",
+            refusal_reason=None,
+            contact_at=None,
+            contact_age_seconds=None,
+            board=None,
+            board_age_seconds=None,
+            regressions=regressions,
+            caveats=_SOURCE_BOARD_CAVEATS,
+        )
+
+    snapshot: SourceBoardSnapshot | None = None
+    board_age: float | None = None
+    if (
+        state.artifact_key is not None
+        and state.board_observed_at is not None
+        and state.layout is not None
+        and state.seat_count is not None
+        and state.round_count is not None
+        and state.picks_made is not None
+    ):
+        artifact_rows = [
+            row
+            for row in rows
+            if row.recogniser == BOARD_RECOGNISER and row.artifact_key == state.artifact_key
+        ]
+        by_seat: dict[int, list[SourceBoardPick]] = defaultdict(list)
+        for row in artifact_rows:
+            if (
+                row.source_seat is None
+                or row.round_number is None
+                or row.pick_in_round is None
+                or row.overall_pick is None
+            ):
+                continue
+            by_seat[row.source_seat].append(
+                SourceBoardPick(
+                    source_seat=row.source_seat,
+                    round_number=row.round_number,
+                    pick_in_round=row.pick_in_round,
+                    overall_pick=row.overall_pick,
+                    player_label=row.player_label,
+                    player_external_id=row.player_external_id,
+                )
+            )
+        labels = state.seat_labels or []
+        columns = tuple(
+            SourceBoardColumn(
+                source_seat=seat,
+                mutable_label=labels[seat - 1] if seat <= len(labels) else None,
+                picks=tuple(sorted(by_seat.get(seat, []), key=lambda pick: pick.round_number)),
+            )
+            for seat in range(1, state.seat_count + 1)
+        )
+        snapshot = SourceBoardSnapshot(
+            artifact_key=state.artifact_key,
+            recogniser=state.recogniser,
+            observed_at=state.board_observed_at,
+            layout=state.layout,
+            seat_count=state.seat_count,
+            round_count=state.round_count,
+            picks_made=state.picks_made,
+            columns=columns,
+        )
+        board_age = max(0.0, (stamp - state.board_observed_at).total_seconds())
+
+    return SourceBoardEvidence(
+        draft_id=draft.id,
+        as_of=stamp,
+        status="refused" if state.refusal_reason is not None else "available",
+        refusal_reason=state.refusal_reason,
+        contact_at=state.contact_at,
+        contact_age_seconds=max(0.0, (stamp - state.contact_at).total_seconds()),
+        board=snapshot,
+        board_age_seconds=board_age,
+        regressions=regressions,
+        caveats=_SOURCE_BOARD_CAVEATS,
+    )
 
 
 def feed_status(
@@ -1501,6 +2103,7 @@ def feed_status(
     stamp = now or datetime.now(UTC)
     context = build_context(session, draft)
     rows = load_observations(session, draft)
+    board_readings = load_board_readings(session, draft)
     # A row that names nobody is a recorded refusal, not a reading — see
     # :func:`names_a_player`. It is still counted in ``observation_count`` and
     # still reported by name in ``skipped`` below; what it must not do is make
@@ -1514,7 +2117,14 @@ def feed_status(
     for instant in instants:
         by_transport[instant.provenance.transport].append(instant)
 
-    contact_at = _transport_contact(session, context)
+    contact_at = _transport_contact(
+        session,
+        context,
+        # A fact, not a setting: this draft already holds a successful reading
+        # the board recogniser produced, so the page-snapshot pipe is one this
+        # feed can read here. See :func:`_transport_contact`.
+        board_is_a_source_here=bool(board_readings),
+    )
     if instants:
         report = reconcile(
             by_transport[SourceTransport.BRIDGE_CAPTURE],
@@ -1581,6 +2191,7 @@ def feed_status(
         blocked=blocked,
         skipped=tuple(sorted(skipped.items())),
         last_sequence=state.last_sequence,
+        board_regressions=board_regressions(board_readings),
     )
 
 

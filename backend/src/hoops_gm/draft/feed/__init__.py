@@ -33,11 +33,15 @@ from hoops_gm.draft.feed.observations import (
     matching_key,
 )
 from hoops_gm.draft.feed.recognise import (
+    BOARD_RECOGNISER,
     FIELD_ALIASES,
     SNAPSHOT_CAPTURE_SOURCES,
     RecognitionContext,
+    board_artifact_key,
+    board_locator,
     league_id_in,
     league_id_in_page_url,
+    recognise_board_snapshot,
     recognise_bridge_payload,
     recognise_official_draft_picks,
 )
@@ -53,6 +57,7 @@ from hoops_gm.draft.feed.reconcile import (
 )
 
 __all__ = [
+    "BOARD_RECOGNISER",
     "FIELD_ALIASES",
     "SNAPSHOT_CAPTURE_SOURCES",
     "BoardParseRefused",
@@ -70,12 +75,15 @@ __all__ = [
     "SourceIndependence",
     "SourceTransport",
     "UnrecognisedShape",
+    "board_artifact_key",
+    "board_locator",
     "freshness_of",
     "group_by_transport",
     "league_id_in",
     "league_id_in_page_url",
     "matching_key",
     "parse_draft_board",
+    "recognise_board_snapshot",
     "recognise_bridge_payload",
     "recognise_official_draft_picks",
     "reconcile",

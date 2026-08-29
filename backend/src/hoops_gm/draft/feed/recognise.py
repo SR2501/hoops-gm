@@ -81,6 +81,7 @@ papered over.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -89,13 +90,21 @@ from typing import Any, Final
 from urllib.parse import parse_qs, urlparse
 
 from hoops_gm.db.models.enums import DraftType
+from hoops_gm.draft.feed.board_dom import BoardParseRefused, BoardReading, parse_draft_board
 from hoops_gm.draft.feed.observations import (
     InstantKind,
     InstantProvenance,
     ObservedInstant,
     RecognitionResult,
+    SourceBoardReading,
     SourceTransport,
     UnrecognisedShape,
+)
+from hoops_gm.draft.formats import (
+    AuctionDraftFormat,
+    DraftFormat,
+    DraftFormatError,
+    SnakeDraftFormat,
 )
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 
@@ -285,6 +294,36 @@ _MAX_AMOUNT_CHARS: Final = len(str(MAX_AMOUNT))
 
 _BRIDGE_RECOGNISER: Final = "fxpa_req.seat_anchored.v1"
 _OFFICIAL_RECOGNISER: Final = "fxea.getDraftPicks.v1"
+
+#: The recogniser name a rendered-board reading carries, and the whole of what
+#: ADR-020 decision 1 changes about transport.
+#:
+#: A board reading arrives through the userscript into ``bridge_payloads`` — the
+#: same pipe as an RPC capture — so its transport stays ``BRIDGE_CAPTURE``.
+#: ``DraftFeedTransport``'s own docstring forbids finer values so that two
+#: readings off one pipe cannot look like two pipes, which is what a
+#: ``rendered_view`` transport would have made possible: same browser, same page,
+#: same script. The distinction lives here instead, where it is published and
+#: where it cannot be mistaken for independence.
+#:
+#: Public because it is a stored value: ``draft_feed_observations.recogniser``
+#: holds it, and a caller asking "did the board path read anything for this
+#: draft" compares against this constant rather than a string of its own.
+BOARD_RECOGNISER: Final = "board_dom.rendered_board.v1"
+
+#: Namespace on a board reading's ``artifact_key``, mirroring the ``METHOD:``
+#: prefix on the userscript's ``dedupe_key``. Deliberately **not** versioned:
+#: ADR-020 excludes a parser version from the key, and a version here would
+#: re-key every board the day the parser changed, turning a re-read of an
+#: unchanged board into a new artifact and undoing decision 2.
+_BOARD_KEY_PREFIX: Final = "board:"
+
+#: Field and record separators for the digest input. Control characters rather
+#: than punctuation because a rendered player name is arbitrary text and a
+#: separator a name could contain is a separator that can be forged into a
+#: collision between two different boards.
+_DIGEST_FIELD_SEP: Final = "\x1f"
+_DIGEST_RECORD_SEP: Final = "\x1e"
 
 
 @dataclass(frozen=True, slots=True)
@@ -966,19 +1005,25 @@ def league_id_in_page_url(url: str) -> str | None:
     a snapshot of this league's draft room is otherwise indistinguishable from
     a capture belonging to somebody else's league.
 
-    This exists only to attribute a snapshot to a league so the count can be
-    *reported*. **This module** never reads a snapshot's contents: rendered HTML
-    is not the RPC body and nothing here pretends otherwise.
+    This exists to attribute a snapshot to a league — first so the count could
+    be *reported*, and now so :func:`recognise_board_snapshot` can decide
+    whether a rendered board belongs to this draft.
 
-    That sentence used to say "nothing reads a snapshot's contents", full stop,
-    and it stopped being true on 2026-08-28 when
-    :mod:`hoops_gm.draft.feed.board_dom` landed. It has to, because
-    ``/fxpa/req`` turned out to be unobservable and the rendered board is the
-    only source of live picks there is. The two are still not joined: nothing
-    in this module calls that parser, and a board reading is not an
-    :class:`~hoops_gm.draft.feed.observations.ObservedInstant` until someone
-    decides what its transport and provenance are. Corrected in place rather
-    than deleted, because a false mechanism left in a docstring is an assertion
+    **"This module never reads a snapshot's contents" was true when this was
+    written and stopped being true twice.** It first said "nothing reads a
+    snapshot's contents", which
+    :mod:`hoops_gm.draft.feed.board_dom` falsified on 2026-08-28; it was
+    narrowed to "this module", and ADR-020 falsified that too. This module now
+    reads a snapshot as a board, through that parser, under
+    :data:`BOARD_RECOGNISER`. It had to: ``/fxpa/req`` turned out to be
+    unobservable and the rendered board is the only source of live picks there
+    is.
+
+    What is still true, and is the boundary the userscript README states in its
+    own words, is that a rendered view "is never normalized or presented as the
+    JSON response the userscript could not observe". A board reading is
+    published as a board reading. Corrected in place both times rather than
+    deleted, because a false mechanism left in a docstring is an assertion
     somebody cites later with no cheap way to test it.
     """
     try:
@@ -1482,5 +1527,243 @@ def recognise_official_draft_picks(
             "getDraftPicks was verified reachable on 2026-08-28 and returned "
             "an empty list for a completed 216-pick draft; what a populated row "
             "would mean is still unresolved. See the module docs.",
+        ),
+    )
+
+
+def board_artifact_key(reading: BoardReading) -> str:
+    """The identity of one *board*, as ADR-020 decision 2 defines it.
+
+    Digests the parsed board and nothing else: sorted
+    ``(round, pick_in_round, seat, player_external_id or player_name)`` for
+    every filled cell, with the seat **count** and the round count. Not
+    ``captured_at``, not ``truncated``, not a parser version, and not the HTML.
+
+    **Every exclusion is load-bearing and each names a real reading.**
+
+    * The **HTML** moves between two snapshots of a board nobody has touched --
+      Angular's own churn, a focus class, a countdown. Keyed on bytes, a board
+      snapshotted through a three-hour auction stores every pick once per
+      snapshot and ``SourceFreshness.instant_count`` becomes a count of
+      snapshots.
+    * ``captured_at`` is per-snapshot by definition, so including it is
+      byte-keying with extra steps.
+    * ``truncated`` is a fact about the capture rather than about the board, and
+      a cut that lands past the grid produces the same board with the flag set.
+    * ``seat_name`` is excluded and the **seat ordinal** used instead, because a
+      displayed name is not an identity: four seats in the recorded draft
+      changed from Fantrax's ``Mock Drafter N`` placeholder to a real team name
+      mid-session, while **0** columns ever lost a pick they held and **0**
+      ``overall -> seat`` remappings occurred across all 42 board-bearing
+      captures. Digesting the name would have re-keyed the whole board four
+      times for a repaint.
+    * ``seats`` in ADR-020's wording is the seat **count**, not
+      :attr:`~hoops_gm.draft.feed.board_dom.BoardReading.seats`, which is a
+      tuple of those same unstable names. Reading it the other way would
+      contradict the sentence three lines above it in the same decision.
+
+    ``player_external_id or player_name`` rather than both, because a
+    team-defence pick carries no headshot and therefore no id at all -- 16 of
+    the 216 picks in the recorded football draft. Requiring the id would key
+    those cells on ``None`` and make two different defences one board.
+    """
+    parts = [
+        f"seat_count{_DIGEST_FIELD_SEP}{reading.seat_count}",
+        f"rounds{_DIGEST_FIELD_SEP}{reading.rounds}",
+    ]
+    parts.extend(
+        sorted(
+            _DIGEST_FIELD_SEP.join(
+                (
+                    str(pick.round),
+                    str(pick.pick_in_round),
+                    str(pick.seat),
+                    pick.player_external_id or pick.player_name,
+                )
+            )
+            for pick in reading.picks
+        )
+    )
+    digest = hashlib.sha256(_DIGEST_RECORD_SEP.join(parts).encode("utf-8")).hexdigest()
+    return f"{_BOARD_KEY_PREFIX}{digest}"
+
+
+def board_locator(seat: int, round_number: int, pick_in_round: int) -> str:
+    """Where inside a board reading one pick was found.
+
+    The board's own coordinates: the column, and the cell's ``round-pick``
+    ``<mark>``. A path into the artifact, exactly as an RPC locator is, and the
+    locator remains a path into the artifact; ``source_seat`` also stores the
+    column explicitly so API consumers do not have to parse this string. Neither
+    is a mapping to one of our ``draft_participants`` rows.
+
+    Comfortably inside ``MAX_LOCATOR_CHARS``: a 99-seat, 999-round board renders
+    to 27 characters.
+    """
+    return f"board[{seat}].{round_number}-{pick_in_round}"
+
+
+def recognise_board_snapshot(
+    *,
+    url: str,
+    html: str,
+    received_at: datetime,
+    captured_at: datetime,
+    context: RecognitionContext,
+    draft_format: DraftFormat,
+) -> RecognitionResult:
+    """Read one captured page snapshot as a rendered draft board.
+
+    The third recogniser, and the only one with a live source behind it. Both
+    automatic pick routes were falsified on 2026-08-28: ``/fxpa/req`` is issued
+    by Fantrax's own service worker and no userscript can observe it (49 of 49
+    captures), and ``getDraftPicks`` answered ``{"currentDraftPicks":[]}``
+    against a finished 216-pick draft. The rendered board is what is left.
+
+    **What a board instant carries, and what it cannot.**
+
+    * ``player_label`` and, when the cell renders a headshot,
+      ``player_external_id``. A team-defence cell has no headshot and no id, and
+      that absence is normal rather than a refusal.
+    * ``round_number`` and ``pick_in_round`` verbatim from the cell's own
+      ``<mark>``.
+    * ``overall_pick``, which is the **one derived value here**:
+      ``(round - 1) * seats + pick_in_round``, computed by the parser because
+      the board does not render it. It is not this module inventing a number --
+      Fantrax's chat pane prints the same quantity from a different subtree and
+      agreed with the formula **749 times out of 749** across all 49 captures.
+      Carried rather than withheld so that a disagreement with the official
+      source's *stated* overall is reportable; :func:`values_disagree
+      <hoops_gm.draft.feed.reconcile.values_disagree>` would never see it
+      otherwise.
+    * **No ``team_external_id`` or participant identity, ever.** The rendered
+      board carries no team id anywhere -- ``draftTeamId`` and ``cellTeamId`` are Fantrax console
+      vocabulary and appear nowhere in the markup. The column ordinal is stored
+      as ``source_seat`` and is not assumed to equal
+      :class:`DraftParticipant.team_slot`. ``seat_name`` is retained only as a
+      mutable source label.
+
+    **An auction board is refused by name rather than guessed at.** Every byte
+    of evidence under ADR-020 is one football snake draft. An auction board may
+    not be a round x seat grid at all, and if it were,
+    :func:`_kind_for` would make each cell a ``SALE`` -- which the storage CHECK
+    forbids from carrying the ordinals the cell does carry, so every row would
+    be rejected at flush with nothing but a count to show for it. Applicability
+    to an auction is *unestablished*, which is a different state of knowledge
+    from untested, and the refusal says so.
+    """
+    if not context.fantrax_league_id:
+        return RecognitionResult(rejected="league_not_linked")
+    if context.draft_type is DraftType.UNKNOWN:
+        return RecognitionResult(rejected="draft_type_unknown")
+
+    league_id = league_id_in_page_url(url)
+    if league_id is None:
+        return RecognitionResult(rejected="not_a_league_page")
+    if league_id != context.fantrax_league_id:
+        return RecognitionResult(rejected="wrong_league")
+
+    if isinstance(draft_format, AuctionDraftFormat):
+        return RecognitionResult(rejected="board_reading_unestablished_for_auction")
+
+    try:
+        reading = parse_draft_board(html, captured_at=captured_at)
+    except BoardParseRefused as refusal:
+        return RecognitionResult(
+            rejected=f"board_refused:{refusal.reason}",
+            unrecognised=(
+                UnrecognisedShape(
+                    keys=(),
+                    occurrences=1,
+                    example_locator="board",
+                    reason=f"board_refused:{refusal.reason}",
+                ),
+            ),
+        )
+
+    if reading.seat_count != draft_format.team_count:
+        return RecognitionResult(rejected="board_seat_count_mismatch")
+    if reading.rounds != draft_format.roster_size:
+        return RecognitionResult(rejected="board_round_count_mismatch")
+
+    expected_layout = "snake" if isinstance(draft_format, SnakeDraftFormat) else "linear"
+    if reading.layout == "other":
+        return RecognitionResult(rejected="board_layout_unrecognised")
+    if reading.layout != expected_layout:
+        return RecognitionResult(rejected="board_layout_mismatch")
+
+    for pick in reading.picks:
+        try:
+            coordinate = draft_format.pick_for(pick.round, pick.pick_in_round)
+        except DraftFormatError:
+            return RecognitionResult(rejected="board_coordinate_out_of_range")
+        if coordinate.overall_pick != pick.overall:
+            return RecognitionResult(rejected="board_overall_coordinate_mismatch")
+        expected_source_seat = pick.pick_in_round
+        if isinstance(draft_format, SnakeDraftFormat) and pick.round % 2 == 0:
+            expected_source_seat = reading.seat_count - pick.pick_in_round + 1
+        if expected_source_seat != pick.seat:
+            return RecognitionResult(rejected="board_source_seat_coordinate_mismatch")
+
+    artifact_key = board_artifact_key(reading)
+    instants = tuple(
+        ObservedInstant(
+            kind=InstantKind.SELECTION,
+            provenance=InstantProvenance(
+                transport=SourceTransport.BRIDGE_CAPTURE,
+                artifact_key=artifact_key,
+                recogniser=BOARD_RECOGNISER,
+                received_at=received_at,
+                source_claimed_at=captured_at,
+                locator=board_locator(pick.seat, pick.round, pick.pick_in_round),
+            ),
+            source_seat=pick.seat,
+            source_seat_label=_as_text(pick.seat_name, limit=MAX_LABEL_CHARS),
+            player_label=_as_text(pick.player_name, limit=MAX_LABEL_CHARS),
+            player_external_id=_as_text(pick.player_external_id, limit=MAX_EXTERNAL_ID_CHARS),
+            overall_pick=pick.overall,
+            round_number=pick.round,
+            pick_in_round=pick.pick_in_round,
+        )
+        for pick in reading.picks
+    )
+
+    notes = [
+        "Read from the rendered board, not from an RPC body. Transport stays "
+        "BRIDGE_CAPTURE (ADR-020 decision 1) so that two readings off one pipe "
+        "cannot look like two pipes; the distinction is the recogniser name.",
+        "The board carries no Fantrax team id. Its column is stored only as "
+        "source_seat; the mutable seat_name is evidence for display and neither "
+        "is matched to DraftParticipant.",
+    ]
+    if reading.truncated:
+        # A cut that lands past the grid yields a perfectly good board, which is
+        # what happened in 22 of the 42 recorded board-bearing captures. Worth
+        # saying anyway: the margin was 42 KB on a 208 KB board and it is not a
+        # margin anybody designed.
+        notes.append(
+            "The snapshot was cut at capture.js's character cap, past the board. "
+            "The board itself parsed complete; see bridge-snapshot-budget."
+        )
+    if not reading.is_complete:
+        notes.append(
+            f"{reading.picks_made} of {reading.board_cells} cells are filled. "
+            "is_complete means every rendered cell is filled, not that the draft "
+            "is over, and a uniformly-short board reports True for a partial "
+            "draft — see board-dimensions-per-draft."
+        )
+    return RecognitionResult(
+        instants=instants,
+        notes=tuple(notes),
+        source_board=SourceBoardReading(
+            artifact_key=artifact_key,
+            recogniser=BOARD_RECOGNISER,
+            observed_at=received_at,
+            contact_at=received_at,
+            layout=reading.layout,
+            seat_count=reading.seat_count,
+            round_count=reading.rounds,
+            picks_made=reading.picks_made,
+            seat_labels=reading.seats,
         ),
     )

@@ -37,6 +37,9 @@ from pathlib import Path
 import pytest
 
 from hoops_gm.draft.feed.board_dom import (
+    BOARD_BODY_CLASS,
+    BOARD_COLUMN_CLASS,
+    BOARD_HEADER_CLASS,
     BoardParseRefused,
     BoardReading,
     parse_draft_board,
@@ -229,10 +232,18 @@ def test_the_reading_carries_the_snapshot_timestamp() -> None:
 
 
 def test_a_naive_timestamp_is_refused_rather_than_assumed_utc() -> None:
-    """The stored ``bridge_payloads.captured_at`` column has had its offset
-    stripped, so it is a UTC instant wearing no marker. Guessing here is how a
-    board ends up an hour stale with nothing to show for it; the caller has to
-    make that decision where the justification lives.
+    """A naive instant is one whose zone somebody has already guessed, and this
+    parser is not the place to guess it again. Guessing here is how a board ends
+    up an hour stale with nothing to show for it.
+
+    **The reason this test used to give was false and is worth recording.** It
+    said the stored ``bridge_payloads.captured_at`` column "has had its offset
+    stripped, so it is a UTC instant wearing no marker". That column is
+    ``UTCDateTime``, whose ``process_result_value`` re-attaches UTC on the way
+    out for exactly the SQLite reason the claim was reaching for, so a row read
+    back through the ORM is aware and the caller this refusal was written for
+    does not exist in that form. The refusal survives on the general ground; the
+    specific mechanism did not survive being checked.
     """
     with pytest.raises(BoardParseRefused) as refusal:
         parse_draft_board(load("complete"), captured_at=datetime(2026, 8, 28, 18, 30, 57))
@@ -514,3 +525,86 @@ def test_seat_identity_is_the_column_not_the_displayed_name() -> None:
     # Same board, same seats, despite the labels moving.
     assert predraft.seat_count == complete.seat_count == SEATS
     assert [pick.seat for pick in complete.picks[:SEATS]] == list(range(1, SEATS + 1))
+
+
+# --------------------------------------------------------------------------
+# 3. The two structural properties ADR-020's amendment rests on
+#
+# Both were measured across all 42 board-bearing captures and both reproduce
+# from the committed fixture, so no private capture is needed to re-derive
+# either. They are pinned here because the amendment currently rests on a
+# measurement nobody can repeat, and because a redesign could preserve one and
+# break the other.
+# --------------------------------------------------------------------------
+
+
+def test_the_board_is_column_major_in_document_order() -> None:
+    """Coordinate marks run down a column before moving to the next one.
+
+    Seat 1's eighteen picks -- ``1-1, 2-12, 3-1, 4-12 ... 17-1, 18-12``,
+    snaking within the one column -- appear in full before ``1-2`` does, and
+    column *i* begins with ``1-i``. The DOM is
+    ``__body > __column x12 > __item x18``.
+
+    **Why this is worth a test rather than a sentence.** ADR-020's amendment
+    concludes that a byte-truncated capture can never parse clean-and-short, and
+    that conclusion depends on a cut dropping *whole trailing columns* rather
+    than shortening every column by a little. Column-major order is what makes
+    that true. Read against the raw markup rather than through the parser, so it
+    is a property of the recorded page and not of our own traversal -- the
+    parser walks columns in order too, and asserting through it would compare
+    the code with itself.
+    """
+    raw = load("complete")
+    marks = [
+        (int(rnd), int(pick))
+        for rnd, pick in re.findall(r"<mark[^>]*>\s*(\d+)\s*-\s*(\d+)\s*</mark>", raw)
+    ]
+
+    assert len(marks) == TOTAL_PICKS, "the mark regex must match the whole grid, not a subset"
+
+    # Seat 1's whole column, snaking, before seat 2's first cell.
+    first_column = [(rnd, 1 if rnd % 2 else SEATS) for rnd in range(1, ROUNDS + 1)]
+    assert marks[:ROUNDS] == first_column
+    assert marks[ROUNDS] == (1, 2)
+
+    # ...and every column begins with round 1 of its own seat.
+    assert [marks[index * ROUNDS] for index in range(SEATS)] == [
+        (1, seat) for seat in range(1, SEATS + 1)
+    ]
+
+
+def test_the_header_precedes_the_body_and_that_is_what_refuses_a_cut() -> None:
+    """A separate property from column-major, and the one doing the work.
+
+    ADR-020's amendment first claimed a truncated capture trips
+    ``coordinate_grid_incomplete``. Measured across 771 in-board cuts that guard
+    fired **0 times**; ``seat_column_mismatch`` fired 705 and ``ragged_columns``
+    61. The reason is source order, not logic: ``expected`` at
+    ``board_dom.py:541`` is built from ``seat_count``, which comes from the
+    header, so by the time the cover check runs the seat/column comparison at
+    ``:460`` has already refused any input whose column count disagrees with the
+    header -- and dropping whole trailing columns is exactly that input.
+
+    So the guarantee is **"the header precedes the body in document order"**. A
+    redesign could keep column-major and move the header after the grid, and
+    then a cut would take the header with it and refuse as ``no_board_element``
+    instead. **A test asserting only "it refuses" passes while pinning the wrong
+    mechanism**, and the mechanism is what the next reader relies on, so the
+    reason is asserted by name.
+    """
+    raw = load("complete")
+    assert raw.index(BOARD_HEADER_CLASS) < raw.index(BOARD_BODY_CLASS)
+
+    # Cut at the start of the last column: eleven columns survive, the header
+    # still declares twelve seats.
+    boundaries = [match.start() for match in re.finditer(BOARD_COLUMN_CLASS, raw)]
+    assert len(boundaries) >= SEATS, "the fixture must actually carry twelve columns"
+    cut = raw[: boundaries[SEATS - 1]]
+
+    with pytest.raises(BoardParseRefused) as refusal:
+        parse_draft_board(cut, captured_at=CAPTURED_AT)
+
+    assert refusal.value.reason == "seat_column_mismatch"
+    assert "coordinate_grid_incomplete" not in refusal.value.detail
+    assert "12 header seats against 11 board columns" in refusal.value.detail

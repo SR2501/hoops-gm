@@ -6,8 +6,10 @@ freshness figure is never quietly read off the machine that is computing it.
 The one idea worth stating twice: **an instant carries its provenance, not its
 source's provenance.** A per-source label ("this came from the bridge") is
 enough to draw a badge and not enough to establish that two agreeing readings
-are two readings. :class:`InstantProvenance` names the exact bytes, so
-:mod:`hoops_gm.draft.feed.reconcile` can refuse to call one read two.
+are two readings. :class:`InstantProvenance` names the exact artifact — the
+bytes for a captured response, the parsed board for a rendered one, and ADR-020
+records why those differ — so :mod:`hoops_gm.draft.feed.reconcile` can refuse to
+call one read two.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ __all__ = [
     "InstantProvenance",
     "ObservedInstant",
     "RecognitionResult",
+    "SourceBoardReading",
     "SourceTransport",
     "UnrecognisedShape",
     "matching_key",
@@ -41,13 +44,41 @@ __all__ = [
 class InstantProvenance:
     """Which read produced one instant.
 
-    ``artifact_key`` identifies the **bytes**, not the row and not the request.
-    For a bridge capture that is the userscript's ``dedupe_key``, which is
-    ``METHOD:hash(url):hash(body)`` — so the same response captured twice, by
-    two different capture paths, into two different ``bridge_payloads`` rows,
-    still produces one key. Keying on the row id instead would make a duplicate
-    look like corroboration. For an official read it is the SHA-256 of the raw
-    response body, which the client already computes.
+    ``artifact_key`` identifies the **artifact**, not the row and not the
+    request. For an RPC bridge capture that is the userscript's ``dedupe_key``,
+    which is ``METHOD:hash(url):hash(body)`` — so the same response captured
+    twice, by two different capture paths, into two different
+    ``bridge_payloads`` rows, still produces one key. Keying on the row id
+    instead would make a duplicate look like corroboration. For an official
+    read it is the SHA-256 of the raw response body, which the client already
+    computes.
+
+    **For two of the three readers the artifact is the bytes. For the third it
+    is not, and this paragraph exists because the previous one said "the bytes"
+    flatly.** ADR-020 keys a rendered board reading on a digest of the *parsed
+    board* — sorted ``(round, pick_in_round, seat, player_external_id or
+    player_name)`` with the seat count and the round count, and deliberately
+    not ``captured_at``, ``truncated`` or a parser version. Two snapshots of an
+    unchanged board differ in their HTML on every capture (timers, focus
+    classes, Angular's own churn) and are one reading of one board, so
+    byte-keying would store every pick once per snapshot and make
+    ``SourceFreshness.instant_count`` a count of snapshots rather than of
+    picks.
+
+    **The stronger-sounding reason for this is false and is named here so
+    nobody reaches for it later.** Byte-keying would *not* fool the
+    independence guard: :func:`~hoops_gm.draft.feed.reconcile._independence`
+    refuses two board readings either way, because they share a transport —
+    and note that it tests ``shared_artifacts`` *first* and ``shared_transports``
+    second, so which of the two refusals is reported depends on the keying while
+    the verdict does not. The cost byte-keying carries is volume, not a false
+    witness.
+
+    An ADR that contradicts a docstring and leaves the docstring standing has
+    produced a false guarantee, which is the shape this repository keeps
+    finding; the same correction is made on
+    :class:`~hoops_gm.db.models.draft_feed.DraftFeedObservation`, which carried
+    the claim a second time.
 
     ``received_at`` is **our** clock: the moment the row appeared in our
     database, or the moment our HTTP client returned. It is the only value any
@@ -99,12 +130,19 @@ class ObservedInstant:
     is Fantrax's team id and ``player_external_id`` is Fantrax's player id;
     turning either into one of our rows is
     :mod:`hoops_gm.draft.feed.service`'s job and is done against facts we
-    already hold, never inferred here.
+    already hold, never inferred here. ``source_seat`` is different: it is the
+    rendered board's column ordinal and is retained without any resolution to a
+    participant.
     """
 
     kind: InstantKind
     provenance: InstantProvenance
     team_external_id: str | None = None
+    #: One-indexed rendered-board column. This is a source coordinate, never a
+    #: ``DraftParticipant.team_slot`` or a franchise identity.
+    source_seat: int | None = None
+    #: The mutable label rendered above ``source_seat`` in this snapshot.
+    source_seat_label: str | None = None
     player_label: str | None = None
     player_external_id: str | None = None
     #: One-indexed overall pick, when the source states one.
@@ -301,6 +339,8 @@ class RecognitionResult:
     #: Fields the recogniser deliberately did not read, named so an absence is
     #: distinguishable from an oversight.
     notes: tuple[str, ...] = field(default_factory=tuple)
+    #: Present only for a successfully parsed rendered-board artifact.
+    source_board: SourceBoardReading | None = None
 
     @property
     def recognised_count(self) -> int:
@@ -313,3 +353,18 @@ class RecognitionResult:
         payload we understood.
         """
         return sum(1 for instant in self.instants if instant.skipped_reason is None)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBoardReading:
+    """Snapshot-level facts from one rendered board, with no participant identity."""
+
+    artifact_key: str
+    recogniser: str
+    observed_at: datetime
+    contact_at: datetime
+    layout: str
+    seat_count: int
+    round_count: int
+    picks_made: int
+    seat_labels: tuple[str, ...]

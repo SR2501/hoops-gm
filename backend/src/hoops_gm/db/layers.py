@@ -253,10 +253,14 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     "draft_participants": DataLayer.OBSERVATIONS,
     "draft_events": DataLayer.OBSERVATIONS,
     # What a machine read off Fantrax about a draft, with the identity of the
-    # bytes it read it from. A claim, not a pick — kept at the same layer as
+    # source artifact. A claim, not a pick — kept at the same layer as
     # the log it feeds because it is the same kind of thing: an observation of
     # the outside world, with nothing computed in it.
     "draft_feed_observations": DataLayer.OBSERVATIONS,
+    # Unique rendered-board content readings, including valid zero-pick boards.
+    "draft_source_board_readings": DataLayer.OBSERVATIONS,
+    # Latest rendered-board read/refusal state. Source evidence only.
+    "draft_source_board_states": DataLayer.OBSERVATIONS,
     # Raw transport and provenance.
     "bridge_payloads": DataLayer.OBSERVATIONS,
     "refresh_runs": DataLayer.OBSERVATIONS,

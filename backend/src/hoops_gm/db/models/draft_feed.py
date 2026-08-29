@@ -2,7 +2,7 @@
 
 One table, and the separation is the whole design. ``draft_events`` is the
 log — what the owner accepts as having happened. ``draft_feed_observations`` is
-what a machine *read*, with the identity of the bytes it read it from. A row
+what a machine *read*, with the identity of the source artifact. A row
 here is not a pick; it is a claim, and it stays a claim even after it has been
 admitted into the log.
 
@@ -41,7 +41,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
@@ -57,12 +57,22 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     The unique constraint is ``(draft_id, transport, artifact_key, locator)``.
     Each part earns its place:
 
-    * ``artifact_key`` is the identity of the **bytes**. For a bridge capture it
-      is the userscript's ``dedupe_key`` (``METHOD:hash(url):hash(body)``), so
-      the same response stored twice into two ``bridge_payloads`` rows produces
-      one key. Keying on ``bridge_payload_id`` instead would let a duplicated
-      capture look like a second, corroborating read — the precise defect the
-      independence guard exists to catch, reintroduced one layer down.
+    * ``artifact_key`` is the identity of the artifact a claim was read from.
+      For an RPC bridge capture it is the userscript's ``dedupe_key``
+      (``METHOD:hash(url):hash(body)``), so the same response stored twice into
+      two ``bridge_payloads`` rows produces one key. Keying on
+      ``bridge_payload_id`` instead would let a duplicated capture look like a
+      second, corroborating read — the precise defect the independence guard
+      exists to catch, reintroduced one layer down.
+
+      **This used to say "the identity of the bytes", full stop, and for a
+      rendered board reading that is not true.** ADR-020 keys such a reading on
+      a digest of the *parsed board*, because the HTML of an unchanged board
+      differs on every snapshot and byte-keying would store every pick once per
+      snapshot. See :class:`~hoops_gm.draft.feed.observations.InstantProvenance`,
+      which carries the full reasoning; this note exists because the claim was
+      written down in two places and correcting only one of them leaves the
+      false guarantee standing where the next reader will meet it.
     * ``locator`` distinguishes the many records inside one artifact
       (``responses[0].data.picks[7]``). Without it a batch response could
       contribute exactly one row.
@@ -75,9 +85,10 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
       violation.
 
     What this does **not** deduplicate: the same pick seen in two genuinely
-    different captures. Those are two rows on purpose. They are two readings,
-    and collapsing them here would destroy the evidence that a claim was seen
-    more than once.
+    different *artifacts*. For RPC captures that normally means different
+    response bytes. For rendered boards it means different parsed board content;
+    two repaints of unchanged content are deliberately one artifact under
+    ADR-020. Rows from different artifacts are separate readings on purpose.
     """
 
     __tablename__ = "draft_feed_observations"
@@ -139,9 +150,9 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     transport: Mapped[DraftFeedTransport] = mapped_column(
         portable_enum(DraftFeedTransport, "draft_feed_transport")
     )
-    #: Identity of the exact bytes. See the class docstring.
+    #: Identity of the source artifact. See the class docstring.
     artifact_key: Mapped[str] = mapped_column(String(128), index=True)
-    #: Where inside those bytes this claim was found. A path, not a copy.
+    #: Where inside that artifact this claim was found. A path, not a copy.
     locator: Mapped[str] = mapped_column(String(128))
     #: Which recogniser read it, by name and version, so "why did the board
     #: think that" has an answer that is a name rather than a reconstruction.
@@ -166,6 +177,11 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     #: ``participant_id`` and is done against ``fantasy_teams.fantrax_team_id``,
     #: never inferred from the payload.
     team_external_id: Mapped[str | None] = mapped_column(String(64))
+    #: One-indexed rendered-board column. It is deliberately not a foreign key
+    #: and must never be read as ``DraftParticipant.team_slot``.
+    source_seat: Mapped[int | None] = mapped_column()
+    #: Mutable display text rendered above the source column.
+    source_seat_label: Mapped[str | None] = mapped_column(String(128))
     #: ``RESTRICT``: a seat with observations attached cannot be removed out
     #: from under them. Deleting the draft still cascades to both.
     participant_id: Mapped[int | None] = mapped_column(
@@ -229,3 +245,93 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
         return (
             f"<DraftFeedObservation {self.transport.value} {self.kind.value} {self.player_label!r}>"
         )
+
+
+class DraftSourceBoardReading(IntPk, TimestampMixin, Base):
+    """One unique successful rendered-board content reading.
+
+    Pick observations cannot represent a valid empty board. This parent row is
+    therefore the reading identity and order; ``occupied_slots`` is the compact
+    content summary regression detection needs without manufacturing a pick.
+    Repeated content deliberately reuses the same row under ADR-020.
+    """
+
+    __tablename__ = "draft_source_board_readings"
+    __table_args__ = (
+        UniqueConstraint(
+            "draft_id",
+            "artifact_key",
+            name="uq_draft_source_board_readings_draft_artifact",
+        ),
+        CheckConstraint("seat_count >= 1", name="seats_positive"),
+        CheckConstraint("round_count >= 1", name="rounds_positive"),
+        CheckConstraint("picks_made >= 0", name="picks_nonnegative"),
+    )
+
+    draft_id: Mapped[int] = mapped_column(ForeignKey("drafts.id", ondelete="CASCADE"), index=True)
+    bridge_payload_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "bridge_payloads.id",
+            name="fk_board_reading_bridge_payload",
+            ondelete="RESTRICT",
+        ),
+        index=True,
+    )
+    artifact_key: Mapped[str] = mapped_column(String(128), index=True)
+    recogniser: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    layout: Mapped[str] = mapped_column(String(16))
+    seat_count: Mapped[int] = mapped_column()
+    round_count: Mapped[int] = mapped_column()
+    picks_made: Mapped[int] = mapped_column()
+    seat_labels: Mapped[list[str]] = mapped_column(JSON)
+    occupied_slots: Mapped[list[dict[str, int | str | None]]] = mapped_column(JSON)
+
+    draft: Mapped[Draft] = relationship()
+
+
+class DraftSourceBoardState(TimestampMixin, Base):
+    """Latest attempt and latest newly stored successful content for one draft."""
+
+    __tablename__ = "draft_source_board_states"
+    __table_args__ = (
+        CheckConstraint(
+            "seat_count IS NULL OR seat_count >= 1", name="source_board_seats_positive"
+        ),
+        CheckConstraint(
+            "round_count IS NULL OR round_count >= 1", name="source_board_rounds_positive"
+        ),
+        CheckConstraint(
+            "picks_made IS NULL OR picks_made >= 0", name="source_board_picks_nonnegative"
+        ),
+    )
+
+    draft_id: Mapped[int] = mapped_column(
+        ForeignKey("drafts.id", ondelete="CASCADE"), primary_key=True
+    )
+    #: Arrival-order tie-break for the latest attempted page snapshot. Bridge
+    #: payload ids are monotonic even when SQLite rounds two ``created_at``
+    #: values to the same second.
+    latest_bridge_payload_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "bridge_payloads.id",
+            name="fk_board_state_latest_bridge_payload",
+            ondelete="RESTRICT",
+        )
+    )
+    #: Latest newly stored successful board digest. Retained on a refusal or a
+    #: repeated content key; ``contact_at`` still advances for either attempt.
+    artifact_key: Mapped[str | None] = mapped_column(String(128), index=True)
+    recogniser: Mapped[str] = mapped_column(String(64))
+    board_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Latest page-snapshot arrival, successful or refused.
+    contact_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    #: Non-null when the latest attempt refused. A successful read clears it.
+    refusal_reason: Mapped[str | None] = mapped_column(Text)
+    layout: Mapped[str | None] = mapped_column(String(16))
+    seat_count: Mapped[int | None] = mapped_column()
+    round_count: Mapped[int | None] = mapped_column()
+    picks_made: Mapped[int | None] = mapped_column()
+    seat_labels: Mapped[list[str] | None] = mapped_column(JSON)
+
+    draft: Mapped[Draft] = relationship()
