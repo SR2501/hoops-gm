@@ -31566,3 +31566,62 @@ went to the lane as well as into the file.
   the other direction** - one that under-counts consistently, so that both the
   real count and the seeded count are wrong by the same amount. The control
   asserts a delta of exactly one, which such a counter would still satisfy.
+
+## 2026-08-28 - architect - ADR-020 owner ruling and proposed ordered-board participant contract
+
+Recorded the project owner's 2026-08-28 acceptance of ADR-020 Decisions 1-4.
+The accepted body now states the scope of that ruling explicitly; the existing
+truncation/layout amendment remains `Proposed`.
+
+Added a second, independently `Proposed` amendment. Rendered board markup has no
+team id, and four displayed names changed at stable columns in the recorded
+session, so names are forbidden as join keys. For ordered drafts,
+`DraftParticipant.team_slot` and `ParticipantRequest.team_slot` are the internal
+coordinate contract. The service must match board layout and seat count to the
+frozen draft, resolve each `(round, pick_in_round)` through the frozen
+`DraftFormat`, require the result to equal the source seat/column, and resolve
+the participant by that slot. Auction, `layout="other"`, missing or contradictory
+coordinates, and count mismatches refuse; no Fantrax franchise identity is
+inferred.
+
+The amendment also records that Decision 2 means `seat_count`, not mutable
+displayed `seats`; shared artifact is reported before shared transport even
+though two bridge reads remain non-independent either way; and `board_dom`
+artifact identity names parsed content rather than necessarily raw bytes.
+Backend owns reconciling the implementation docstrings. The existing
+`board-dimensions-per-draft` backlog item remains separate.
+
+Updated `docs/decisions/README.md` to index ADR-020 as accepted, record the
+owner's ruling, and list both proposed amendments independently.
+
+**Could not verify:** the owner has not accepted the new participant-contract
+amendment, so it remains `Proposed`. No service implementation or backend
+docstring changed in this documentation-only unit. The recorded evidence still
+covers one football snake draft, not an NBA draft, linear draft, auction board,
+or stable Fantrax franchise identifier.
+
+## 2026-08-28 - architect - correction: direct board column to team slot mapping withdrawn
+
+Correction to the immediately preceding entry. Commit `0386e344` is superseded
+and its proposed direct `BoardReading.seat` to `DraftParticipant.team_slot`
+mapping is withdrawn. That mapping was not reviewable or mergeable: the model's
+internal slot vocabulary does not establish that setup populated slots in
+Fantrax column order, so a rotated setup could silently attribute every pick to
+the wrong participant.
+
+The replacement remains `Proposed` and fails closed. Rendered board names are
+unstable and forbidden as identity. Until setup records an explicit one-to-one
+source-column-to-participant binding, or an equivalent independently established
+anchor, board observations may be stored and published by source coordinate but
+must not enter participant-attributed draft events. Auction and `layout="other"`
+remain unestablished and refused.
+
+The corrected amendment also records the exact content-deduplication blind spot:
+an undo equal to an already-stored board reuses its artifact identity and cannot
+be detected as a new regression. The owner acceptance remains limited to
+ADR-020 Decisions 1-4; neither amendment is accepted.
+
+**Could not verify:** no explicit source-column-to-participant binding exists in
+this documentation-only unit, and its setup/storage shape remains for specialist
+implementation. The recorded board evidence still covers one football snake
+draft, not an NBA, linear, or auction draft.
