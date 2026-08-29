@@ -1,10 +1,10 @@
 # What draft day looks like
 
-**Status: draft, captured from the owner's own words on 2026-08-26. Scoped
-confirmation on 2026-08-29.** The availability ceiling and the scope guidance
-immediately below are owner-confirmed. Everything else below is his framing; the
-headings are mine. Where I have inferred a consequence rather than quoted him,
-it remains marked **[architect inference]** so he can strike it.
+**Status: owner-reviewed on 2026-08-29.** The owner confirmed five architectural
+consequences below and modified two: manual repair is a catastrophe-only
+firebreak rather than forbidden, and mock observation informs valuation trust
+without deciding it alone. Owner quotations remain verbatim; the implementation
+consequences around them are labelled as rulings, not quotes.
 
 ---
 
@@ -93,7 +93,7 @@ played" is the wrong target.]
 
 ## What this changes about what gets built
 
-**[architect inference throughout this section - all of it is refusable.]**
+**Owner-confirmed 2026-08-29.**
 
 1. **The draft recommender is a portfolio constructor, not a ranker.** It must
    be able to say *"you already have three high-variance players; this is your
@@ -113,9 +113,9 @@ played" is the wrong target.]
 
 # The questionnaire, answered
 
-**Captured 2026-08-26 and 2026-08-27, in conversation.** Fourteen of fifteen.
-These are his words. Anything of mine is marked `[architect inference]` and can
-be struck without argument.
+**Captured 2026-08-26 and 2026-08-27, then owner-reviewed 2026-08-29.** Fourteen
+of fifteen. Quoted text is the owner's; the unquoted consequences are the seven
+rulings recorded below.
 
 ## Part 1 — The room
 
@@ -126,15 +126,21 @@ be struck without argument.
 > separate app with **realtime awareness of draft status so that I don't need to
 > input all of that information**.
 
-`[architect inference]` The last clause rules out a manual-entry fallback. There
-is no planned degraded mode in which he types picks as they happen.
+**Owner-modified 2026-08-29:** Automatic tracking remains load-bearing. Manual
+pick or state repair is permitted only as a catastrophe firebreak so a capture
+failure cannot ruin the draft. Build vigorously against needing it and fail
+loudly before asking the owner to repair state. The existing draft recorder is
+that emergency mechanism: it posts append-only pick, nomination, bid and sale
+events, and the draft log records corrections as void events. It is not a normal
+parallel workflow or a quiet fallback.
 
 **Q2. Who else is in the room, and can they see your screen?**
 
 > Remote — everyone's on their own machine, nobody sees my screen.
 
-`[architect inference]` No discretion constraint. The overlay can be as loud as
-is useful.
+**Owner-confirmed 2026-08-29:** The remote room creates no discretion constraint.
+Important warnings may be visually loud, but may not obscure Fantrax controls or
+overwhelm the owner.
 
 **Q3. How fast does the auction move?**
 
@@ -142,9 +148,9 @@ is useful.
 > positional trading, but since we're auction this year, that should not be an
 > issue.
 
-`[architect inference]` Two minutes is enough to *read*, not just glance. An
-evidence panel behind a recommendation is affordable. This contradicts the
-8–30 second budget the overlay had been designed against.
+**Owner-confirmed 2026-08-29:** A typical two-minute auction pace supports
+readable evidence behind a recommendation. The old 8-30 second glance-only
+constraint does not govern.
 
 ## Part 2 — The moment
 
@@ -194,9 +200,9 @@ evidence panel behind a recommendation is affordable. This contradicts the
 > **That said, if the system can manage the chaos for me and handles suggestions
 > and lineup choices, then a lot of this is moot anyway.**
 
-`[architect inference]` The final sentence is a fork the plan does not account
-for. Reliability matters at the draft *because* in-season chaos is expensive. The
-plan currently lists the in-season lineup manager as the first thing to cut.
+**Owner-confirmed 2026-08-29:** In-season lineup management changes the draft
+cost of unreliability: a system that manages the chaos makes an unreliable player
+less expensive to own. The lineup manager must not remain the first feature cut.
 
 **Q7. When should the tool tell you you're wrong?**
 
@@ -205,8 +211,9 @@ plan currently lists the in-season lineup manager as the first thing to cut.
 > **red warning banner, with the category of warning or multiple categories
 > listed**.
 
-`[architect inference]` Advise everywhere, override nowhere. A tool that refuses
-a pick gets closed.
+**Owner-confirmed 2026-08-29:** Advise everywhere, override nowhere. Warn loudly,
+but never veto an owner draft pick. Fail-closed refusals for invalid or unsafe
+automation are a distinct safety boundary and remain intact.
 
 ## Part 3 — Money
 
@@ -237,8 +244,9 @@ a pick gets closed.
 > A little of both doesn't hurt. **We will probably refine as the mocks get
 > worked.**
 
-`[architect inference]` This fork is settled by observation, which makes an early
-throwaway mock the deciding instrument.
+**Owner-modified 2026-08-29:** Early mocks and observed reactions carry
+meaningful weight when refining valuation trust, but are neither the sole nor a
+100% deciding instrument.
 
 **Q12. What would make you close the laptop?**
 
@@ -301,8 +309,7 @@ That is Q12 verbatim, so the fix is a **dependency edge** rather than a caveat:
 8. **A personal bias feedback loop** — from Q14. The only requested feature that
    improves with use, and it cannot begin until he has drafted once.
 
-## What is still missing from this page
+## Owner review
 
-Nothing he was asked. **What is missing is his correction** — except for the
-availability ceiling and scope guidance confirmed on 2026-08-29, every
-`[architect inference]` above is mine and remains neither struck nor confirmed.
+All seven architectural consequences were ruled on 2026-08-29: five confirmed
+and two modified. No unresolved inference marker remains on this page.

@@ -2577,6 +2577,16 @@ means the item's downstream readers (`auction-budget-manager`,
 `auction-inflation`, `draft-recommender`, `live-draft-availability`) are
 unblocked on their *input*, not served by it.
 
+**Owner ruling 2026-08-29:** that manual recorder is retained as a
+catastrophe-only firebreak, not removed and not promoted to a normal parallel
+workflow. Automatic tracking remains load-bearing and must fail loudly before
+asking the owner to repair state. The existing mechanism satisfies the emergency
+role: a person can post the missing pick, nomination, bid or sale into the
+append-only event log, and can record repair through the screen's void
+affordances. No new fallback item is filed because no missing emergency mechanism
+was demonstrated; the remaining automatic-feed work is still what keeps this
+umbrella `pending`.
+
 **The screen landed on 2026-08-21** (`frontend` lane): a recording panel, a seat
 board with roster construction and per-seat spend, and the full log with
 correction affordances, at `/draft` and `/draft/:draftId`. It renders no
