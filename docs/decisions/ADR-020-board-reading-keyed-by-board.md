@@ -1,8 +1,10 @@
 # ADR-020: A rendered board reading is keyed by the board, not by the bytes
 
-- **Status:** Proposed
+- **Status:** Accepted
+- **Accepted:** 2026-08-28 by the project owner, for numbered Decisions 1-4.
+  Amendments below retain their own status.
 - **Date:** 2026-08-28
-- **Deciders:** owner (accepts), architect (proposes)
+- **Deciders:** owner (accepted Decisions 1-4), architect (proposes amendments)
 - **Supersedes:** nothing. **Amends:** nothing. Bounds the
   `InstantProvenance` contract in one place and says so there as well as here.
 
@@ -161,3 +163,41 @@ board. Stability here is 42 snapshots of one uninterrupted session.
 than claims** — no private capture is needed to re-derive either. Pinning
 column-major order against that fixture is an acceptance criterion on
 `draft-board-feed-integration`.
+
+### 2026-08-28 — ordered board coordinates resolve participants by `team_slot`
+
+**Status:** Proposed. Written by `architect`; only the project owner accepts.
+
+Rendered board markup contains no team id. Never join a board pick to
+`DraftParticipant` by a displayed seat or team name: four such names changed
+during the recorded session while their columns stayed fixed.
+
+For ordered drafts only, `DraftParticipant.team_slot` is already the internal
+draft-coordinate contract (`db/models/draft.py:149-151`), and
+`ParticipantRequest.team_slot` exposes the same one-indexed vocabulary. The
+board DOM independently establishes snake or linear coordinates. The service
+layer must require `BoardReading.layout` to equal the draft's frozen type,
+require `BoardReading.seat_count == draft.team_count`, and resolve every pick's
+source `(round, pick_in_round)` through the frozen `DraftFormat`. That result
+must equal the pick's `seat`/column, and the participant is then resolved by
+that `team_slot`.
+
+Refuse auction drafts, `layout="other"`, missing or contradictory coordinates,
+and any count mismatch. Do not infer or persist a Fantrax franchise identity
+from this mapping.
+
+This also narrows three explanatory claims in the accepted body. Decision 2's
+board dimensions mean `seat_count` and `rounds`, not mutable
+`BoardReading.seats`. Independence reports a shared artifact before a shared
+transport; two bridge readings remain non-independent either way.
+`board_dom` artifact identity names parsed board content, not necessarily raw
+bytes; the backend lane owns reconciling the implementation docstrings.
+
+Board dimensions per draft remain the separate
+`board-dimensions-per-draft` follow-on. This amendment does not absorb that
+work.
+
+**Rejected:** joining by displayed names, or treating a board column as a
+Fantrax franchise identifier. **What would flip this:** rendered markup gaining
+a stable, documented team identifier whose independent captures establish that
+it survives renames and draft types.

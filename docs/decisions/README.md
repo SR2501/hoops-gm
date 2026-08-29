@@ -36,7 +36,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [017](ADR-017-auction-pricing-without-mock-corpus.md) | Auction pricing ships on seed AAV; empirical AAV is an enhancement | *Proposed* | `auction-values` derives dollars from our own valuation and never consumed AAV; drop the blocked dependency and show published AAV beside ours |
 | [018](ADR-018-calibration-displayed-beside-the-number.md) | `p(play)` calibration is displayed beside the number it grades | *Proposed* | Owner rejected both auto-brake and footnote; the restricted calibration figure becomes a visible, flattenable badge that blocks nothing |
 | [019](ADR-019-cohort-fingerprint-boundary.md) | The cohort fingerprint boundary is the derivation closure, and the check claims bytes, not entitlement | *Proposed* | Nothing is dropped and the set is under-inclusive by 31 files; a fingerprinted file may be edited with a leaf-diff transcript attached |
-| [020](ADR-020-board-reading-keyed-by-board.md) | A rendered board reading is keyed by the board, not by the bytes | *Proposed* | Both automatic pick paths are negative, so the rendered board is the live source; transport stays `BRIDGE_CAPTURE`, `artifact_key` digests the parsed board, and a board that lost a pick never clears it |
+| [020](ADR-020-board-reading-keyed-by-board.md) | A rendered board reading is keyed by the board, not by the bytes | **Accepted** | Both automatic pick paths are negative, so the rendered board is the live source; transport stays `BRIDGE_CAPTURE`, `artifact_key` digests the parsed board, and a board that lost a pick never clears it |
 
 **016 is unwritten and reserved.** Four coordinator-register entries (`c170`,
 `c171`, `c178`, `c179`) each name a requirement for "whenever ADR-016 is
@@ -62,6 +62,11 @@ praised it as written.
 ADR-010's existing `Accepted` metadata was explicitly confirmed by the project
 owner through the architect liaison decision dialog on **2026-08-19**.
 
+ADR-020 Decisions 1-4 were accepted by the project owner on **2026-08-28**:
+unchanged board readings are duplicates, bridge contact establishes liveness,
+and a later incomplete reading never erases an earlier pick. Its amendments
+retain their independent `Proposed` status.
+
 The recursive weekly refresh amendments to ADR-011 and ADR-012 were accepted by
 the project owner on **2026-08-17**. They extend the original sequencing
 decisions with versioned cascade and freshness requirements; they do not choose
@@ -79,5 +84,6 @@ ADR's body rather than its amendments — so an `Accepted` row can hold a
 | [007](ADR-007-availability-in-spine.md) | The availability model must state an identification strategy before it fits anything | 2026-08-22 | `quant` |
 | [019](ADR-019-cohort-fingerprint-boundary.md) | The closure count is now recountable by `scripts/fingerprint_closure.py`; it was a load-bearing number nobody could check | 2026-08-28 | `architect` |
 | [020](ADR-020-board-reading-keyed-by-board.md) | The truncation guard the body named was dead — `coordinate_grid_incomplete` fires 0 times in 771 in-board cuts — and the safety comes from Fantrax's layout rather than from our check | 2026-08-28 | `architect` |
+| [020](ADR-020-board-reading-keyed-by-board.md) | Ordered board coordinates resolve participants by `team_slot`; displayed names and inferred Fantrax franchise identity do not | 2026-08-28 | `architect` |
 
 Agents write `Proposed` only. Only the project owner accepts.
