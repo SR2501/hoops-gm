@@ -31765,3 +31765,64 @@ A fresh diff review found that both independent `AsyncBoundary` warnings inherit
 **Could not verify:** No live backend, database, or browser was started, so route-transition paint and the retained-empty refusal copy were exercised in jsdom rather than the coordinator-owned visible demo. GitHub CI had not yet run against the eventual replacement head when this correction was appended.
 
 **Next:** Freeze the replacement PR head for a fresh independent cumulative review. Do not merge or self-approve from this lane.
+
+---
+
+## 2026-08-29 — backend — Refused draft-board dimension regression from feed history
+
+**Changed:** Completed `board-dimensions-per-draft` without changing the schema,
+frontend, parser DOM contract, participant attribution, events, holdings, team
+identity, or budgets. The existing `draft_source_board_readings` history and
+per-draft cross-dialect transaction lock are sufficient. For one draft, each
+successful reading establishes a component-wise floor for later bridge payloads:
+a candidate with fewer seats or fewer rounds than any earlier successful reading
+refuses as `board_dimensions_regressed` before a reading or pick observation is
+written. The latest bridge contact and refusal remain truthful while the last
+successful evidence remains published. Snapshot-local checks still require the
+frozen ordered layout, exact `team_count`, valid coordinates and overall picks,
+and `round_count <= DraftFormat.roster_size`; auction and `layout="other"` remain
+unestablished and refused.
+
+**Contract:** The first structurally valid reading may be empty, partially filled,
+or parser-complete and establishes its dimensions. Dimensions may grow up to the
+frozen format or remain equal; equal repeated content follows existing artifact
+deduplication. Dimensions never shrink after success. Empty readings obey the
+same rule, so complete 12x18 to empty 12x18 remains accepted regression evidence,
+while complete 12x18 to empty 12x14 refuses. Refused attempts establish no floor.
+An artifact accepted at 12x14 before growth remains legitimate historical
+evidence; only successful lower payload ids constrain a candidate, so rescanning
+that old payload does not rewrite history as a refusal, while newly arriving
+12x14 content after 12x18 does refuse. The existing lock makes the floor check and
+reading write one serialized operation on SQLite and PostgreSQL.
+
+**Evidence:** A test cuts four rendered cells from every column of the recorded
+12x18 fixture, producing a parser-valid, `is_complete=True` 12x14 board with 168
+picks. After a successful 216-pick reading it refuses by the named reason, stores
+neither the shortened reading nor its picks, retains the 216-pick board, advances
+contact, remains live, and creates no events or holdings. Focused coverage also
+drives first partial reading then growth, equal/repeated content, pre-success
+refusal, shorter empty input, same-dimension complete-to-empty regression, API
+status, and delayed concurrent ingestion. Removing the history guard made the
+measured 12x18-to-12x14 test fail; byte-for-byte restoration made it pass.
+
+Local Code and policy gates passed after rebasing onto exact main
+`b155cf1fbf62f0c9f9a16f2c8ac8e4a58e278d53`: Ruff check and format, strict mypy
+over 229 source files, and the full backend suite (**2,375 passed, 1 skipped, 41
+deselected**). A fresh SQLite database passed upgrade from empty through `0022`,
+`alembic check`, downgrade to base, re-upgrade, and a second check. Secret scan,
+document terminators, backlog graph, and diff whitespace passed. Only
+`board-dimensions-per-draft` changed status; the finished backlog recounts **189
+items: 68 done, 0 blocked, 121 pending**.
+
+**Could not verify:** Native PostgreSQL was not available locally, so the exact
+PR-head PostgreSQL migration and suite job remains required to exercise the
+advisory-lock path. The recorded DOM evidence remains one football snake draft;
+it does not establish the owner's NBA auction, and this unit deliberately adds no
+auction support. The parser's existing exact-content undo blind spot remains:
+content identical to an already stored artifact cannot appear as a new
+regression. Temporary SQLite migration databases remain outside the repository in
+the session artifacts directory.
+
+**Next:** Require exact-head GitHub CI, especially PostgreSQL, and a fresh
+independent cumulative review before merge. Do not merge or self-approve from
+this lane.
