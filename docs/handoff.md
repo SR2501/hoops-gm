@@ -31862,3 +31862,68 @@ interleaving, and native PostgreSQL remains CI-only here.
 
 **Next:** Replace the PR head, disregard every check and review on the superseded
 head, then require exact-head CI and a fresh cumulative review before merge.
+
+---
+
+## 2026-08-29 - architect - Owner rulings: injury era, board evidence, and availability scope
+
+Started from exact `main` base `810230ba657941df785e50bbc642a3371de3a2b8`.
+This is a documentation-only ruling record; no model was fitted, no outcome was
+read, and no live-account behavior changed.
+
+**Owner ruling 1, exactly:** **Accept Change A only; retain the prior Change B
+ruling.** Change A is now binding before unblind as a preregistered v2 section 7
+report-era sensitivity. Refit the legacy-only and short-lead-only development
+subsets and report both against the same 100% short-lead held-out partition.
+Pooled remains primary; the era split is diagnostic and enters no activation
+condition. It measures training-era sensitivity, not held-out legacy calibration,
+and v3 remains weaker than v2 on predictor-side prospectivity because cohort
+composition was already read. The governing citation is **v3 with scoped
+acceptance**.
+
+Change B is unchanged from the 2026-08-27 ruling. Restricted calibration is
+computed and displayed beside the `p(play)` it grades under ADR-018, but blocks
+nothing and does not enter v2 section 8. There is no condition 9. The frozen
+50/25/25 split, lead-time bands, and calibration thresholds did not move.
+
+**Owner ruling 2, exactly:** **Accept both amendments** in ADR-020. Decisions
+1-4 remain accepted from 2026-08-28, and both 2026-08-28 amendments are accepted
+by the project owner on 2026-08-29. The first ratifies the measured layout and
+truncation correction plus the per-draft dimension rule already shipped in
+PR #136. The second ratifies fail-closed participant attribution: source columns
+and mutable labels cannot enter participant-attributed events until setup records
+an explicit one-to-one source-column-to-participant binding or an equivalent
+independent anchor.
+
+Acceptance creates and populates no binding, enables no authoritative participant
+picks or budgets, and establishes no NBA, auction, or `layout="other"` support.
+Missing, incomplete, or contradictory binding still refuses attribution.
+
+**Owner ruling 3, scoped:** The availability ceiling and the statement "I just
+do not want to put too much energy into that" in
+`docs/what-draft-day-looks-like.md` are confirmed as scope guidance, not modesty.
+Availability adjusts comparisons between comparable players and should not
+overturn a talent gap. The other owner-questionnaire inference markers remain
+unconfirmed and unchanged; no owner ruling on them was relayed to this lane.
+
+**Backlog effect:** `injury-status-conversion` and
+`draft-board-feed-integration` remain pending. Only two stale current-status
+sentences were corrected. The recounted backlog remains **189 items: 68 done, 0
+blocked, 121 pending**.
+
+Local documentation and policy gates passed: document terminators, backlog graph
+and recount, repository secret scan, targeted status searches, and diff whitespace.
+The committed handoff base was appended byte-for-byte with LF-only suffix bytes;
+the append-only checker and its one-byte-flip, truncated-base, and seeded-CR
+negative controls are required again against the committed head.
+
+**Could not verify:** No fit or unblind exists, so no calibration result or
+training-era sensitivity result can be verified. Outcome-side independence remains
+unverified by design. ADR-020 evidence remains one football snake draft, not the
+owner's NBA auction; the participant binding does not exist. Six further
+draft-day inference rulings requested through the coordinating session were not
+relayed while the owner was unavailable, so this entry records no decision on
+them. No unique off-repository holding was created by this lane.
+
+**Next:** Commit and push this documentation-only record, require exact-head CI
+and review, and do not merge or self-approve from this lane.

@@ -1,20 +1,18 @@
 # Injury-status conversion — preregistration v3
 
-**Status: `Proposed`.** Not accepted, not binding, not in force. v2 remains the
-governing protocol until the owner binds this document. It is written by `quant`
-— the agent this protocol grades — and for that reason `quant` does not approve
-it. The separation is the same one `bridge` has from `safety` on the write path,
-and it is not waived by the proposer being confident.
+**Status: Scoped acceptance.** On 2026-08-29 the project owner accepted Change A
+(§3) only. The governing protocol is **v3 with scoped acceptance**: frozen v2
+plus Change A, binding before unblind as a preregistered v2 §7 sensitivity. All
+other v3 proposal text remains non-binding. Change B (§4) is not accepted as an
+activation gate; ADR-018's 2026-08-27 display-only ruling governs it.
 
-**Supersedes:** `docs/models/injury-status-conversion-preregistration.md` (v2,
-freeze id `injury-status-conversion-v2-20260821T145900Z`), if and only if bound.
+**Relationship to v2:** This scoped acceptance does not supersede
+`docs/models/injury-status-conversion-preregistration.md` wholesale. Its freeze
+id remains `injury-status-conversion-v2-20260821T145900Z`, with only the accepted
+Change A reporting obligation added.
 
 **Author:** `quant`. **Drafted:** 2026-08-23, pre-unblind.
-**Decision required from:** owner. **Recommendation:** adopt.
-
-**The owner was asked on 2026-08-27 and declined the binary. See §9.** The status
-line above is unchanged and is not changed by that ruling: this document is still
-`Proposed`, v2 still governs, and §8 still holds eight conditions.
+**Owner rulings:** 2026-08-27 (§9) and 2026-08-29 (§10).
 
 ---
 
@@ -291,8 +289,9 @@ post-hoc and gates nothing.
 
 **What that means for this document, precisely.**
 
-- **v3 is not bound.** It remains `Proposed`; v2 remains the governing protocol;
-  the fit proceeds under v2 exactly as §7 describes.
+- **As of the 2026-08-27 ruling, v3 was not bound.** It remained `Proposed`; v2
+  remained the governing protocol; the fit proceeded under v2 exactly as §7
+  describes.
 - **For Change B, the operational outcome is §7's outcome plus a display
   requirement.** The restricted calibration is still computed, still published,
   and still gates nothing. What is added is that it must appear beside the
@@ -300,9 +299,9 @@ post-hoc and gates nothing.
   `docs/decisions/ADR-018-calibration-displayed-beside-the-number.md`, which
   states plainly that a score the owner can ignore is what §7 calls a footnote,
   and that the claimed difference — visibility — is untested.
-- **Change A was not ruled on.** The era sensitivity is neither adopted nor
-  declined and is still owed an answer. Do not read this section as disposing of
-  it.
+- **As of 2026-08-27, Change A had not been ruled on.** The era sensitivity was
+  neither adopted nor declined and was still owed an answer. Do not read this
+  historical section as disposing of it.
 - **Nothing here licenses reopening §4's split or §7's bands.** §2 still holds.
 
 **Provenance, so it can be checked rather than trusted.** Recorded by
@@ -310,3 +309,30 @@ post-hoc and gates nothing.
 quotation is his; the framing around it is mine, and nobody writing in this
 repository heard it first-hand. If the framing misstates him, he should strike
 it — the quotation is the part that must survive.
+
+---
+
+## 10. Owner ruling — 2026-08-29
+
+**Exact ruling:** **Accept Change A only; retain the prior Change B ruling.**
+
+**Change A (§3) is owner-accepted and binding before unblind.** Report era is a
+preregistered v2 §7 sensitivity: refit on the legacy-only and short-lead-only
+development subsets, then report both against the same held-out partition,
+which is 100% short-lead. The pooled fit and evaluation remain primary. The era
+split is diagnostic and does not enter any v2 §8 activation condition.
+
+The limitation remains explicit: this measures **training-era sensitivity**, not
+held-out legacy calibration. This v3 scoped acceptance is also weaker than v2
+with respect to predictor-side prospectivity because the cohort composition had
+already been read. Cite the governing protocol as **v3 with scoped acceptance**,
+not as a replacement v2 freeze.
+
+**Change B (§4) is not accepted as an activation gate.** The 2026-08-27 ruling is
+unchanged: restricted calibration is computed and displayed beside the
+`p(play)` it grades, but it does not enter v2 §8 activation. ADR-018 remains the
+governing display decision. There is no condition 9.
+
+Nothing in this ruling reopens the frozen 50/25/25 split or the lead-time bands,
+authorizes a fit or outcome read, changes a calibration threshold, or changes
+the pending state of the implementation task.

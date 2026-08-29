@@ -1,10 +1,11 @@
 # ADR-020: A rendered board reading is keyed by the board, not by the bytes
 
-- **Status:** Accepted
+- **Status:** Accepted, including both amendments
 - **Accepted:** 2026-08-28 by the project owner, for numbered Decisions 1-4.
-  Amendments below retain their own status.
+  Both 2026-08-28 amendments were accepted by the project owner on 2026-08-29.
 - **Date:** 2026-08-28
-- **Deciders:** owner (accepted Decisions 1-4), architect (proposes amendments)
+- **Deciders:** owner (accepted Decisions 1-4 and both amendments), architect
+  (proposed)
 - **Supersedes:** nothing. **Amends:** nothing. Bounds the
   `InstantProvenance` contract in one place and says so there as well as here.
 
@@ -82,8 +83,8 @@ has been driven against an auction board or an NBA one.
 
 ### 2026-08-28 — the truncation guard I named was dead, and the safety is in the layout rather than the check
 
-**Status:** Proposed. Written by `architect`, the author of the body above; only
-the project owner accepts.
+**Status:** Accepted by the project owner on 2026-08-29. Written by `architect`,
+the author of the body above.
 
 **The decision does not change.** What changes is the standing of two claims
 under it, both of which the handoff entry listed as "could not verify".
@@ -166,7 +167,7 @@ column-major order against that fixture is an acceptance criterion on
 
 ### 2026-08-28 — source columns require an explicit participant binding
 
-**Status:** Proposed. Written by `architect`; only the project owner accepts.
+**Status:** Accepted by the project owner on 2026-08-29. Written by `architect`.
 
 Rendered board markup contains no team id. Never join a board pick to
 `DraftParticipant` by a displayed seat or team name: four such names changed
@@ -207,3 +208,17 @@ observed as a new regression.
 treating a column as a Fantrax franchise identifier. **What would flip this:**
 rendered markup gaining a stable team identifier whose independent captures
 establish that it survives renames and draft types.
+
+### 2026-08-29 — owner acceptance scope
+
+The owner accepted both 2026-08-28 amendments. The first ratifies the measured
+layout and truncation correction and the per-draft dimension rule; that rule was
+already implemented in PR #136. The second ratifies the fail-closed requirement:
+source columns and mutable labels cannot enter participant-attributed events
+until setup records an explicit one-to-one source-column-to-participant binding,
+or an equivalent independently established anchor.
+
+Acceptance does not create or populate that binding, enable authoritative
+participant picks or budgets, or establish NBA, auction, or `layout="other"`
+support. Missing, incomplete, or contradictory binding still refuses
+attribution.

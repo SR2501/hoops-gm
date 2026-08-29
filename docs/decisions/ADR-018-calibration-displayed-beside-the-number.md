@@ -67,3 +67,17 @@ v3 stays `Proposed`, v2 governs, and §8 keeps eight conditions and gains no
 ninth. **The restricted figure is now load-bearing for a screen**, so it cannot
 be dropped as merely post-hoc. v3's Change A (the era sensitivity) is untouched
 here and still owed an answer.
+
+## Amendments
+
+### 2026-08-29 — Change A accepted separately; this display ruling is unchanged
+
+**Status:** Proposed. The project owner accepted Change A only in the v3
+preregistration and retained the prior Change B ruling. The governing protocol
+is now v3 with scoped acceptance: Change A is binding as a preregistered v2 §7
+sensitivity, while Change B remains outside activation.
+
+This ADR remains the governing display decision for Change B. Restricted
+calibration is computed and displayed beside the `p(play)` it grades, blocks
+nothing, and creates no ninth v2 §8 activation condition. The 2026-08-29 ruling
+does not accept this ADR, alter its thresholds, or change its display contract.

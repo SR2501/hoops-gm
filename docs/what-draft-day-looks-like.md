@@ -1,9 +1,10 @@
 # What draft day looks like
 
-**Status: draft, captured from the owner's own words on 2026-08-26. Not yet
-confirmed by him.** Everything below is his framing; the headings are mine.
-Where I have inferred a consequence rather than quoted him, it is marked
-**[architect inference]** so he can strike it.
+**Status: draft, captured from the owner's own words on 2026-08-26. Scoped
+confirmation on 2026-08-29.** The availability ceiling and the scope guidance
+immediately below are owner-confirmed. Everything else below is his framing; the
+headings are mine. Where I have inferred a consequence rather than quoted him,
+it remains marked **[architect inference]** so he can strike it.
 
 ---
 
@@ -23,14 +24,15 @@ comparison between two players at different availability levels.**
 > seventy or eighty games of a role player.** It's just good to have those
 > numbers in your mind and in your head."*
 
-**This is a ceiling on how much the availability machinery is allowed to
-matter.** Availability adjusts a comparison between comparable players. It does
-not overturn a talent gap. Any recommendation that downgrades an elite player
-below a durable role player has almost certainly over-weighted availability.
+**Owner-confirmed 2026-08-29: this is a ceiling on how much the availability
+machinery is allowed to matter.** Availability adjusts a comparison between
+comparable players. It does not overturn a talent gap. Any recommendation that
+downgrades an elite player below a durable role player has almost certainly
+over-weighted availability.
 
 > *"I just don't want to put too much energy into that."*
 
-**Taken as scope guidance, not modesty.** [architect inference]
+**Owner-confirmed 2026-08-29: taken as scope guidance, not modesty.**
 
 ## Volatility is a separate dimension, not a tenth category
 
@@ -301,5 +303,6 @@ That is Q12 verbatim, so the fix is a **dependency edge** rather than a caveat:
 
 ## What is still missing from this page
 
-Nothing he was asked. **What is missing is his correction** — every
-`[architect inference]` above is mine, and none has been struck or confirmed.
+Nothing he was asked. **What is missing is his correction** — except for the
+availability ceiling and scope guidance confirmed on 2026-08-29, every
+`[architect inference]` above is mine and remains neither struck nor confirmed.
