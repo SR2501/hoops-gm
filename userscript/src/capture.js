@@ -899,7 +899,7 @@
     for (let index = 0; index < Math.min(prefixBudget, html.length); index += 1) {
       const char = html[index];
       if (state === "comment") {
-        if (html.startsWith("-->", index)) {
+        if (index + 2 < prefixBudget && html.startsWith("-->", index)) {
           lastCompleteTag = index + 2;
           state = "text";
           index += 2;

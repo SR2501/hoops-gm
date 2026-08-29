@@ -1136,6 +1136,33 @@ test("buildDomSnapshotHtml ignores quotes in comments when finding a safe trunca
   assert.doesNotMatch(html, /data-long=/, "an over-budget opening tag is discarded whole");
 });
 
+test("a comment terminator must fit entirely inside the snapshot content budget", async () => {
+  const capture = await loadCapture();
+  const maxChars = 100;
+  const marker = `<!-- hoops-gm bridge: truncated at ${maxChars} chars -->`;
+  const prefixBudget = maxChars - marker.length - 1;
+  const opening = "<main><!--";
+  const terminatorAt = prefixBudget - 2;
+  const outerHTML = `${opening}${"x".repeat(terminatorAt - opening.length)}-->${"y".repeat(200)}`;
+  const root = {
+    cloneNode: () => ({
+      outerHTML,
+      querySelectorAll: () => [],
+    }),
+  };
+  const html = capture.buildDomSnapshotHtml(
+    { querySelector: (selector) => (selector === "main" ? root : null) },
+    { maxChars }
+  );
+
+  assert.ok(html.length <= maxChars);
+  assert.equal(
+    html,
+    `<main>\n${marker}`,
+    "the over-budget comment end is not selected as a safe prefix boundary"
+  );
+});
+
 test("buildDomSnapshotHtml sanitizes only the detached clone's form state", async () => {
   const capture = await loadCapture();
   let liveRootTouched = false;
