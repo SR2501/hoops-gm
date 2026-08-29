@@ -27,7 +27,8 @@ Usage:
     python scripts/slugcheck.py <merge-base> <your-branch> <origin/main>
 
 Exits 0 when the working tree's `docs/backlog.md` holds exactly the expected
-union, 1 otherwise.
+union, 1 for a genuine content mismatch, and 2 when the comparison itself is
+not trustworthy (bad refs, wrong merge base, empty input, or slug collisions).
 """
 
 from __future__ import annotations
@@ -35,45 +36,102 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 BACKLOG = "docs/backlog.md"
 SLUG = re.compile(r"^### `([^`]+)`")
+OPERATIONAL_ERROR = 2
 
 
-def slugs_from_text(text: str) -> set[str]:
-    """Every `### `slug`` heading in the file, which is what an item *is*."""
-    return {match.group(1) for line in text.splitlines() if (match := SLUG.match(line))}
+def slugs_from_text(text: str) -> list[str]:
+    """Every `### `slug`` heading, retaining cardinality for collision checks."""
+    return [match.group(1) for line in text.splitlines() if (match := SLUG.match(line))]
 
 
-def slugs_at(ref: str) -> set[str]:
+def _git(repo: Path, *args: str) -> str:
     completed = subprocess.run(
-        ["git", "show", f"{ref}:{BACKLOG}"],
+        ["git", *args],
+        cwd=repo,
         capture_output=True,
         text=True,
         check=True,
         encoding="utf-8",
     )
-    return slugs_from_text(completed.stdout)
+    return completed.stdout.strip()
+
+
+def repo_root() -> Path:
+    """Resolve the repository independently of the caller's working directory."""
+    script_dir = Path(__file__).resolve().parent
+    return Path(_git(script_dir, "rev-parse", "--show-toplevel"))
+
+
+def slugs_at(repo: Path, ref: str) -> list[str]:
+    return slugs_from_text(_git(repo, "show", f"{ref}:{BACKLOG}"))
+
+
+def _validated_slug_set(slugs: list[str], label: str) -> set[str]:
+    if not slugs:
+        raise ValueError(f"{label} parsed zero backlog items")
+
+    duplicates = sorted(slug for slug, count in Counter(slugs).items() if count > 1)
+    if duplicates:
+        raise ValueError(f"{label} contains duplicate slug headings: {duplicates}")
+    return set(slugs)
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print(__doc__)
-        print("error: expected exactly three refs")
-        return 2
+        print("error: expected exactly three refs", file=sys.stderr)
+        return OPERATIONAL_ERROR
 
     base_ref, mine_ref, main_ref = argv[1], argv[2], argv[3]
-    base = slugs_at(base_ref)
-    mine = slugs_at(mine_ref)
-    theirs = slugs_at(main_ref)
-    merged = slugs_from_text(Path(BACKLOG).read_text(encoding="utf-8"))
+    try:
+        repo = repo_root()
+        computed_base = _git(repo, "merge-base", mine_ref, main_ref)
+        claimed_base = _git(repo, "rev-parse", f"{base_ref}^{{commit}}")
+        if claimed_base != computed_base:
+            raise ValueError(
+                f"{base_ref} resolves to {claimed_base}, which is not the merge base "
+                f"of {mine_ref} and {main_ref}; expected {computed_base}"
+            )
+
+        base = _validated_slug_set(slugs_at(repo, base_ref), f"merge base {base_ref}")
+        mine = _validated_slug_set(slugs_at(repo, mine_ref), f"your branch {mine_ref}")
+        theirs = _validated_slug_set(slugs_at(repo, main_ref), f"their main {main_ref}")
+        merged = _validated_slug_set(
+            slugs_from_text((repo / BACKLOG).read_text(encoding="utf-8")),
+            "merged working tree",
+        )
+    except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError) as exc:
+        if isinstance(exc, subprocess.CalledProcessError):
+            detail = exc.stderr.strip() or str(exc)
+        else:
+            detail = str(exc)
+        print(f"operational error: {detail}", file=sys.stderr)
+        return OPERATIONAL_ERROR
 
     added_by_me = mine - base
     added_by_them = theirs - base
     dropped_by_me = base - mine
     dropped_by_them = base - theirs
-    expected = (base | added_by_me | added_by_them) - dropped_by_me - dropped_by_them
+    collisions = sorted(added_by_me & added_by_them)
+    if collisions:
+        print(
+            "operational error: slugs independently added by both branches: "
+            f"{collisions}. Compare the item bodies and assign distinct slugs before "
+            "resolving.",
+            file=sys.stderr,
+        )
+        return OPERATIONAL_ERROR
+
+    # Never let one branch's deletion erase an item the other branch preserved.
+    # A deliberate deletion must be made explicitly on both inputs before this
+    # union changes; subtracting either branch's drops recreated the loss this
+    # tool exists to catch.
+    expected = mine | theirs
 
     print(f"merge base  {base_ref}: {len(base)} items")
     print(

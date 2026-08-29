@@ -31763,3 +31763,29 @@ the second changes what `draft-board-dom-parser` should read.
   the four names it looks for is an Angular convention. The 727 KB measurement
   is genuine evidence *against* my inference, which is exactly why the query
   above is worth running rather than assuming I am right.
+
+## 2026-08-29 - bridge - The slug-set differ now refuses comparisons it cannot support
+
+PR #130's first `scripts/slugcheck.py` implementation could approve a dropped
+item when only one branch deleted it, trusted a caller-supplied merge base,
+collapsed duplicate headings into a set, approved four empty parses, and read
+the working-tree backlog relative to the caller's current directory. All five
+were false-pass or operational-silence paths in the tool whose purpose is to
+catch silent loss.
+
+The regressions construct real temporary Git histories. They first reproduced
+all five failures against the original implementation. The script now verifies
+the claimed base against `git merge-base`, rejects empty and duplicate inputs,
+rejects slugs independently added by both branches, resolves the repository
+root through Git, and computes the required merged set as `mine | theirs`.
+Exit 1 is reserved for a genuine content mismatch; exit 2 means the comparison
+itself was not trustworthy.
+
+### Could not verify
+
+- There is no syntax for approving an intentional deletion. A slug deleted on
+  both branches is absent from `mine | theirs` and therefore accepted; deciding
+  whether such a deletion was intentional still requires reviewing both branch
+  diffs. The tool proves preservation of either surviving side, not intent.
+- The tests use synthetic backlog entries and real Git operations, but they do
+  not recreate a large, conflicted `docs/backlog.md` resolution byte-for-byte.
