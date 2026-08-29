@@ -41,14 +41,15 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getDraft, getDraftEvents } from '../api/draftEndpoints'
+import { getDraft, getDraftEvents, getSourceBoard } from '../api/draftEndpoints'
 import { describeDraftError, isRetryableDraftError } from '../api/draftErrors'
-import type { DraftEvent, DraftState } from '../api/draftTypes'
+import type { DraftEvent, DraftState, SourceBoardResponse } from '../api/draftTypes'
 import { useAsync } from '../api/useAsync'
-import { AsyncBoundary } from '../components/AsyncBoundary'
+import { AsyncBoundary, type ErrorDescription } from '../components/AsyncBoundary'
 import { DraftLog } from '../components/DraftLog'
 import { DraftRecorder } from '../components/DraftRecorder'
 import { DraftSeats } from '../components/DraftSeats'
+import { SourceBoardEvidencePanel } from '../components/SourceBoardEvidencePanel'
 import { buildDraftBoardModel } from '../components/draftBoardModel'
 
 /**
@@ -165,8 +166,44 @@ function DraftBoardLoader({ draftId }: { draftId: number }) {
       >
         {(bundle) => <DraftBoardView bundle={bundle} onRecorded={refresh} />}
       </AsyncBoundary>
+      <SourceBoardEvidenceLoader draftId={draftId} tick={tick} />
     </article>
   )
+}
+
+/**
+ * Loaded outside the authoritative board boundary on purpose.
+ *
+ * A source-board contract error or refusal must never blank the event-backed
+ * participant board. The shared tick keeps both current without combining
+ * their payloads or implying that one can fill fields in the other.
+ */
+function SourceBoardEvidenceLoader({ draftId, tick }: { draftId: number; tick: number }) {
+  const evidence = useAsync<SourceBoardResponse>(
+    (options) => getSourceBoard(draftId, options),
+    [draftId, tick],
+  )
+
+  return (
+    <div className="source-board-loader">
+      <AsyncBoundary
+        state={evidence}
+        label="rendered source-board evidence"
+        staleAfterMs={STALE_AFTER_MS}
+        describeError={describeSourceBoardError}
+      >
+        {(response) => <SourceBoardEvidencePanel evidence={response} />}
+      </AsyncBoundary>
+    </div>
+  )
+}
+
+function describeSourceBoardError(error: Error): ErrorDescription {
+  return {
+    summary:
+      'Rendered source-board evidence could not be read. The authoritative participant/event board above is unchanged.',
+    action: `Retry this panel. If it still fails, use the backend wording below to diagnose the source read: ${error.message}`,
+  }
 }
 
 /**

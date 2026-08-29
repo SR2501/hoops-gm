@@ -40,6 +40,24 @@ interface Refusal {
 
 const REFUSALS = refusals as unknown as Record<string, Refusal>
 
+const NO_SOURCE_READING = {
+  draft_id: 1,
+  as_of: '2026-08-29T18:00:00Z',
+  status: 'no_reading',
+  refusal_reason: null,
+  contact_at: null,
+  contact_age_seconds: null,
+  board: null,
+  board_age_seconds: null,
+  regressions: [],
+  caveats: [
+    'source_seat is a rendered column ordinal, not DraftParticipant.team_slot or identity',
+    'seat labels are mutable display evidence and are never matched to participants',
+    'an exact-content undo reuses an existing artifact key and cannot appear as a new regression',
+    'evidence is from one football snake draft; NBA and auction board support is unestablished',
+  ],
+} as const
+
 /** Every refusal actually driven, across every block in this file. */
 const reached = new Set<string>()
 
@@ -77,7 +95,11 @@ function stubDraftFetch({
       )
     }
 
-    const body = url.includes('/events') ? events : state
+    const body = url.includes('/source-board')
+      ? NO_SOURCE_READING
+      : url.includes('/events')
+        ? events
+        : state
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
@@ -786,21 +808,36 @@ describe('the board when reads stop coming back', () => {
   it('says the board is stale, and keeps showing the last good board', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      let call = 0
+      const reads = new Map<string, number>()
       vi.stubGlobal(
         'fetch',
         vi.fn((input: RequestInfo | URL) => {
           const url =
             typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-          call += 1
+          const path = url.includes('/source-board')
+            ? 'source'
+            : url.includes('/events')
+              ? 'events'
+              : 'state'
+          const call = (reads.get(path) ?? 0) + 1
+          reads.set(path, call)
           // The first pass of reads succeeds, everything after it fails outright
           // -- the shape a recorder hits when the backend goes away mid-auction.
-          if (call > 2) return Promise.reject(new TypeError('Failed to fetch'))
+          if (call > 1) return Promise.reject(new TypeError('Failed to fetch'))
           return Promise.resolve(
-            new Response(JSON.stringify(url.includes('/events') ? auctionEvents : auctionState), {
-              status: 200,
-              headers: { 'Content-Type': 'application/json' },
-            }),
+            new Response(
+              JSON.stringify(
+                path === 'source'
+                  ? NO_SOURCE_READING
+                  : path === 'events'
+                    ? auctionEvents
+                    : auctionState,
+              ),
+              {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            ),
           )
         }),
       )
@@ -813,8 +850,15 @@ describe('the board when reads stop coming back', () => {
       })
 
       // Reaches the state: the banner is present and names a time.
-      const banner = await screen.findByText(/showing data from/i)
-      expect(banner).toBeInTheDocument()
+      const banners = await screen.findAllByText(/showing data from/i)
+      // The event-backed board and independently loaded source evidence each
+      // retain their own last good response. A source failure must not be able
+      // to suppress the authoritative board's warning, or vice versa.
+      expect(banners).toHaveLength(2)
+      const stalePanels = document.querySelectorAll('.stale-banner')
+      expect(stalePanels).toHaveLength(2)
+      expect(stalePanels[0]?.closest('.source-board-loader')).toBeNull()
+      expect(stalePanels[1]?.closest('.source-board-loader')).not.toBeNull()
 
       // And the board underneath is still the last good one, not blanked. A
       // recorder mid-auction needs the prices that did arrive.
@@ -828,19 +872,34 @@ describe('the board when reads stop coming back', () => {
   it('reaches the failure detail, with the backend transport wording', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      let call = 0
+      const reads = new Map<string, number>()
       vi.stubGlobal(
         'fetch',
         vi.fn((input: RequestInfo | URL) => {
           const url =
             typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-          call += 1
-          if (call > 2) return Promise.reject(new TypeError('Failed to fetch'))
+          const path = url.includes('/source-board')
+            ? 'source'
+            : url.includes('/events')
+              ? 'events'
+              : 'state'
+          const call = (reads.get(path) ?? 0) + 1
+          reads.set(path, call)
+          if (call > 1) return Promise.reject(new TypeError('Failed to fetch'))
           return Promise.resolve(
-            new Response(JSON.stringify(url.includes('/events') ? auctionEvents : auctionState), {
-              status: 200,
-              headers: { 'Content-Type': 'application/json' },
-            }),
+            new Response(
+              JSON.stringify(
+                path === 'source'
+                  ? NO_SOURCE_READING
+                  : path === 'events'
+                    ? auctionEvents
+                    : auctionState,
+              ),
+              {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            ),
           )
         }),
       )
@@ -852,18 +911,22 @@ describe('the board when reads stop coming back', () => {
         await vi.advanceTimersByTimeAsync(STALE_AFTER_MS + POLL_INTERVAL_MS * 2)
       })
 
-      const refresh = await screen.findByRole('button', { name: /refresh/i })
+      const refreshButtons = await screen.findAllByRole('button', { name: /refresh/i })
+      expect(refreshButtons).toHaveLength(2)
+      const refresh = refreshButtons[0]!
       await act(async () => {
         refresh.click()
         await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
       })
 
       await waitFor(() => {
-        expect(screen.getByTestId('async-stale-failure')).toBeInTheDocument()
+        expect(screen.getAllByTestId('async-stale-failure')).toHaveLength(2)
       })
       // The recorder must be told nothing was written, not merely that a read
       // failed -- a poll failing and an append failing look identical otherwise.
-      expect(screen.getByTestId('async-stale-failure').textContent).toMatch(/nothing was recorded/i)
+      expect(screen.getAllByTestId('async-stale-failure')[0]?.textContent).toMatch(
+        /nothing was recorded/i,
+      )
     } finally {
       vi.useRealTimers()
     }
@@ -917,5 +980,3 @@ describe('a refusal that carries two competing instructions', () => {
     reached.add('void-replay-two-instructions')
   })
 })
-
-

@@ -40,6 +40,24 @@ vi.mock('../components/draftBoardModel', async (importOriginal) => {
 
 const buildModel = vi.mocked(buildDraftBoardModel)
 
+const NO_SOURCE_READING = {
+  draft_id: 1,
+  as_of: '2026-08-29T18:00:00Z',
+  status: 'no_reading',
+  refusal_reason: null,
+  contact_at: null,
+  contact_age_seconds: null,
+  board: null,
+  board_age_seconds: null,
+  regressions: [],
+  caveats: [
+    'source_seat is a rendered column ordinal, not DraftParticipant.team_slot or identity',
+    'seat labels are mutable display evidence and are never matched to participants',
+    'an exact-content undo reuses an existing artifact key and cannot appear as a new regression',
+    'evidence is from one football snake draft; NBA and auction board support is unestablished',
+  ],
+} as const
+
 /**
  * Answers reads from the recorded fixtures, with the events page's
  * `last_sequence` under the test's control.
@@ -48,6 +66,14 @@ function stubReads(sequenceFor: (poll: number) => number) {
   let poll = 0
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url.includes('/source-board')) {
+      return Promise.resolve(
+        new Response(JSON.stringify(NO_SOURCE_READING), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    }
     if (!url.includes('/events')) {
       return Promise.resolve(
         new Response(JSON.stringify(auctionState), {
@@ -182,9 +208,11 @@ describe('the board after the invalid-id restructure', () => {
       const forSnake = url.includes('/drafts/2')
       const state = forSnake ? snakeState : auctionState
       const events = forSnake ? snakeEvents : auctionEvents
-      const body = url.includes('/events')
-        ? { ...events, last_sequence: sharedSequence }
-        : state
+      const body = url.includes('/source-board')
+        ? { ...NO_SOURCE_READING, draft_id: forSnake ? 2 : 1 }
+        : url.includes('/events')
+          ? { ...events, last_sequence: sharedSequence }
+          : state
       return Promise.resolve(
         new Response(JSON.stringify(body), {
           status: 200,

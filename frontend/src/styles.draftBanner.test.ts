@@ -67,4 +67,13 @@ describe('the draft board stale banner', () => {
     expect(body).toMatch(/max-width:\s*min\(/)
     expect(body).toMatch(/z-index:/)
   })
+
+  it('keeps the independently loaded source warning inline instead of covering this one', () => {
+    const sourceSelector = '.page--draft .source-board-loader .stale-banner'
+    const body = ruleBody(sourceSelector)
+
+    expect(body, `no rule found for \`${sourceSelector}\` in styles.css`).not.toBeNull()
+    expect(body).toMatch(/position:\s*static/)
+    expect(body).toMatch(/box-shadow:\s*none/)
+  })
 })
