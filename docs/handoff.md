@@ -31646,8 +31646,9 @@ hard cap and tracks both comment and quoted-attribute state, so comment text or
 a `>` inside an attribute cannot recreate the recorded mid-attribute failure.
 The backend parser recognizes either the new terminal bridge comment or the
 recorded legacy marker proven to begin inside an open tag; visible marker words
-cannot spoof truncation. Refused and in-flight attempts share the existing
-mutation rate limit.
+cannot spoof truncation. A board-build refusal stays visible until a safe
+rendered-view delivery or duplicate clears it, not an unrelated successful
+source. Refused and in-flight attempts share the existing mutation rate limit.
 
 **Now true:** The full board wins the automatic-capture budget before every
 other draft-room region, while the parser's optional chat cross-check survives
@@ -31655,13 +31656,15 @@ when space permits. Focused tests cover unrelated markup exhausting the old
 page-wide budget, an over-budget board producing no transport, missing header
 refusal, near-cap metadata accounting, comments and `>` inside quoted
 attributes, truthful chat-omission signalling, visible truncation-marker words,
-status-strip reporting, refusal throttling, and a mutation arriving during
-awaited transport. The over-budget, comment/quote-state, auxiliary-marker,
-legacy-marker-shape, refusal-rate, and in-flight pending-state guards were each
-mutation-checked green -> red -> green. An eighth independent review on the
-rebased head found the comment-state and marker-spoof defects and drove these
-fixes; a fresh exact-head review is still required after the follow-up commit.
-Local Code gates passed: 91 userscript tests plus build; frontend lint,
+status-strip reporting, refusal throttling, a mutation arriving during awaited
+transport, and unrelated delivery after a board refusal. The over-budget,
+comment/quote-state, auxiliary-marker, legacy-marker-shape, refusal-rate,
+in-flight pending-state, and refusal-source guards were each mutation-checked
+green -> red -> green. An eighth independent review on the rebased head found
+the comment-state and marker-spoof defects; the ninth exact-head review found the
+unrelated-success clearing defect. All drove fixes, and a fresh exact-head review
+is still required after the follow-up commit. Local Code gates passed: 92
+userscript tests plus build; frontend lint,
 type-check, 380 tests and build; backend Ruff, format, strict mypy and 2,335
 tests (1 skipped, 41 deselected); scripts lint/format, secret scan, document
 terminators and backlog graph. The finished backlog recounts to its own header

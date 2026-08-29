@@ -336,7 +336,10 @@ any Fantrax league page, showing:
   `rendered-view` snapshots is the expected state, not evidence of RPC capture;
 - the **last refusal reason**, if there is one. Before 0.5.2 this reason was
   discarded in `forward()`'s `catch`, which is what made "backend unreachable",
-  "bridge is not paired" and "HTTP 401" indistinguishable on the page.
+  "bridge is not paired" and "HTTP 401" indistinguishable on the page. A
+  draft-board build refusal is scoped to `rendered-view`, so a manual export or
+  unrelated RPC delivery cannot turn the strip green while automatic board
+  capture remains unsafe; a safe rendered delivery or duplicate clears it.
 
 Design constraints, all of them testable:
 

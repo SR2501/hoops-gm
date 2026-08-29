@@ -1946,7 +1946,10 @@ reaches the visible bridge status strip. Non-draft snapshots still use the
 broader page roots, but truncation now backs up to a complete tag while tracking
 comment and quoted-attribute state, so the marker cannot land inside an
 attribute. The backend accepts the new terminal comment and the recorded legacy
-mid-attribute marker, but visible marker words cannot spoof truncation.
+mid-attribute marker, but visible marker words cannot spoof truncation. A
+board-build refusal remains visible until a safe `rendered-view` delivery or
+duplicate clears it; unrelated manual/RPC success cannot hide the automatic
+board failure.
 
 Focused userscript tests reproduce the prior mid-attribute marker hazard, prove
 unrelated page markup is excluded, prove an over-budget board is never sent

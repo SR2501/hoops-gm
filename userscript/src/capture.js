@@ -1257,6 +1257,7 @@
       lastCaptureAtMs: null,
       lastSource: null,
       lastRefusal: null,
+      lastRefusalSource: null,
       lastRefusalAtMs: null,
     };
     const listeners = new Set();
@@ -1284,6 +1285,18 @@
       return { ...state };
     }
 
+    function clearRefusalFor(source) {
+      if (
+        state.lastRefusalSource !== null &&
+        state.lastRefusalSource !== source
+      ) {
+        return;
+      }
+      state.lastRefusal = null;
+      state.lastRefusalSource = null;
+      state.lastRefusalAtMs = null;
+    }
+
     return {
       snapshot,
       subscribe(listener) {
@@ -1303,18 +1316,20 @@
         state.forwarded += 1;
         state.lastCaptureAtMs = nowMs();
         state.lastSource = typeof source === "string" && source ? source : null;
-        state.lastRefusal = null;
-        state.lastRefusalAtMs = null;
+        clearRefusalFor(state.lastSource);
         emit();
       },
       recordDuplicate(source) {
         state.duplicates += 1;
         state.lastCaptureAtMs = nowMs();
         state.lastSource = typeof source === "string" && source ? source : null;
+        clearRefusalFor(state.lastSource);
         emit();
       },
-      recordRefusal(message) {
+      recordRefusal(message, source = null) {
         state.lastRefusal = sanitizeStatusText(message) || "unknown error";
+        state.lastRefusalSource =
+          typeof source === "string" && source ? source : null;
         state.lastRefusalAtMs = nowMs();
         emit();
       },
@@ -1696,7 +1711,7 @@
         typeof status.recordRefusal === "function"
       ) {
         try {
-          status.recordRefusal(result.reason);
+          status.recordRefusal(result.reason, "rendered-view");
         } catch {
           // The strip must never be able to stop the capture watcher.
         }

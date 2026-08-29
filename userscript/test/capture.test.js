@@ -2223,6 +2223,20 @@ test("createBridgeStatus keeps an unreadable message from reaching the strip ver
   assert.equal(status.snapshot().lastRefusal, "unknown error");
 });
 
+test("an unrelated success cannot clear an automatic board refusal", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ now: () => 1 });
+
+  status.recordRefusal("draft board snapshot exceeds cap", "rendered-view");
+  status.recordDelivered("manual-export");
+  assert.equal(status.snapshot().lastRefusal, "draft board snapshot exceeds cap");
+  assert.equal(status.snapshot().lastRefusalSource, "rendered-view");
+
+  status.recordDuplicate("rendered-view");
+  assert.equal(status.snapshot().lastRefusal, null);
+  assert.equal(status.snapshot().lastRefusalSource, null);
+});
+
 test("createCapture reports delivery, duplication and the refusal reason to the status store", async () => {
   const capture = await loadCapture();
   let clock = 10;
