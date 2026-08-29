@@ -1683,7 +1683,7 @@ def recognise_board_snapshot(
 
     if reading.seat_count != draft_format.team_count:
         return RecognitionResult(rejected="board_seat_count_mismatch")
-    if reading.rounds != draft_format.roster_size:
+    if reading.rounds > draft_format.roster_size:
         return RecognitionResult(rejected="board_round_count_mismatch")
 
     expected_layout = "snake" if isinstance(draft_format, SnakeDraftFormat) else "linear"
@@ -1749,8 +1749,8 @@ def recognise_board_snapshot(
         notes.append(
             f"{reading.picks_made} of {reading.board_cells} cells are filled. "
             "is_complete means every rendered cell is filled, not that the draft "
-            "is over, and a uniformly-short board reports True for a partial "
-            "draft — see board-dimensions-per-draft."
+            "is over. A uniformly short board can still report True; the feed "
+            "compares dimensions with this draft's successful reading history."
         )
     return RecognitionResult(
         instants=instants,

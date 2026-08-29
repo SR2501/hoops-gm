@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**67 done - 0 blocked - 122 pending - 189 total**
+**68 done - 0 blocked - 121 pending - 189 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2112,7 +2112,7 @@ throwaway branch before acting on it.
 
 ### `board-dimensions-per-draft` - A board is only short-and-clean if nothing remembers how big it was
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-board-dom-parser`, `source-board-evidence-api`
 
 `board_dom.py:475-484` derives `rounds` from the rendered cell count, so a
