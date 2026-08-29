@@ -656,6 +656,18 @@ def _lock_board_scope(session: Session, draft: Draft) -> None:
     )
 
 
+def _load_bridge_rows(session: Session, *, scan_limit: int) -> list[BridgePayload]:
+    return list(
+        session.execute(
+            select(BridgePayload)
+            .order_by(BridgePayload.created_at.desc(), BridgePayload.id.desc())
+            .limit(scan_limit)
+        )
+        .scalars()
+        .all()
+    )
+
+
 def _tally(counter: dict[str, int], reason: str) -> None:
     counter[reason] = counter.get(reason, 0) + 1
 
@@ -678,26 +690,19 @@ def ingest_bridge(
     capture witness each other, from the same browser, the same page and the
     same script. They are told apart by ``provenance.recogniser``.
     """
-    rows = list(
-        session.execute(
-            select(BridgePayload)
-            .order_by(BridgePayload.created_at.desc(), BridgePayload.id.desc())
-            .limit(scan_limit)
-        )
-        .scalars()
-        .all()
-    )
+    rows = _load_bridge_rows(session, scan_limit=scan_limit)
     # A state row cannot lock its own first insertion. The independent scope
     # serializes both creation and update through commit on SQLite and Postgres.
-    # It is taken after the bounded capture read so an older request that was
-    # delayed here can still be identified by payload id and refused permission
-    # to move the singleton backwards.
+    # Candidate selection is repeated after taking the lock. Otherwise a delayed
+    # request can persist a stale pre-lock board after a newer request accepted a
+    # later board that displaced it from the bounded scan window.
     if any(
         row.source in SNAPSHOT_CAPTURE_SOURCES
         and league_id_in_page_url(row.request_url) == context.fantrax_league_id
         for row in rows
     ):
         _lock_board_scope(session, draft)
+        rows = _load_bridge_rows(session, scan_limit=scan_limit)
     # Selected newest-first so ``scan_limit`` keeps the *recent* window, then
     # walked oldest-first so observations are written in publication order.
     #

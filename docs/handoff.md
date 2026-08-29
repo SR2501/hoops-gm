@@ -31826,3 +31826,39 @@ the session artifacts directory.
 **Next:** Require exact-head GitHub CI, especially PostgreSQL, and a fresh
 independent cumulative review before merge. Do not merge or self-approve from
 this lane.
+
+---
+
+## 2026-08-29 — backend — Correction: board candidates are reselected after the lock
+
+The first exact-head cumulative review found that the preceding entry's
+concurrency claim was incomplete. `ingest_bridge` selected its bounded capture
+window before waiting for the per-draft lock. A delayed request could retain an
+older 12x18 candidate while eight newer 12x14 captures displaced it from the
+live board window; the newer request could accept 12x14 as its first successful
+reading, then the delayed request could store the older 12x18 reading. Persisted
+history would consequently read 18 then 14 in payload order without the later
+shrinkage ever having refused.
+
+The service now reselects the bounded bridge window immediately after acquiring
+the existing transaction lock. Candidate selection, dimension-history admission,
+and reading persistence therefore observe one serialized state. A deterministic
+two-request test pauses the old full-board request before the lock, publishes
+exactly `BOARD_SCAN_LIMIT` newer short boards, lets their request commit, then
+releases the old request. The final history contains only the accepted 12x14
+reading; the displaced 12x18 pre-lock candidate is not persisted. Removing the
+post-lock reload makes that test fail with round history `[18, 14]`; restoration
+passes.
+
+The post-correction local gate passed: Ruff check, Ruff format check, strict mypy,
+the focused race test, and the full backend suite (**2,376 passed, 1 skipped, 41
+deselected**). There is still no schema or frontend change. The prior SQLite
+migration lifecycle remains applicable; exact replacement-head CI must rerun it
+and the PostgreSQL suite.
+
+**Could not verify:** The deterministic test covers the stale bounded-window
+interleaving the reviewer identified. It does not enumerate every scheduler
+interleaving, and native PostgreSQL remains CI-only here.
+
+**Next:** Replace the PR head, disregard every check and review on the superseded
+head, then require exact-head CI and a fresh cumulative review before merge.

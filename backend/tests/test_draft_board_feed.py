@@ -1282,6 +1282,79 @@ def test_delayed_short_reading_cannot_follow_concurrent_dimension_growth(
     assert client.get(f"/api/v1/drafts/{draft_id}/events").json()["events"] == []
 
 
+def test_delayed_prelock_scan_cannot_persist_a_board_displaced_by_newer_captures(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Candidate selection is refreshed after waiting for the board lock."""
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(
+        session,
+        html=load("complete"),
+        dedupe_key="GET:concurrent:stale18",
+        created_at=NOW,
+    )
+    draft_id = draft.id
+    session.commit()
+
+    old_at_lock = Event()
+    release_old = Event()
+    real_lock = feed_service._lock_board_scope
+
+    def delay_old_request(lock_session: Session, locked_draft: Draft) -> None:
+        if not old_at_lock.is_set():
+            old_at_lock.set()
+            assert release_old.wait(timeout=10), "newer request never released the older request"
+        real_lock(lock_session, locked_draft)
+
+    monkeypatch.setattr(feed_service, "_lock_board_scope", delay_old_request)
+
+    def ingest_old() -> object:
+        response = client.post(f"/api/v1/drafts/{draft_id}/feed/ingest", json={"apply": False})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="stale-board-scan") as executor:
+        older = executor.submit(ingest_old)
+        assert old_at_lock.wait(timeout=10), "older request did not reach the board lock"
+
+        with cast("FastAPI", client.app).state.database.session() as writer:
+            for index in range(feed_service.BOARD_SCAN_LIMIT):
+                _snapshot(
+                    writer,
+                    html=uniformly_short_board(),
+                    dedupe_key=f"GET:concurrent:new14:{index}",
+                    created_at=NOW + timedelta(seconds=index + 1),
+                )
+
+        newer = client.post(
+            f"/api/v1/drafts/{draft_id}/feed/ingest",
+            json={"apply": False},
+        )
+        assert newer.status_code == 200, newer.text
+        release_old.set()
+        older.result(timeout=10)
+
+    with cast("FastAPI", client.app).state.database.session() as check:
+        stored_draft = check.get(Draft, draft_id)
+        assert stored_draft is not None
+        readings = feed_service.load_board_readings(check, stored_draft)
+        assert [reading.round_count for reading in readings] == [SHORT_ROUNDS]
+        state = check.get(DraftSourceBoardState, draft_id)
+        assert state is not None
+        assert state.refusal_reason is None
+        assert state.round_count == SHORT_ROUNDS
+        assert state.contact_at == NOW + timedelta(seconds=feed_service.BOARD_SCAN_LIMIT)
+
+    source = client.get(f"/api/v1/drafts/{draft_id}/source-board").json()
+    assert source["status"] == "available"
+    assert source["board"]["round_count"] == SHORT_ROUNDS
+    assert source["board"]["picks_made"] == SHORT_PICKS
+    assert client.get(f"/api/v1/drafts/{draft_id}/events").json()["events"] == []
+
+
 def test_two_concurrent_first_ingests_share_one_state_and_reading(
     client: TestClient,
     session: Session,
