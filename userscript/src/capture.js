@@ -895,12 +895,12 @@
     // attributes, so scan those states rather than searching for one byte.
     let state = "text";
     let quote = null;
-    let lastCompleteTag = -1;
+    let lastSafeBoundary = -1;
     for (let index = 0; index < Math.min(prefixBudget, html.length); index += 1) {
       const char = html[index];
       if (state === "comment") {
         if (index + 2 < prefixBudget && html.startsWith("-->", index)) {
-          lastCompleteTag = index + 2;
+          lastSafeBoundary = index + 2;
           state = "text";
           index += 2;
         }
@@ -912,6 +912,8 @@
           index += 3;
         } else if (char === "<") {
           state = "tag";
+        } else {
+          lastSafeBoundary = index;
         }
         continue;
       }
@@ -925,7 +927,7 @@
         if (char === '"' || char === "'") {
           quote = char;
         } else if (char === ">") {
-          lastCompleteTag = index;
+          lastSafeBoundary = index;
           state = "text";
         }
       } else {
@@ -935,7 +937,7 @@
         quote = null;
       }
     }
-    const prefix = lastCompleteTag >= 0 ? html.slice(0, lastCompleteTag + 1) : "";
+    const prefix = lastSafeBoundary >= 0 ? html.slice(0, lastSafeBoundary + 1) : "";
     return prefix ? `${prefix}\n${marker}` : marker;
   }
 

@@ -1163,6 +1163,27 @@ test("a comment terminator must fit entirely inside the snapshot content budget"
   );
 });
 
+test("generic truncation preserves safe text content up to the marker budget", async () => {
+  const capture = await loadCapture();
+  const text = "x".repeat(600000);
+  const root = {
+    cloneNode: () => ({
+      outerHTML: `<main>${text}</main>`,
+      querySelectorAll: () => [],
+    }),
+  };
+  const html = capture.buildDomSnapshotHtml({
+    querySelector: (selector) => (selector === "main" ? root : null),
+  });
+
+  assert.ok(html.length <= 500000);
+  assert.match(html, /hoops-gm bridge: truncated at 500000 chars/);
+  assert.ok(
+    (html.match(/x/g) || []).length > 499000,
+    "safe text consumes the available content budget instead of being discarded"
+  );
+});
+
 test("buildDomSnapshotHtml sanitizes only the detached clone's form state", async () => {
   const capture = await loadCapture();
   let liveRootTouched = false;
