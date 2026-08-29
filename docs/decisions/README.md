@@ -84,6 +84,6 @@ ADR's body rather than its amendments — so an `Accepted` row can hold a
 | [007](ADR-007-availability-in-spine.md) | The availability model must state an identification strategy before it fits anything | 2026-08-22 | `quant` |
 | [019](ADR-019-cohort-fingerprint-boundary.md) | The closure count is now recountable by `scripts/fingerprint_closure.py`; it was a load-bearing number nobody could check | 2026-08-28 | `architect` |
 | [020](ADR-020-board-reading-keyed-by-board.md) | The truncation guard the body named was dead — `coordinate_grid_incomplete` fires 0 times in 771 in-board cuts — and the safety comes from Fantrax's layout rather than from our check | 2026-08-28 | `architect` |
-| [020](ADR-020-board-reading-keyed-by-board.md) | Ordered board coordinates resolve participants by `team_slot`; displayed names and inferred Fantrax franchise identity do not | 2026-08-28 | `architect` |
+| [020](ADR-020-board-reading-keyed-by-board.md) | Source columns require an explicit participant binding; direct `seat == team_slot`, displayed names, and inferred Fantrax franchise identity are forbidden | 2026-08-28 | `architect` |
 
 Agents write `Proposed` only. Only the project owner accepts.

@@ -164,7 +164,7 @@ than claims** — no private capture is needed to re-derive either. Pinning
 column-major order against that fixture is an acceptance criterion on
 `draft-board-feed-integration`.
 
-### 2026-08-28 — ordered board coordinates resolve participants by `team_slot`
+### 2026-08-28 — source columns require an explicit participant binding
 
 **Status:** Proposed. Written by `architect`; only the project owner accepts.
 
@@ -172,19 +172,21 @@ Rendered board markup contains no team id. Never join a board pick to
 `DraftParticipant` by a displayed seat or team name: four such names changed
 during the recorded session while their columns stayed fixed.
 
-For ordered drafts only, `DraftParticipant.team_slot` is already the internal
-draft-coordinate contract (`db/models/draft.py:149-151`), and
-`ParticipantRequest.team_slot` exposes the same one-indexed vocabulary. The
-board DOM independently establishes snake or linear coordinates. The service
-layer must require `BoardReading.layout` to equal the draft's frozen type,
-require `BoardReading.seat_count == draft.team_count`, and resolve every pick's
-source `(round, pick_in_round)` through the frozen `DraftFormat`. That result
-must equal the pick's `seat`/column, and the participant is then resolved by
-that `team_slot`.
+`DraftParticipant.team_slot` is the internal ordered-draft coordinate contract,
+but nothing establishes that the owner populated those slots in Fantrax column
+order. The board DOM independently proves snake or linear source coordinates;
+it does not prove participant identity. A rotated setup would otherwise
+silently attribute every pick to the wrong participant.
 
-Refuse auction drafts, `layout="other"`, missing or contradictory coordinates,
-and any count mismatch. Do not infer or persist a Fantrax franchise identity
-from this mapping.
+Until setup records an explicit, one-to-one source-column-to-participant
+binding, or an equivalent independently established anchor, board observations
+may be stored and published by source coordinate but must not enter
+participant-attributed draft events. The service layer must also require the
+board layout to match the frozen ordered draft type, `seat_count` to equal
+`draft.team_count`, and each `(round, pick_in_round, seat)` to agree with the
+frozen `DraftFormat`. Missing, incomplete, or contradictory binding or
+coordinates refuse attribution. Auction and `layout="other"` remain
+unestablished and refused.
 
 This also narrows three explanatory claims in the accepted body. Decision 2's
 board dimensions mean `seat_count` and `rounds`, not mutable
@@ -197,7 +199,11 @@ Board dimensions per draft remain the separate
 `board-dimensions-per-draft` follow-on. This amendment does not absorb that
 work.
 
-**Rejected:** joining by displayed names, or treating a board column as a
-Fantrax franchise identifier. **What would flip this:** rendered markup gaining
-a stable, documented team identifier whose independent captures establish that
-it survives renames and draft types.
+Content deduplication has one exact blind spot: an undo whose rendered content
+equals an already-stored board reuses its artifact identity, so it cannot be
+observed as a new regression.
+
+**Rejected:** direct `seat == team_slot`, joining by displayed names, or
+treating a column as a Fantrax franchise identifier. **What would flip this:**
+rendered markup gaining a stable team identifier whose independent captures
+establish that it survives renames and draft types.
