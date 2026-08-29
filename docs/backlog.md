@@ -1949,7 +1949,8 @@ attribute. The backend accepts the new terminal comment and the recorded legacy
 mid-attribute marker, but visible marker words cannot spoof truncation. A
 board-build refusal remains visible until a safe `rendered-view` delivery or
 duplicate clears it; unrelated manual/RPC success cannot hide the automatic
-board failure.
+board failure. The served userscript version is bumped to 0.5.3 so an installed
+0.5.2 can actually receive these fixes.
 
 Focused userscript tests reproduce the prior mid-attribute marker hazard, prove
 unrelated page markup is excluded, prove an over-budget board is never sent

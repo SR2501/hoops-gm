@@ -31649,6 +31649,8 @@ recorded legacy marker proven to begin inside an open tag; visible marker words
 cannot spoof truncation. A board-build refusal stays visible until a safe
 rendered-view delivery or duplicate clears it, not an unrelated successful
 source. Refused and in-flight attempts share the existing mutation rate limit.
+The userscript package/build version is 0.5.3, so Tampermonkey can distinguish and
+install these fixes over the previously served 0.5.2.
 
 **Now true:** The full board wins the automatic-capture budget before every
 other draft-room region, while the parser's optional chat cross-check survives
@@ -31662,8 +31664,9 @@ comment/quote-state, auxiliary-marker, legacy-marker-shape, refusal-rate,
 in-flight pending-state, and refusal-source guards were each mutation-checked
 green -> red -> green. An eighth independent review on the rebased head found
 the comment-state and marker-spoof defects; the ninth exact-head review found the
-unrelated-success clearing defect. All drove fixes, and a fresh exact-head review
-is still required after the follow-up commit. Local Code gates passed: 92
+unrelated-success clearing defect; the tenth found that an unchanged 0.5.2 version
+would prevent installed scripts from receiving any fix. All drove fixes, and a
+fresh exact-head review is still required after the version commit. Local Code gates passed: 92
 userscript tests plus build; frontend lint,
 type-check, 380 tests and build; backend Ruff, format, strict mypy and 2,335
 tests (1 skipped, 41 deselected); scripts lint/format, secret scan, document
