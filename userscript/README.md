@@ -244,8 +244,9 @@ and two are implemented here:
    over even that metadata. If either board anchor is absent or the board itself
    exceeds the unchanged 250,000-character cap, no partial snapshot is sent and
    the refusal appears in the status strip. Other league routes clone `main`,
-   `#root`, `#app`, or finally `body`; generic truncation stops at a tag boundary
-   so its marker cannot become part of an attribute value.
+   `#root`,    `#app`, or finally `body`; generic truncation tracks comment and quoted-
+   attribute state before stopping at a tag boundary, so its marker cannot
+   become part of an attribute value.
 
    Scripts, styles, noscript content, and form-control state are stripped from
    every clone; the live page is never changed. Automatic output is tagged

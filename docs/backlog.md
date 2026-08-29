@@ -1943,8 +1943,10 @@ parser does not mislabel later board drift as truncation. A near-cap board wins
 over even that metadata. The detached board clone is refused before transport
 if either anchor is absent or the board itself is over budget, and the refusal
 reaches the visible bridge status strip. Non-draft snapshots still use the
-broader page roots, but truncation now backs up to a complete tag so the marker
-cannot land inside an attribute.
+broader page roots, but truncation now backs up to a complete tag while tracking
+comment and quoted-attribute state, so the marker cannot land inside an
+attribute. The backend accepts the new terminal comment and the recorded legacy
+mid-attribute marker, but visible marker words cannot spoof truncation.
 
 Focused userscript tests reproduce the prior mid-attribute marker hazard, prove
 unrelated page markup is excluded, prove an over-budget board is never sent

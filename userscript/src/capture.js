@@ -891,30 +891,48 @@
     }
     const prefixBudget = limit - marker.length - 1;
     // A raw slice can end inside an attribute, causing the parser to treat the
-    // marker as attribute text. A literal ">" is legal inside a quoted
-    // attribute, so scan tag syntax rather than searching for that byte.
-    let inTag = false;
+    // marker as attribute text. Quotes and ">" are legal in comments and
+    // attributes, so scan those states rather than searching for one byte.
+    let state = "text";
     let quote = null;
     let lastCompleteTag = -1;
     for (let index = 0; index < Math.min(prefixBudget, html.length); index += 1) {
       const char = html[index];
-      if (!inTag) {
-        if (char === "<") {
-          inTag = true;
+      if (state === "comment") {
+        if (html.startsWith("-->", index)) {
+          lastCompleteTag = index + 2;
+          state = "text";
+          index += 2;
         }
         continue;
       }
-      if (quote !== null) {
-        if (char === quote) {
-          quote = null;
+      if (state === "text") {
+        if (html.startsWith("<!--", index)) {
+          state = "comment";
+          index += 3;
+        } else if (char === "<") {
+          state = "tag";
         }
         continue;
       }
-      if (char === '"' || char === "'") {
-        quote = char;
-      } else if (char === ">") {
-        lastCompleteTag = index;
-        inTag = false;
+      if (state === "tag") {
+        if (quote !== null) {
+          if (char === quote) {
+            quote = null;
+          }
+          continue;
+        }
+        if (char === '"' || char === "'") {
+          quote = char;
+        } else if (char === ">") {
+          lastCompleteTag = index;
+          state = "text";
+        }
+      } else {
+        // Defensive reset: state is internal, but never let an unexpected value
+        // turn a future ">" into a claimed safe boundary.
+        state = "text";
+        quote = null;
       }
     }
     const prefix = lastCompleteTag >= 0 ? html.slice(0, lastCompleteTag + 1) : "";

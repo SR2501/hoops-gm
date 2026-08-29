@@ -1114,12 +1114,12 @@ test("buildDomSnapshotHtml strips script/style/noscript but keeps rendered conte
   assert.match(html, /<div>content<\/div>/);
 });
 
-test("buildDomSnapshotHtml truncates at a tag boundary so the marker is never an attribute", async () => {
+test("buildDomSnapshotHtml ignores quotes in comments when finding a safe truncation boundary", async () => {
   const capture = await loadCapture();
   const huge = "x".repeat(600000);
   const root = {
     cloneNode: () => ({
-      outerHTML: `<div data-long="safe>${huge}"><span>after</span></div>`,
+      outerHTML: `<main><!-- " --><div data-long="safe>${huge}"><span>after</span></div></main>`,
       querySelectorAll: () => [],
     }),
   };
@@ -1128,7 +1128,11 @@ test("buildDomSnapshotHtml truncates at a tag boundary so the marker is never an
   assert.match(html, /truncated/);
   assert.ok(html.length <= 500000, "the marker is part of the configured cap");
   const markerAt = html.indexOf("<!-- hoops-gm bridge: truncated at");
-  assert.equal(markerAt, 0, "no complete tag fits before the cut, so only the marker is safe");
+  assert.equal(
+    html.slice(0, markerAt),
+    '<main><!-- " -->\n',
+    "the comment closes safely but the over-budget attribute tag is discarded whole"
+  );
   assert.doesNotMatch(html, /data-long=/, "an over-budget opening tag is discarded whole");
 });
 

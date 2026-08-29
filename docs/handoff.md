@@ -31642,25 +31642,30 @@ a distinct auxiliary marker when that marker also fits, so the backend cannot
 misdiagnose later board drift as a cut grid. A board that itself exceeds the cap
 or lacks either anchor is not transported, and the refusal reaches the visible
 status strip. Generic non-draft truncation now reserves its marker inside the
-hard cap and finds a quote-aware tag boundary, so a `>` inside an attribute
-cannot recreate the recorded mid-attribute marker failure. Refused and in-flight
-attempts share the existing mutation rate limit.
+hard cap and tracks both comment and quoted-attribute state, so comment text or
+a `>` inside an attribute cannot recreate the recorded mid-attribute failure.
+The backend parser recognizes either the new terminal bridge comment or the
+recorded legacy marker proven to begin inside an open tag; visible marker words
+cannot spoof truncation. Refused and in-flight attempts share the existing
+mutation rate limit.
 
 **Now true:** The full board wins the automatic-capture budget before every
 other draft-room region, while the parser's optional chat cross-check survives
 when space permits. Focused tests cover unrelated markup exhausting the old
 page-wide budget, an over-budget board producing no transport, missing header
-refusal, near-cap metadata accounting, the prior mid-attribute hazard including
-`>` inside a quoted attribute, truthful chat-omission signalling, status-strip
-reporting, refusal throttling, and a mutation arriving during awaited transport.
-The over-budget, quote-state, auxiliary-marker, refusal-rate, and in-flight
-pending-state guards were each mutation-checked green -> red -> green. The final
-independent code-review round found no significant issue after six earlier
-rounds found and drove fixes. Local Code gates passed: 91 userscript tests plus
-build; frontend lint, type-check, 380 tests and build; backend Ruff, format,
-strict mypy and 2,333 tests (1 skipped, 41 deselected); scripts lint/format,
-secret scan, document terminators and backlog graph. The finished backlog
-recounts to its own header and its slug set is unchanged from the merge base.
+refusal, near-cap metadata accounting, comments and `>` inside quoted
+attributes, truthful chat-omission signalling, visible truncation-marker words,
+status-strip reporting, refusal throttling, and a mutation arriving during
+awaited transport. The over-budget, comment/quote-state, auxiliary-marker,
+legacy-marker-shape, refusal-rate, and in-flight pending-state guards were each
+mutation-checked green -> red -> green. An eighth independent review on the
+rebased head found the comment-state and marker-spoof defects and drove these
+fixes; a fresh exact-head review is still required after the follow-up commit.
+Local Code gates passed: 91 userscript tests plus build; frontend lint,
+type-check, 380 tests and build; backend Ruff, format, strict mypy and 2,335
+tests (1 skipped, 41 deselected); scripts lint/format, secret scan, document
+terminators and backlog graph. The finished backlog recounts to its own header
+and its slug set is unchanged from the merge base.
 
 **Could not verify:** No real Fantrax draft room was available after this change,
 so the new selector/scoping path has not produced a live browser payload. Its
@@ -31669,9 +31674,10 @@ the finished board was measured at 208 KB, 22 of 42 board captures were
 page-truncated, and the reduced committed fixture confirms header and body share
 the `.league-draft-board` subtree. This does not establish that the owner's
 2026-27 NBA auction room uses that DOM, and no auction behaviour or
-applicability is claimed. Native Postgres was not run locally; this unit changes
-no backend code or schema. GitHub CI had not yet run against the exact final
-head when this entry was appended.
+applicability is claimed. Native Postgres was not run locally; the backend
+change is confined to truncation-sentinel recognition and tests, with no schema
+change. GitHub CI had not yet run against the exact final head when this entry
+was corrected.
 
 **Next:** `draft-board-feed-integration` can consume these complete
 `rendered-view` board fragments. Before relying on the path for the owner's
