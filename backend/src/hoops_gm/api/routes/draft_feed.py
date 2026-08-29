@@ -239,8 +239,8 @@ class SourceBoardResponse(BaseModel):
 
     draft_id: int
     as_of: datetime
-    #: ``no_reading`` and ``refused`` are explicit so zero picks cannot masquerade
-    #: as a successful empty board.
+    #: ``no_reading`` and ``refused`` are explicit so both remain distinct from
+    #: a valid, available board with zero picks.
     status: Literal["available", "refused", "no_reading"]
     refusal_reason: str | None
     contact_at: datetime | None

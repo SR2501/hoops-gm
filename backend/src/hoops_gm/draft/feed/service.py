@@ -57,6 +57,7 @@ from hoops_gm.db.models import (
     DraftFeedObservation,
     DraftFeedTransport,
     DraftParticipant,
+    DraftSourceBoardReading,
     DraftSourceBoardState,
     DraftStatus,
     FantasyTeam,
@@ -478,7 +479,14 @@ def _record_board_attempt(
     *,
     contact_at: datetime,
 ) -> None:
-    """Persist the latest board attempt without turning its column into identity."""
+    """Persist board contact and each unique successful content reading.
+
+    A reading gets its own row because an empty board has no pick observations.
+    Repeated content advances contact but creates no reading and does not move
+    the latest-content pointer; that preserves ADR-020's documented
+    exact-content undo blind spot rather than pretending a duplicate key is new
+    evidence.
+    """
     state = session.get(DraftSourceBoardState, draft.id)
     if state is None:
         state = DraftSourceBoardState(
@@ -497,10 +505,81 @@ def _record_board_attempt(
     if board is None:  # pragma: no cover - recogniser contract
         state.refusal_reason = "board_metadata_missing"
         return
+    state.refusal_reason = None
+
+    existing_reading = session.scalar(
+        select(DraftSourceBoardReading).where(
+            DraftSourceBoardReading.draft_id == draft.id,
+            DraftSourceBoardReading.artifact_key == board.artifact_key,
+        )
+    )
+    if existing_reading is not None:
+        if state.artifact_key == board.artifact_key:
+            # Same current content, newly observed. Mutable labels and board
+            # freshness may advance without manufacturing another reading.
+            state.recogniser = board.recogniser
+            state.board_observed_at = board.observed_at
+            state.layout = board.layout
+            state.seat_count = board.seat_count
+            state.round_count = board.round_count
+            state.picks_made = board.picks_made
+            state.seat_labels = list(board.seat_labels)
+        return
+
+    occupied_slots = sorted(
+        (
+            {
+                "source_seat": instant.source_seat,
+                "round_number": instant.round_number,
+                "pick_in_round": instant.pick_in_round,
+                "player_label": instant.player_label,
+                "player_external_id": instant.player_external_id,
+            }
+            for instant in result.instants
+        ),
+        key=lambda slot: (
+            int(slot["source_seat"] or 0),
+            int(slot["round_number"] or 0),
+            int(slot["pick_in_round"] or 0),
+        ),
+    )
+    if len(occupied_slots) != board.picks_made:  # pragma: no cover - recogniser contract
+        raise ValueError("source board pick summary does not match picks_made")
+
+    reading = DraftSourceBoardReading(
+        draft_id=draft.id,
+        artifact_key=board.artifact_key,
+        recogniser=board.recogniser,
+        observed_at=board.observed_at,
+        layout=board.layout,
+        seat_count=board.seat_count,
+        round_count=board.round_count,
+        picks_made=board.picks_made,
+        seat_labels=list(board.seat_labels),
+        occupied_slots=occupied_slots,
+    )
+    try:
+        with session.begin_nested():
+            session.add(reading)
+            session.flush()
+    except IntegrityError:
+        # A concurrent ingest may have won the unique (draft, artifact) race.
+        # Any other constraint failure is not a duplicate and must stay loud.
+        if (
+            session.scalar(
+                select(DraftSourceBoardReading.id).where(
+                    DraftSourceBoardReading.draft_id == draft.id,
+                    DraftSourceBoardReading.artifact_key == board.artifact_key,
+                )
+            )
+            is None
+        ):
+            raise
+        return
+
     state.artifact_key = board.artifact_key
     state.recogniser = board.recogniser
     state.board_observed_at = board.observed_at
-    state.refusal_reason = None
     state.layout = board.layout
     state.seat_count = board.seat_count
     state.round_count = board.round_count
@@ -1663,10 +1742,11 @@ def _transport_contact(
     failure ``contact_at`` was added to remove, arriving by a new route.
 
     So ``board_is_a_source_here`` widens what counts, and the gate is a fact
-    rather than a hope: it is true only when this draft already holds at least
-    one observation from :data:`BOARD_RECOGNISER`. Before that, a page snapshot
-    is exactly the service-worker case — the userscript is alive and this feed
-    can read nothing from it — and it still proves nothing, which is what
+    rather than a hope: it is true only when this draft already holds an
+    explicit successful board reading, including a valid zero-pick board.
+    Before that, a page snapshot is exactly the service-worker case — the
+    userscript is alive and this feed can read nothing from it — and it still
+    proves nothing, which is what
     ``test_proof_of_life_ignores_captures_that_are_not_proof_of_this_feed``
     pins. After it, a snapshot of this league's page is evidence that the pipe
     which *is* delivering picks is still delivering.
@@ -1738,8 +1818,23 @@ class BoardRegression:
     last_seen_artifact_key: str
 
 
-def board_regressions(rows: list[DraftFeedObservation]) -> tuple[BoardRegression, ...]:
-    """Slots the board has lost, derived from the stored readings.
+def load_board_readings(session: Session, draft: Draft) -> list[DraftSourceBoardReading]:
+    """Load explicit successful board readings in first-seen order."""
+    return list(
+        session.execute(
+            select(DraftSourceBoardReading)
+            .where(DraftSourceBoardReading.draft_id == draft.id)
+            .order_by(DraftSourceBoardReading.observed_at, DraftSourceBoardReading.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def board_regressions(
+    readings: list[DraftSourceBoardReading],
+) -> tuple[BoardRegression, ...]:
+    """Slots the board has lost, derived from explicit successful readings.
 
     One derivation, two callers — :func:`ingest_bridge`'s caller reports it on
     the ``POST`` response and :func:`feed_status` publishes it on ``GET`` —
@@ -1747,42 +1842,46 @@ def board_regressions(rows: list[DraftFeedObservation]) -> tuple[BoardRegression
     passes meant to agree about a payload is the defect every review round on
     this package has found.
 
-    Readings are grouped by ``artifact_key``, which for the board recogniser is
-    the board's own digest, and ordered by when each was first stored. Anything
-    filled in an earlier reading and absent from the newest is a regression.
-    Union rather than pairwise, so a slot lost two readings ago and still
-    missing is still reported.
+    A reading is a parent row even when it contains zero picks. Its
+    ``occupied_slots`` JSON is a compact source-coordinate summary, not a set of
+    placeholder observations. Anything filled in an earlier reading and absent
+    from the newest is a regression. Union rather than pairwise, so a slot lost
+    two readings ago and still missing is still reported.
 
     **What this cannot see, stated because it is not obvious.** Content keying
-    means a board that goes *back to a state already stored* writes no rows at
-    all, so an undo that lands exactly on a previous board is invisible here.
+    means a board that goes *back to a state already stored* writes no new
+    reading row, so an undo that lands exactly on a previous board is invisible.
     ADR-020 already records that a repaint, an undo and a capture cut look
     identical at the DOM; this is that limit in its most concrete form. The case
     it does catch is the one with evidence behind it: a board that has lost a
     slot no earlier reading was missing.
     """
-    readings: dict[str, dict[tuple[int, int, int], str | None]] = {}
-    order: dict[str, tuple[datetime, int]] = {}
-    for row in rows:
-        if row.recogniser != BOARD_RECOGNISER:
-            continue
-        if row.source_seat is None or row.round_number is None or row.pick_in_round is None:
-            continue
-        slot = (row.source_seat, row.round_number, row.pick_in_round)
-        readings.setdefault(row.artifact_key, {})[slot] = row.player_label
-        seen = arrival_order(row.observed_at, row.id)
-        first = order.get(row.artifact_key)
-        if first is None or seen < first:
-            order[row.artifact_key] = seen
-
     if len(readings) < 2:
         return ()
 
-    keys = sorted(readings, key=lambda key: order[key])
-    newest = readings[keys[-1]]
+    contents: list[dict[tuple[int, int, int], str | None]] = []
+    for reading in readings:
+        slots: dict[tuple[int, int, int], str | None] = {}
+        for raw in reading.occupied_slots:
+            source_seat = raw.get("source_seat")
+            round_number = raw.get("round_number")
+            pick_in_round = raw.get("pick_in_round")
+            if not (
+                isinstance(source_seat, int)
+                and isinstance(round_number, int)
+                and isinstance(pick_in_round, int)
+            ):  # pragma: no cover - rows are written only by _record_board_attempt
+                continue
+            player_label = raw.get("player_label")
+            slots[(source_seat, round_number, pick_in_round)] = (
+                player_label if isinstance(player_label, str) else None
+            )
+        contents.append(slots)
+
+    newest = contents[-1]
     lost: dict[tuple[int, int, int], BoardRegression] = {}
-    for key in keys[:-1]:
-        for slot, label in readings[key].items():
+    for reading, slots in zip(readings[:-1], contents[:-1], strict=True):
+        for slot, label in slots.items():
             if slot in newest:
                 continue
             # Later earlier-readings overwrite, so the recorded key is the
@@ -1792,7 +1891,7 @@ def board_regressions(rows: list[DraftFeedObservation]) -> tuple[BoardRegression
                 round_number=slot[1],
                 pick_in_round=slot[2],
                 player_label=label,
-                last_seen_artifact_key=key,
+                last_seen_artifact_key=reading.artifact_key,
             )
     return tuple(lost[slot] for slot in sorted(lost))
 
@@ -1864,7 +1963,8 @@ def source_board_evidence(
     stamp = now or datetime.now(UTC)
     state = session.get(DraftSourceBoardState, draft.id)
     rows = load_observations(session, draft)
-    regressions = board_regressions(rows)
+    readings = load_board_readings(session, draft)
+    regressions = board_regressions(readings)
     if state is None:
         return SourceBoardEvidence(
             draft_id=draft.id,
@@ -1964,6 +2064,7 @@ def feed_status(
     stamp = now or datetime.now(UTC)
     context = build_context(session, draft)
     rows = load_observations(session, draft)
+    board_readings = load_board_readings(session, draft)
     # A row that names nobody is a recorded refusal, not a reading — see
     # :func:`names_a_player`. It is still counted in ``observation_count`` and
     # still reported by name in ``skipped`` below; what it must not do is make
@@ -1980,10 +2081,10 @@ def feed_status(
     contact_at = _transport_contact(
         session,
         context,
-        # A fact, not a setting: this draft already holds a reading the board
-        # recogniser produced, so the page-snapshot pipe is one that delivers
-        # picks here. See :func:`_transport_contact`.
-        board_is_a_source_here=any(row.recogniser == BOARD_RECOGNISER for row in rows),
+        # A fact, not a setting: this draft already holds a successful reading
+        # the board recogniser produced, so the page-snapshot pipe is one this
+        # feed can read here. See :func:`_transport_contact`.
+        board_is_a_source_here=bool(board_readings),
     )
     if instants:
         report = reconcile(
@@ -2051,7 +2152,7 @@ def feed_status(
         blocked=blocked,
         skipped=tuple(sorted(skipped.items())),
         last_sequence=state.last_sequence,
-        board_regressions=board_regressions(rows),
+        board_regressions=board_regressions(board_readings),
     )
 
 

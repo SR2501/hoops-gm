@@ -247,8 +247,43 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
         )
 
 
+class DraftSourceBoardReading(IntPk, TimestampMixin, Base):
+    """One unique successful rendered-board content reading.
+
+    Pick observations cannot represent a valid empty board. This parent row is
+    therefore the reading identity and order; ``occupied_slots`` is the compact
+    content summary regression detection needs without manufacturing a pick.
+    Repeated content deliberately reuses the same row under ADR-020.
+    """
+
+    __tablename__ = "draft_source_board_readings"
+    __table_args__ = (
+        UniqueConstraint(
+            "draft_id",
+            "artifact_key",
+            name="uq_draft_source_board_readings_draft_artifact",
+        ),
+        CheckConstraint("seat_count >= 1", name="seats_positive"),
+        CheckConstraint("round_count >= 1", name="rounds_positive"),
+        CheckConstraint("picks_made >= 0", name="picks_nonnegative"),
+    )
+
+    draft_id: Mapped[int] = mapped_column(ForeignKey("drafts.id", ondelete="CASCADE"), index=True)
+    artifact_key: Mapped[str] = mapped_column(String(128), index=True)
+    recogniser: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    layout: Mapped[str] = mapped_column(String(16))
+    seat_count: Mapped[int] = mapped_column()
+    round_count: Mapped[int] = mapped_column()
+    picks_made: Mapped[int] = mapped_column()
+    seat_labels: Mapped[list[str]] = mapped_column(JSON)
+    occupied_slots: Mapped[list[dict[str, int | str | None]]] = mapped_column(JSON)
+
+    draft: Mapped[Draft] = relationship()
+
+
 class DraftSourceBoardState(TimestampMixin, Base):
-    """Latest rendered-board attempt and latest successful board for one draft."""
+    """Latest attempt and latest newly stored successful content for one draft."""
 
     __tablename__ = "draft_source_board_states"
     __table_args__ = (
@@ -266,7 +301,8 @@ class DraftSourceBoardState(TimestampMixin, Base):
     draft_id: Mapped[int] = mapped_column(
         ForeignKey("drafts.id", ondelete="CASCADE"), primary_key=True
     )
-    #: Latest successful board digest. Retained when a later attempt refuses.
+    #: Latest newly stored successful board digest. Retained on a refusal or a
+    #: repeated content key; ``contact_at`` still advances for either attempt.
     artifact_key: Mapped[str | None] = mapped_column(String(128), index=True)
     recogniser: Mapped[str] = mapped_column(String(64))
     board_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

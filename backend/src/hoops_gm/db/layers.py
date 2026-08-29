@@ -257,6 +257,8 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     # the log it feeds because it is the same kind of thing: an observation of
     # the outside world, with nothing computed in it.
     "draft_feed_observations": DataLayer.OBSERVATIONS,
+    # Unique rendered-board content readings, including valid zero-pick boards.
+    "draft_source_board_readings": DataLayer.OBSERVATIONS,
     # Latest rendered-board read/refusal state. Source evidence only.
     "draft_source_board_states": DataLayer.OBSERVATIONS,
     # Raw transport and provenance.

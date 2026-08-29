@@ -32,11 +32,16 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.draft import Draft
-from hoops_gm.db.models.draft_feed import DraftFeedObservation
+from hoops_gm.db.models.draft_feed import (
+    DraftFeedObservation,
+    DraftSourceBoardReading,
+    DraftSourceBoardState,
+)
 from hoops_gm.db.models.enums import DraftToolUsage, DraftType
 from hoops_gm.db.models.league import FantasyTeam, League
 from hoops_gm.draft import service as draft_service
@@ -104,9 +109,14 @@ def load_early_with_distinct_names() -> str:
     return html
 
 
-def _league(session: Session, *, draft_type: DraftType = DraftType.SNAKE) -> League:
+def _league(
+    session: Session,
+    *,
+    draft_type: DraftType = DraftType.SNAKE,
+    fantrax_league_id: str = LEAGUE,
+) -> League:
     league = League(
-        fantrax_league_id=LEAGUE,
+        fantrax_league_id=fantrax_league_id,
         name="board feed",
         season="2026-27",
         draft_type=draft_type,
@@ -146,9 +156,13 @@ def _draft(session: Session, league: League) -> Draft:
     return draft
 
 
-def _context(*, draft_type: DraftType = DraftType.SNAKE) -> RecognitionContext:
+def _context(
+    *,
+    draft_type: DraftType = DraftType.SNAKE,
+    fantrax_league_id: str = LEAGUE,
+) -> RecognitionContext:
     return RecognitionContext(
-        fantrax_league_id=LEAGUE,
+        fantrax_league_id=fantrax_league_id,
         team_external_ids=frozenset(f"t{index}" for index in range(1, SEATS + 1)),
         draft_type=draft_type,
     )
@@ -772,6 +786,171 @@ def test_a_board_that_only_grows_reports_no_regression(session: Session) -> None
 
     assert status.board_regressions == ()
     assert len(_board_rows(session, draft)) == EARLY_PICKS + TOTAL_PICKS
+
+
+def test_a_complete_board_followed_by_an_empty_board_is_a_regression(
+    client: TestClient, session: Session
+) -> None:
+    """A successful zero-pick reading is a reading, not an absence of pick rows."""
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(session, html=load("complete"), dedupe_key="GET:aaa:111", created_at=NOW)
+    _snapshot(
+        session,
+        html=load("predraft"),
+        dedupe_key="GET:aaa:222",
+        created_at=NOW + timedelta(seconds=30),
+    )
+
+    feed_service.ingest_bridge(session, draft, _context())
+    session.commit()
+
+    assert len(_board_rows(session, draft)) == TOTAL_PICKS, "prior evidence is retained"
+    assert client.get(f"/api/v1/drafts/{draft.id}/events").json()["events"] == []
+    draft_body = client.get(f"/api/v1/drafts/{draft.id}").json()
+    assert all(participant["holdings"] == [] for participant in draft_body["participants"])
+
+    source_response = client.get(f"/api/v1/drafts/{draft.id}/source-board")
+    assert source_response.status_code == 200, source_response.text
+    source = source_response.json()
+    assert source["status"] == "available"
+    assert source["board"]["picks_made"] == 0
+    assert all(column["picks"] == [] for column in source["board"]["columns"])
+    assert len(source["regressions"]) == TOTAL_PICKS
+    assert "participant_id" not in str(source)
+    assert "budget" not in str(source)
+    assert any("exact-content undo" in caveat for caveat in source["caveats"])
+
+    feed_response = client.get(f"/api/v1/drafts/{draft.id}/feed")
+    assert feed_response.status_code == 200, feed_response.text
+    assert len(feed_response.json()["board_regressions"]) == TOTAL_PICKS
+
+
+def test_an_initial_empty_board_is_available_and_dedupes_while_contact_advances(
+    client: TestClient, session: Session
+) -> None:
+    """Empty content has reading identity even though it creates no pick rows."""
+    league = _league(session)
+    draft = _draft(session, league)
+    first_at = NOW - timedelta(minutes=6)
+    latest_at = NOW - timedelta(seconds=20)
+    _snapshot(session, html=load("predraft"), dedupe_key="GET:aaa:111", created_at=first_at)
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(session, html=load("predraft"), dedupe_key="GET:aaa:222", created_at=latest_at)
+    feed_service.ingest_bridge(session, draft, _context())
+    session.commit()
+
+    readings = (
+        session.query(DraftSourceBoardReading)
+        .filter(DraftSourceBoardReading.draft_id == draft.id)
+        .all()
+    )
+    assert len(readings) == 1
+    assert readings[0].picks_made == 0
+    assert readings[0].observed_at == first_at
+    state = session.get(DraftSourceBoardState, draft.id)
+    assert state is not None
+    assert state.contact_at == latest_at
+
+    response = client.get(f"/api/v1/drafts/{draft.id}/source-board")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "available"
+    assert body["refusal_reason"] is None
+    assert body["board"]["picks_made"] == 0
+    assert body["contact_at"] == latest_at.isoformat().replace("+00:00", "Z")
+    assert body["regressions"] == []
+
+    freshness = next(
+        item
+        for item in client.get(f"/api/v1/drafts/{draft.id}/feed").json()["freshness"]
+        if item["transport"] == SourceTransport.BRIDGE_CAPTURE.value
+    )
+    assert freshness["instant_count"] == 0
+    assert freshness["contact_is_known"] is True
+    assert freshness["contact_age_seconds"] < 60
+    assert freshness["silent"] is True, "contact does not invent a pick reading"
+
+
+def test_an_empty_board_can_advance_to_picks_without_a_regression(session: Session) -> None:
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(session, html=load("predraft"), dedupe_key="GET:aaa:111", created_at=NOW)
+    _snapshot(
+        session,
+        html=load("early"),
+        dedupe_key="GET:aaa:222",
+        created_at=NOW + timedelta(seconds=30),
+    )
+
+    feed_service.ingest_bridge(session, draft, _context())
+
+    readings = (
+        session.query(DraftSourceBoardReading)
+        .filter(DraftSourceBoardReading.draft_id == draft.id)
+        .all()
+    )
+    assert [reading.picks_made for reading in readings] == [0, EARLY_PICKS]
+    assert feed_service.feed_status(session, draft, now=NOW).board_regressions == ()
+    evidence = feed_service.source_board_evidence(session, draft, now=NOW)
+    assert evidence.board is not None
+    assert evidence.board.picks_made == EARLY_PICKS
+
+
+def test_source_board_readings_are_isolated_by_draft(session: Session) -> None:
+    first_league_id = "first-draft-league"
+    second_league_id = "second-draft-league"
+    first = _draft(
+        session,
+        _league(session, fantrax_league_id=first_league_id),
+    )
+    second = _draft(
+        session,
+        _league(session, fantrax_league_id=second_league_id),
+    )
+    _snapshot(
+        session,
+        html=load("complete"),
+        dedupe_key="GET:first:111",
+        league_id=first_league_id,
+        created_at=NOW,
+    )
+    _snapshot(
+        session,
+        html=load("predraft"),
+        dedupe_key="GET:first:222",
+        league_id=first_league_id,
+        created_at=NOW + timedelta(seconds=30),
+    )
+    _snapshot(
+        session,
+        html=load("predraft"),
+        dedupe_key="GET:second:111",
+        league_id=second_league_id,
+        created_at=NOW,
+    )
+    feed_service.ingest_bridge(
+        session,
+        first,
+        _context(fantrax_league_id=first_league_id),
+    )
+    feed_service.ingest_bridge(
+        session,
+        second,
+        _context(fantrax_league_id=second_league_id),
+    )
+
+    assert len(feed_service.feed_status(session, first, now=NOW).board_regressions) == TOTAL_PICKS
+    assert feed_service.feed_status(session, second, now=NOW).board_regressions == ()
+    counts: dict[int, int] = {}
+    for draft_id, count in session.execute(
+        select(
+            DraftSourceBoardReading.draft_id,
+            func.count(DraftSourceBoardReading.id),
+        ).group_by(DraftSourceBoardReading.draft_id)
+    ).all():
+        counts[draft_id] = count
+    assert counts == {first.id: 2, second.id: 1}
 
 
 # --------------------------------------------------------------------------
