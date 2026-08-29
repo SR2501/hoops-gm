@@ -1058,6 +1058,246 @@ a:focus-visible {
   min-width: 0;
 }
 
+/* -- rendered source evidence --------------------------------------------- */
+
+/**
+ * This panel is deliberately not another `.seat` board. Its dashed warning
+ * edge, explicit eyebrow, and sunken body make the source-coordinate evidence
+ * visibly secondary to the solid event-backed board above it.
+ */
+.source-board {
+  padding: var(--space-4);
+  background: var(--bg-sunken);
+  border: 2px dashed var(--warn);
+  border-radius: var(--radius);
+}
+
+/**
+ * Only the authoritative board's stale warning is fixed to the viewport. A
+ * second fixed warning at the same coordinates would cover its message and
+ * Refresh button, so source-evidence refresh state stays inline with its panel.
+ */
+.page--draft .source-board-loader .stale-banner {
+  position: static;
+  max-width: none;
+  margin: 0 0 var(--space-3);
+  box-shadow: none;
+}
+
+.source-board__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.source-board__header h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.source-board__eyebrow {
+  margin: 0 0 var(--space-1);
+  color: var(--warn);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-board__status {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.source-board__status--available {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.source-board__status--refused {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.source-board__status--no_reading {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.source-board__lede {
+  max-width: 78ch;
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.source-board__notice {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+}
+
+.source-board__notice--refused {
+  border-color: var(--error);
+}
+
+.source-board__reason {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.source-board__freshness {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.source-board__freshness > div {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.source-board__freshness dt {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.source-board__freshness dd {
+  margin: var(--space-1) 0 0;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.source-board__summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: 0.8125rem;
+}
+
+.source-board__summary span {
+  color: var(--text-muted);
+}
+
+.source-board__columns {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+
+.source-board__column {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.source-board__column h3,
+.source-board__regressions h3,
+.source-board__caveats h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.source-board__mutable-label,
+.source-board__empty-column {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.source-board__mutable-label strong {
+  color: var(--text);
+}
+
+.source-board__picks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.source-board__picks li {
+  padding-left: var(--space-1);
+  font-size: 0.8125rem;
+}
+
+.source-board__picks span,
+.source-board__picks small {
+  display: block;
+}
+
+.source-board__picks small {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-board__regressions,
+.source-board__caveats {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.source-board__regressions--present {
+  color: var(--warn);
+}
+
+.source-board__regressions p {
+  margin: 0;
+}
+
+.source-board__regressions summary {
+  cursor: pointer;
+}
+
+.source-board__regressions ol,
+.source-board__caveats ul {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.25rem;
+}
+
+@media (max-width: 48rem) {
+  .source-board__header,
+  .source-board__summary {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .source-board__freshness {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* -- recorder ------------------------------------------------------------ */
 
 .recorder {

@@ -252,6 +252,71 @@ export interface DraftEventsPage {
   last_sequence: number
 }
 
+export const SOURCE_BOARD_STATUSES = ['available', 'refused', 'no_reading'] as const
+
+export type SourceBoardStatus = (typeof SOURCE_BOARD_STATUSES)[number]
+
+/** One player label at the coordinate read from the rendered source board. */
+export interface SourceBoardPick {
+  source_seat: number
+  round_number: number
+  pick_in_round: number
+  overall_pick: number
+  player_label: string | null
+  player_external_id: string | null
+}
+
+/**
+ * One rendered column, not a participant.
+ *
+ * `mutable_label` is display evidence only. It can change while `source_seat`
+ * stays fixed and must never be used to infer participant identity.
+ */
+export interface SourceBoardColumn {
+  source_seat: number
+  mutable_label: string | null
+  picks: SourceBoardPick[]
+}
+
+export interface SourceBoardSnapshot {
+  artifact_key: string
+  recogniser: string
+  observed_at: string
+  layout: string
+  seat_count: number
+  round_count: number
+  picks_made: number
+  columns: SourceBoardColumn[]
+}
+
+/** One coordinate present in an earlier reading and absent from the latest one. */
+export interface SourceBoardRegression {
+  source_seat: number
+  round_number: number
+  pick_in_round: number
+  player_label: string | null
+  last_seen_artifact_key: string
+}
+
+/**
+ * Rendered-board evidence published separately from authoritative draft state.
+ *
+ * The contract deliberately contains no participant id, team slot, holding,
+ * price, or budget field.
+ */
+export interface SourceBoardResponse {
+  draft_id: number
+  as_of: string
+  status: SourceBoardStatus
+  refusal_reason: string | null
+  contact_at: string | null
+  contact_age_seconds: number | null
+  board: SourceBoardSnapshot | null
+  board_age_seconds: number | null
+  regressions: SourceBoardRegression[]
+  caveats: string[]
+}
+
 /**
  * The fields every append shares.
  *

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**66 done - 0 blocked - 123 pending - 189 total**
+**67 done - 0 blocked - 122 pending - 189 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4276,7 +4276,7 @@ remain unestablished. `board-dimensions-per-draft` remains a separate follow-on.
 
 ### `source-board-evidence-panel` - Showing source columns beside the authoritative draft board
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `source-board-evidence-api`
 
 Add a read-only evidence panel to `/draft/:id` that consumes

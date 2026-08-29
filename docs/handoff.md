@@ -31735,3 +31735,33 @@ The first full-suite run found two integration mistakes and was not treated as a
 **Could not verify:** Native PostgreSQL was not available locally. The exact-head GitHub Postgres job must execute the advisory-lock path, both concurrent HTTP tests and amended `0022` before this repair can be called cross-dialect verified. These deterministic barriers prove the two named request interleavings; they do not claim to enumerate every scheduler interleaving. The recorded board evidence remains one football snake draft, and this repair changes no NBA/auction applicability, participant binding, event, holding or budget semantics.
 
 **Next:** Push the replacement PR #134 head, require exact-head CI including PostgreSQL, then commission a fresh independent exact-head review. Do not merge or self-approve from this lane.
+
+## 2026-08-29 - frontend - Rendered source-board evidence without participant attribution
+
+**Changed:** Added a separately loaded, read-only rendered source-board panel to `/draft/:id`. The frontend now transcribes and runtime-guards the exact `SourceBoardResponse` contract from `GET /api/v1/drafts/{draft_id}/source-board`, keeps that payload outside `DraftParticipant`, and renders captured picks grouped only by `source_seat`. Source labels are explicitly called mutable display labels rather than identity. The panel shows server-clock board age separately from browser-contact age, named `no_reading`, `refused`, and available-zero-pick states, refusal reason, retained last-good evidence, regressions, and every API caveat. A dashed, sunken evidence container marked `Read-only - non-authoritative` keeps it visually distinct from the unchanged event-backed participant board. It contains no holdings, prices, remaining-bank figures, or source-column-to-team attribution.
+
+**Now true:** A source-board request loads and fails independently, so its error cannot blank the authoritative recorder, seats, or event log. Invalid draft ids still mount neither loader and issue no `/drafts/NaN` request. Focused client, model, component, polling, recorded-page, and isolation coverage passed 61 tests; the complete frontend Code gate passed lint, TypeScript, 404 tests across 28 files, and the production build. Repository policy checks passed for the 189-item backlog graph, document terminators, secret scan, and diff whitespace. `source-board-evidence-panel` is the only backlog status changed; the finished recount is 67 done, 0 blocked, 122 pending, 189 total.
+
+**Could not verify:** Per coordinator instruction, no dev server or database was started, so this lane did not inspect the panel against a live backend or in a real browser. No real NBA auction board exists in the recorded evidence; the API caveat therefore remains visible that support is established only from one football snake draft, and this panel does not claim NBA auction support. The visual distinction was covered structurally and by styles/tests, not by a rendered screenshot. GitHub CI had not run on the eventual PR head at the time of this append.
+
+**Next:** The coordinator must rebase this PR over any parallel backend backlog/handoff append, preserve both handoff suffixes, and recount the finished backlog rather than choosing either derived header. Review the exact rebased head and require CI before merge; this lane does not merge or self-approve.
+
+---
+
+## 2026-08-29 - frontend - Correction: source refresh warning no longer covers the authoritative warning
+
+A fresh diff review found that both independent `AsyncBoundary` warnings inherited the draft page's fixed bottom-right positioning, so a failed source refresh could cover the authoritative board's warning and Refresh button. The source loader now owns a wrapper whose warning stays inline; the authoritative board alone keeps the fixed auction-clock warning. Structural DOM and stylesheet tests pin the two placements. The final full frontend gate after this repair is lint clean, type-check clean, **405 tests across 28 files**, and a successful production build. The repository policy gates remained green.
+
+**Could not verify:** Per coordinator instruction, no dev server was started, so the two-warning layout was not measured in a real browser. The CSS fix removes the shared fixed coordinates by construction and is covered at the selector and containment seams; exact rendered placement still awaits coordinator-owned demo inspection and GitHub CI.
+
+---
+
+## 2026-08-29 - frontend - Corrected retained-empty refusal and cross-draft source leakage
+
+**Changed:** Repaired both blockers from the independent cumulative review of PR #135 at `eb8e79e`. A refused latest attempt that retains an earlier accepted zero-pick board now calls it a **retained accepted empty reading** and says explicitly that it does not describe the refused attempt as empty; it no longer calls the combined state "not a refusal state." `SourceBoardEvidenceLoader` is now keyed by draft id, so valid-route navigation remounts the source reader instead of carrying the previous draft's warm `useAsync` data through the next request. The transition test drives draft 1 available evidence into a pending draft 2 request, proves draft 1 evidence disappears during loading, then fails draft 2 and proves the old evidence stays absent.
+
+**Now true:** The focused review-repair set passes 48 tests. The complete frontend Code gate after both repairs passes lint, type-check, **407 tests across 28 files**, and production build. Backlog graph, document terminators, secret scan, and diff whitespace remain green; no backlog status or header changed in this repair.
+
+**Could not verify:** No live backend, database, or browser was started, so route-transition paint and the retained-empty refusal copy were exercised in jsdom rather than the coordinator-owned visible demo. GitHub CI had not yet run against the eventual replacement head when this correction was appended.
+
+**Next:** Freeze the replacement PR head for a fresh independent cumulative review. Do not merge or self-approve from this lane.

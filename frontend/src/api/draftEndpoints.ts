@@ -27,7 +27,13 @@ import type {
   DraftParticipant,
   DraftState,
   DraftSummary,
+  SourceBoardColumn,
+  SourceBoardPick,
+  SourceBoardRegression,
+  SourceBoardResponse,
+  SourceBoardSnapshot,
 } from './draftTypes'
+import { SOURCE_BOARD_STATUSES } from './draftTypes'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -186,6 +192,93 @@ function isDraftEventsPage(value: unknown): value is DraftEventsPage {
   )
 }
 
+function isSourceBoardPick(value: unknown): value is SourceBoardPick {
+  return (
+    isRecord(value) &&
+    typeof value.source_seat === 'number' &&
+    typeof value.round_number === 'number' &&
+    typeof value.pick_in_round === 'number' &&
+    typeof value.overall_pick === 'number' &&
+    isStringOrNull(value.player_label) &&
+    isStringOrNull(value.player_external_id)
+  )
+}
+
+function isSourceBoardColumn(value: unknown): value is SourceBoardColumn {
+  return (
+    isRecord(value) &&
+    typeof value.source_seat === 'number' &&
+    isStringOrNull(value.mutable_label) &&
+    Array.isArray(value.picks) &&
+    value.picks.every(isSourceBoardPick)
+  )
+}
+
+function isSourceBoardSnapshot(value: unknown): value is SourceBoardSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.artifact_key === 'string' &&
+    typeof value.recogniser === 'string' &&
+    typeof value.observed_at === 'string' &&
+    typeof value.layout === 'string' &&
+    typeof value.seat_count === 'number' &&
+    typeof value.round_count === 'number' &&
+    typeof value.picks_made === 'number' &&
+    Array.isArray(value.columns) &&
+    value.columns.every(isSourceBoardColumn)
+  )
+}
+
+function isSourceBoardRegression(value: unknown): value is SourceBoardRegression {
+  return (
+    isRecord(value) &&
+    typeof value.source_seat === 'number' &&
+    typeof value.round_number === 'number' &&
+    typeof value.pick_in_round === 'number' &&
+    isStringOrNull(value.player_label) &&
+    typeof value.last_seen_artifact_key === 'string'
+  )
+}
+
+export function isSourceBoardResponse(value: unknown): value is SourceBoardResponse {
+  const hasShape =
+    isRecord(value) &&
+    typeof value.draft_id === 'number' &&
+    typeof value.as_of === 'string' &&
+    typeof value.status === 'string' &&
+    SOURCE_BOARD_STATUSES.some((status) => status === value.status) &&
+    isStringOrNull(value.refusal_reason) &&
+    isStringOrNull(value.contact_at) &&
+    isNumberOrNull(value.contact_age_seconds) &&
+    (value.board === null || isSourceBoardSnapshot(value.board)) &&
+    isNumberOrNull(value.board_age_seconds) &&
+    Array.isArray(value.regressions) &&
+    value.regressions.every(isSourceBoardRegression) &&
+    Array.isArray(value.caveats) &&
+    value.caveats.every((caveat) => typeof caveat === 'string')
+  if (!hasShape) return false
+
+  if (value.status === 'no_reading') {
+    return (
+      value.refusal_reason === null &&
+      value.contact_at === null &&
+      value.contact_age_seconds === null &&
+      value.board === null &&
+      value.board_age_seconds === null
+    )
+  }
+
+  const hasContact = value.contact_at !== null && value.contact_age_seconds !== null
+  const boardAndAgeAgree =
+    (value.board === null && value.board_age_seconds === null) ||
+    (value.board !== null && value.board_age_seconds !== null)
+  if (!hasContact || !boardAndAgeAgree) return false
+
+  return value.status === 'available'
+    ? value.refusal_reason === null && value.board !== null
+    : value.refusal_reason !== null
+}
+
 const DRAFT_LIST_CONTRACT = {
   isSuccess: isDraftList,
   invalidResponseDetail: 'The draft list response did not match the expected backend contract.',
@@ -201,6 +294,12 @@ const DRAFT_EVENTS_CONTRACT = {
   invalidResponseDetail: 'The draft log response did not match the expected backend contract.',
 } satisfies ResponseContract<DraftEventsPage>
 
+const SOURCE_BOARD_CONTRACT = {
+  isSuccess: isSourceBoardResponse,
+  invalidResponseDetail:
+    'The source-board response did not match the expected backend contract.',
+} satisfies ResponseContract<SourceBoardResponse>
+
 export function getDrafts(options?: RequestOptions): Promise<DraftList> {
   return apiFetch('/api/v1/drafts', DRAFT_LIST_CONTRACT, options)
 }
@@ -214,6 +313,17 @@ export function getDraftEvents(
   options?: RequestOptions,
 ): Promise<DraftEventsPage> {
   return apiFetch(`/api/v1/drafts/${String(draftId)}/events`, DRAFT_EVENTS_CONTRACT, options)
+}
+
+export function getSourceBoard(
+  draftId: number,
+  options?: RequestOptions,
+): Promise<SourceBoardResponse> {
+  return apiFetch(
+    `/api/v1/drafts/${String(draftId)}/source-board`,
+    SOURCE_BOARD_CONTRACT,
+    options,
+  )
 }
 
 /**
