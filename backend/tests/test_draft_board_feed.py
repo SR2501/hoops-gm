@@ -26,6 +26,7 @@ Two of them are worth flagging up front:
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -80,6 +81,10 @@ SEATS = 12
 ROUNDS = 18
 TOTAL_PICKS = SEATS * ROUNDS  # 216
 EARLY_PICKS = 7
+SHORT_ROUNDS = 14
+SHORT_PICKS = SEATS * SHORT_ROUNDS
+
+_DIV_TOKEN = re.compile(r"<div\b|</div>")
 
 
 def load(name: str) -> str:
@@ -110,6 +115,48 @@ def load_early_with_distinct_names() -> str:
     for old, new in zip(anonymised, labels, strict=True):
         assert html.count(old) == 1
         html = html.replace(old, new)
+    return html
+
+
+def _div_end(html: str, start: int) -> int:
+    depth = 0
+    for token in _DIV_TOKEN.finditer(html, start):
+        if token.group() == "<div":
+            depth += 1
+            continue
+        depth -= 1
+        if depth == 0:
+            return token.end()
+    raise AssertionError("fixture contains an unclosed div")
+
+
+def uniformly_short_board(*, rounds: int = SHORT_ROUNDS, empty: bool = False) -> str:
+    """Cut every recorded source column to the same number of rendered cells."""
+    html = load("predraft" if empty else "complete")
+    column_open = '<div class="league-draft-board__column'
+    item_open = '<div class="league-draft-board__item '
+    column_starts = [match.start() for match in re.finditer(re.escape(column_open), html)]
+    assert len(column_starts) == SEATS
+
+    removals: list[tuple[int, int]] = []
+    for column_start in column_starts:
+        column_end = _div_end(html, column_start)
+        item_starts = [
+            column_start + match.start()
+            for match in re.finditer(re.escape(item_open), html[column_start:column_end])
+        ]
+        assert len(item_starts) == ROUNDS
+        removals.extend((start, _div_end(html, start)) for start in item_starts[rounds:])
+
+    for start, end in sorted(removals, reverse=True):
+        html = html[:start] + html[end:]
+    # The measured /draft/board route carries no chat pane. Hiding only its
+    # parser-owned class keeps this mutation confined to independently recorded
+    # source markup rather than manufacturing a second board fixture.
+    html = html.replace("chat-message__name", "fixture-chat-message__name")
+    reading = parse_draft_board(html, captured_at=NOW)
+    assert reading.rounds == rounds
+    assert reading.picks_made == (0 if empty else SEATS * rounds)
     return html
 
 
@@ -315,6 +362,7 @@ def test_two_snapshots_of_one_unchanged_board_are_one_reading(session: Session) 
     evidence = feed_service.source_board_evidence(session, draft, now=NOW + timedelta(seconds=30))
     assert evidence.board is not None
     assert evidence.board.columns[0].mutable_label == "Renamed Source Label"
+    assert len(feed_service.load_board_readings(session, draft)) == 1
 
     freshness = next(
         item
@@ -532,19 +580,197 @@ def test_a_board_whose_seat_count_disagrees_with_the_frozen_draft_is_refused() -
     assert result.instants == ()
 
 
-def test_a_board_whose_round_count_disagrees_with_the_frozen_draft_is_refused() -> None:
-    """Excludes: treating a uniformly short board as a complete draft."""
+def test_a_board_exceeding_the_frozen_round_count_is_refused() -> None:
+    """The format remains a hard upper bound while history owns the lower bound."""
     result = recognise_board_snapshot(
         url=f"https://www.fantrax.com/fantasy/league/{LEAGUE}/draft",
         html=load("complete"),
         received_at=NOW,
         captured_at=NOW,
         context=_context(),
-        draft_format=SnakeDraftFormat(team_count=SEATS, roster_size=ROUNDS + 1),
+        draft_format=SnakeDraftFormat(team_count=SEATS, roster_size=ROUNDS - 1),
     )
 
     assert result.rejected == "board_round_count_mismatch"
     assert result.instants == ()
+
+
+def test_first_partial_dimensions_can_establish_and_grow_with_the_rendered_board(
+    session: Session,
+) -> None:
+    """A first snapshot cannot know the final grid; the frozen format is the cap."""
+    league = _league(session)
+    draft = _draft(session, league)
+    short = uniformly_short_board()
+    _snapshot(session, html=short, dedupe_key="GET:dimensions:14", created_at=NOW)
+
+    first = feed_service.ingest_bridge(session, draft, _context())
+    first_evidence = feed_service.source_board_evidence(session, draft, now=NOW)
+
+    assert first.board_refusals == {}
+    assert first_evidence.status == "available"
+    assert first_evidence.board is not None
+    assert first_evidence.board.round_count == SHORT_ROUNDS
+    assert first_evidence.board.picks_made == SHORT_PICKS
+
+    _snapshot(
+        session,
+        html=load("complete"),
+        dedupe_key="GET:dimensions:18",
+        created_at=NOW + timedelta(seconds=30),
+    )
+    grown = feed_service.ingest_bridge(session, draft, _context())
+    grown_evidence = feed_service.source_board_evidence(
+        session, draft, now=NOW + timedelta(seconds=30)
+    )
+
+    assert grown.board_refusals == {}
+    assert [
+        reading.round_count for reading in feed_service.load_board_readings(session, draft)
+    ] == [
+        SHORT_ROUNDS,
+        ROUNDS,
+    ]
+    assert grown_evidence.status == "available"
+    assert grown_evidence.board is not None
+    assert grown_evidence.board.round_count == ROUNDS
+    assert grown_evidence.board.picks_made == TOTAL_PICKS
+
+
+def test_a_uniformly_shortened_12_by_18_board_refuses_as_12_by_14(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """Measured failure: 168 filled cells are not a complete 216-pick draft."""
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(session, html=load("complete"), dedupe_key="GET:dimensions:18", created_at=NOW)
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(
+        session,
+        html=uniformly_short_board(),
+        dedupe_key="GET:dimensions:14",
+        created_at=NOW + timedelta(seconds=30),
+    )
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+    session.commit()
+
+    assert outcome.board_refusals[feed_service.BOARD_DIMENSIONS_REGRESSED] == 1
+    assert len(_board_rows(session, draft)) == TOTAL_PICKS
+    assert [
+        reading.round_count for reading in feed_service.load_board_readings(session, draft)
+    ] == [ROUNDS]
+
+    response = client.get(f"/api/v1/drafts/{draft.id}/source-board")
+    assert response.status_code == 200, response.text
+    source = response.json()
+    assert source["status"] == "refused"
+    assert source["refusal_reason"] == feed_service.BOARD_DIMENSIONS_REGRESSED
+    assert source["contact_at"] == (NOW + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    assert source["board"]["round_count"] == ROUNDS
+    assert source["board"]["picks_made"] == TOTAL_PICKS
+    assert client.get(f"/api/v1/drafts/{draft.id}/events").json()["events"] == []
+    state = client.get(f"/api/v1/drafts/{draft.id}").json()
+    assert all(participant["holdings"] == [] for participant in state["participants"])
+
+    freshness = next(
+        item
+        for item in client.get(f"/api/v1/drafts/{draft.id}/feed").json()["freshness"]
+        if item["transport"] == SourceTransport.BRIDGE_CAPTURE.value
+    )
+    assert freshness["contact_is_known"] is True
+    assert freshness["silent"] is False
+
+
+def test_repeated_smaller_content_refuses_after_larger_dimensions_were_seen(
+    session: Session,
+) -> None:
+    """A prior artifact key cannot bypass the floor after the board grows."""
+    league = _league(session)
+    draft = _draft(session, league)
+    short = uniformly_short_board()
+    _snapshot(session, html=short, dedupe_key="GET:dimensions:14a", created_at=NOW)
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(
+        session,
+        html=load("complete"),
+        dedupe_key="GET:dimensions:18",
+        created_at=NOW + timedelta(seconds=30),
+    )
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(
+        session,
+        html=short,
+        dedupe_key="GET:dimensions:14b",
+        created_at=NOW + timedelta(seconds=60),
+    )
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+    evidence = feed_service.source_board_evidence(session, draft, now=NOW + timedelta(seconds=60))
+
+    assert outcome.board_refusals[feed_service.BOARD_DIMENSIONS_REGRESSED] == 1
+    assert evidence.status == "refused"
+    assert evidence.refusal_reason == feed_service.BOARD_DIMENSIONS_REGRESSED
+    assert evidence.board is not None
+    assert evidence.board.round_count == ROUNDS
+    assert [
+        reading.round_count for reading in feed_service.load_board_readings(session, draft)
+    ] == [
+        SHORT_ROUNDS,
+        ROUNDS,
+    ]
+
+
+def test_a_refusal_before_the_first_success_establishes_no_dimension_floor(
+    session: Session,
+) -> None:
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(session, html=load("truncated"), dedupe_key="GET:dimensions:refused")
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(
+        session,
+        html=uniformly_short_board(),
+        dedupe_key="GET:dimensions:first-success",
+        created_at=NOW + timedelta(seconds=30),
+    )
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+    evidence = feed_service.source_board_evidence(session, draft, now=NOW + timedelta(seconds=30))
+
+    assert outcome.board_refusals["board_refused:snapshot_truncated"] == 1
+    assert evidence.status == "available"
+    assert evidence.board is not None
+    assert evidence.board.round_count == SHORT_ROUNDS
+
+
+def test_a_shorter_empty_board_refuses_and_preserves_the_complete_board(
+    session: Session,
+) -> None:
+    """Zero picks do not exempt a successful parse from dimension history."""
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(session, html=load("complete"), dedupe_key="GET:dimensions:18", created_at=NOW)
+    feed_service.ingest_bridge(session, draft, _context())
+    _snapshot(
+        session,
+        html=uniformly_short_board(empty=True),
+        dedupe_key="GET:dimensions:empty14",
+        created_at=NOW + timedelta(seconds=30),
+    )
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+    evidence = feed_service.source_board_evidence(session, draft, now=NOW + timedelta(seconds=30))
+
+    assert outcome.board_refusals[feed_service.BOARD_DIMENSIONS_REGRESSED] == 1
+    assert evidence.status == "refused"
+    assert evidence.board is not None
+    assert evidence.board.round_count == ROUNDS
+    assert evidence.board.picks_made == TOTAL_PICKS
+    assert [
+        reading.round_count for reading in feed_service.load_board_readings(session, draft)
+    ] == [ROUNDS]
 
 
 def test_an_other_layout_is_refused_before_any_pick_is_stored() -> None:
@@ -818,6 +1044,8 @@ def test_a_complete_board_followed_by_an_empty_board_is_a_regression(
     assert source_response.status_code == 200, source_response.text
     source = source_response.json()
     assert source["status"] == "available"
+    assert source["refusal_reason"] is None
+    assert source["board"]["round_count"] == ROUNDS
     assert source["board"]["picks_made"] == 0
     assert all(column["picks"] == [] for column in source["board"]["columns"])
     assert len(source["regressions"]) == TOTAL_PICKS
@@ -974,6 +1202,84 @@ def test_an_older_overlapping_request_cannot_replace_newer_board_state(
     assert all(participant["holdings"] == [] for participant in draft_body["participants"])
     assert "participant_id" not in str(source)
     assert "budget" not in str(source)
+
+
+def test_delayed_short_reading_cannot_follow_concurrent_dimension_growth(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-draft lock makes the dimension floor atomic with reading writes."""
+    league = _league(session)
+    draft = _draft(session, league)
+    _snapshot(
+        session,
+        html=uniformly_short_board(),
+        dedupe_key="GET:concurrent:14",
+        created_at=NOW,
+    )
+    draft_id = draft.id
+    session.commit()
+
+    old_at_lock = Event()
+    release_old = Event()
+    real_lock = feed_service._lock_board_scope
+
+    def delay_old_request(lock_session: Session, locked_draft: Draft) -> None:
+        if not old_at_lock.is_set():
+            old_at_lock.set()
+            assert release_old.wait(timeout=10), "newer request never released the older request"
+        real_lock(lock_session, locked_draft)
+
+    monkeypatch.setattr(feed_service, "_lock_board_scope", delay_old_request)
+
+    def ingest_old() -> object:
+        response = client.post(f"/api/v1/drafts/{draft_id}/feed/ingest", json={"apply": False})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="short-board-ingest") as executor:
+        older = executor.submit(ingest_old)
+        assert old_at_lock.wait(timeout=10), "older request did not reach the board lock"
+
+        with cast("FastAPI", client.app).state.database.session() as writer:
+            _snapshot(
+                writer,
+                html=load("complete"),
+                dedupe_key="GET:concurrent:18",
+                created_at=NOW + timedelta(seconds=30),
+            )
+
+        newer = client.post(
+            f"/api/v1/drafts/{draft_id}/feed/ingest",
+            json={"apply": False},
+        )
+        assert newer.status_code == 200, newer.text
+        release_old.set()
+        old_result = cast("dict[str, object]", older.result(timeout=10))
+
+    old_bridge = next(
+        source
+        for source in cast("list[dict[str, object]]", old_result["sources"])
+        if source["transport"] == SourceTransport.BRIDGE_CAPTURE.value
+    )
+    assert old_bridge["board_refusals"] == {}
+    with cast("FastAPI", client.app).state.database.session() as check:
+        stored_draft = check.get(Draft, draft_id)
+        assert stored_draft is not None
+        readings = feed_service.load_board_readings(check, stored_draft)
+        assert [reading.round_count for reading in readings] == [SHORT_ROUNDS, ROUNDS]
+        state = check.get(DraftSourceBoardState, draft_id)
+        assert state is not None
+        assert state.refusal_reason is None
+        assert state.round_count == ROUNDS
+        assert state.contact_at == NOW + timedelta(seconds=30)
+
+    source = client.get(f"/api/v1/drafts/{draft_id}/source-board").json()
+    assert source["status"] == "available"
+    assert source["board"]["round_count"] == ROUNDS
+    assert source["board"]["picks_made"] == TOTAL_PICKS
+    assert client.get(f"/api/v1/drafts/{draft_id}/events").json()["events"] == []
 
 
 def test_two_concurrent_first_ingests_share_one_state_and_reading(

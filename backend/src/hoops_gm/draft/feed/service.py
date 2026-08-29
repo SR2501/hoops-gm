@@ -139,6 +139,7 @@ _CONTACT_SCAN_LIMIT = 50
 #: Truncation is reported rather than inferred — see
 #: :attr:`SourceOutcome.board_scan_truncated`.
 BOARD_SCAN_LIMIT = 8
+BOARD_DIMENSIONS_REGRESSED: Final = "board_dimensions_regressed"
 
 
 class DraftPickSource(Protocol):
@@ -599,6 +600,52 @@ def _record_board_attempt(
         state.seat_labels = list(board.seat_labels)
 
 
+def _enforce_board_dimension_history(
+    session: Session,
+    draft: Draft,
+    result: RecognitionResult,
+    *,
+    bridge_payload_id: int,
+) -> RecognitionResult:
+    """Refuse a board smaller than any successful reading for this draft.
+
+    The recogniser owns snapshot-local compatibility: ordered layout, exact
+    ``team_count``, coordinates valid under the frozen ``DraftFormat``, and a
+    round count no larger than its roster size. This feed-level check owns the
+    fact a single snapshot cannot know: dimensions established by successful
+    history are monotonic.
+
+    The first successful reading in bridge arrival order establishes the floor,
+    including a partially rendered or empty board. Later growth up to the frozen
+    format is accepted; equal dimensions are accepted and repeated content still
+    deduplicates. Shrinkage in either dimension refuses before pick observations
+    or a reading row are written. Parser, format, and historical-dimension
+    refusals establish nothing, while a refusal after success leaves that
+    evidence intact. Only earlier payloads establish the candidate's floor, so
+    rescanning a legitimately accepted old partial board does not misreport a
+    new refusal after later growth.
+    """
+    board = result.source_board
+    if result.rejected is not None or board is None:
+        return result
+
+    established = session.execute(
+        select(
+            DraftSourceBoardReading.seat_count,
+            DraftSourceBoardReading.round_count,
+        ).where(
+            DraftSourceBoardReading.draft_id == draft.id,
+            DraftSourceBoardReading.bridge_payload_id < bridge_payload_id,
+        )
+    ).all()
+    if any(
+        board.seat_count < seat_count or board.round_count < round_count
+        for seat_count, round_count in established
+    ):
+        return RecognitionResult(rejected=BOARD_DIMENSIONS_REGRESSED)
+    return result
+
+
 def _lock_board_scope(session: Session, draft: Draft) -> None:
     """Serialize one draft's board ingestion before its singleton exists."""
     lock_refresh_scope(
@@ -763,6 +810,12 @@ def ingest_bridge(
             captured_at=row.captured_at,
             context=context,
             draft_format=draft_format,
+        )
+        result = _enforce_board_dimension_history(
+            session,
+            draft,
+            result,
+            bridge_payload_id=row.id,
         )
         _record_board_attempt(
             session,
@@ -1987,6 +2040,7 @@ class SourceBoardEvidence:
 _SOURCE_BOARD_CAVEATS = (
     "source_seat is a rendered column ordinal, not DraftParticipant.team_slot or identity",
     "seat labels are mutable display evidence and are never matched to participants",
+    "board dimensions may grow up to the frozen format and never shrink after a successful reading",
     "an exact-content undo reuses an existing artifact key and cannot appear as a new regression",
     "evidence is from one football snake draft; NBA and auction board support is unestablished",
 )

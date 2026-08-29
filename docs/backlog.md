@@ -2112,7 +2112,7 @@ throwaway branch before acting on it.
 
 ### `board-dimensions-per-draft` - A board is only short-and-clean if nothing remembers how big it was
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-board-dom-parser`, `source-board-evidence-api`
 
 `board_dom.py:475-484` derives `rounds` from the rendered cell count, so a
