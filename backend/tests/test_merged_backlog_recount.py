@@ -86,7 +86,10 @@ def script() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def graph(script: ModuleType) -> ModuleType:
-    loaded = script.load_backlog_graph()
+    loaded = script.load_backlog_graph(
+        (SCRIPTS / "backlog_graph.py").read_bytes(),
+        source_label=str(SCRIPTS / "backlog_graph.py"),
+    )
     assert isinstance(loaded, ModuleType)
     return loaded
 
@@ -116,6 +119,10 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 def _write(repo: Path, text: str) -> None:
     (repo / "docs").mkdir(exist_ok=True)
     (repo / "docs" / "backlog.md").write_bytes(text.encode("utf-8"))
+    parser = repo / "scripts" / "backlog_graph.py"
+    if not parser.exists():
+        parser.parent.mkdir(exist_ok=True)
+        parser.write_bytes((SCRIPTS / "backlog_graph.py").read_bytes())
 
 
 def _commit(repo: Path, message: str) -> None:
@@ -289,6 +296,134 @@ class TestAnUnevaluatedRunIsNotAPass:
         code = script.main(["--base", "main", "--head", "other", "--repo", str(repo)])
         assert code == 2
         assert "COULD NOT EVALUATE" in capsys.readouterr().out
+
+
+class TestAParsedEmptySetIsNotAPass:
+    def test_a_header_claiming_items_with_no_headings_fails(
+        self, script: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression: exact-head implementation printed 0 items, OK, exit 0."""
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        _git(repo, "init", "-b", "main")
+        _write(
+            repo,
+            "# Build backlog\n\n"
+            "**64 done - 0 blocked - 124 pending - 188 total**\n\n"
+            "This file claims items and contains no item headings.\n",
+        )
+        _commit(repo, "base")
+        _git(repo, "branch", "other")
+
+        code = script.main(["--base", "main", "--head", "other", "--repo", str(repo)])
+
+        assert code == 1
+        out = capsys.readouterr().out
+        assert "0 items" in out
+        assert "FAIL [no-items]" in out
+        assert "OK:" not in out
+
+
+class TestTheMergedParserJudgesTheMergedBacklog:
+    def test_a_parser_change_in_the_merge_cannot_be_bypassed_by_the_checkout(
+        self, script: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The old implementation loaded the parser beside ``__file__``.
+
+        The target branch changes the parser so the ordinary header becomes
+        invalid. The checkout parser running this test still accepts that
+        header. Passing here therefore proves the parser came from the merged
+        target tree rather than from the checkout.
+        """
+        repo = tmp_path / "parser-change"
+        repo.mkdir()
+        _git(repo, "init", "-b", "main")
+        _write(repo, _backlog(BASE_HEADER, [ALPHA, BETA]))
+        _commit(repo, "base")
+        _git(repo, "checkout", "-b", "other")
+
+        parser_path = repo / "scripts" / "backlog_graph.py"
+        source = parser_path.read_text(encoding="utf-8")
+        old = (
+            r'HEADER_RE = re.compile(r"^\*\*(\d+) done - (\d+) blocked - '
+            r'(\d+) pending - (\d+) total\*\*$")'
+        )
+        new = 'HEADER_RE = re.compile(r"^THIS MERGE REQUIRES A DIFFERENT HEADER$")'
+        assert old in source, "the mutation must alter the parser rule it claims to test"
+        parser_path.write_text(source.replace(old, new), encoding="utf-8")
+        _commit(repo, "change the merged parser semantics")
+        _git(repo, "checkout", "main")
+
+        # The checkout parser accepts the backlog. This proves the failure below
+        # cannot have come from the parser running the test suite.
+        checkout_graph = script.load_backlog_graph(
+            (SCRIPTS / "backlog_graph.py").read_bytes(),
+            source_label=str(SCRIPTS / "backlog_graph.py"),
+        )
+        _, checkout_defects = checkout_graph.parse_backlog(_backlog(BASE_HEADER, [ALPHA, BETA]))
+        assert checkout_defects == []
+
+        code = script.main(["--base", "main", "--head", "other", "--repo", str(repo)])
+
+        assert code == 1
+        assert "FAIL [missing-header]" in capsys.readouterr().out
+
+
+class TestEveryMergedParserDefectIsFatal:
+    def test_a_partially_parsed_backlog_cannot_report_ok(
+        self, script: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed item used to be a note while the wrapper exited 0.
+
+        The header deliberately matches the one item the parser *can* read, so
+        the header comparison alone is green. The second malformed heading is
+        a real item the parser lost, which means the header is not trustworthy
+        even though its arithmetic matches the parseable subset.
+        """
+        repo = tmp_path / "partial"
+        repo.mkdir()
+        _git(repo, "init", "-b", "main")
+        malformed = "### An item with no machine-readable slug\n\n- [ ] **pending**\n"
+        _write(
+            repo,
+            _backlog("**1 done - 0 blocked - 0 pending - 1 total**", [ALPHA]) + "\n" + malformed,
+        )
+        _commit(repo, "base")
+        _git(repo, "branch", "other")
+
+        code = script.main(["--base", "main", "--head", "other", "--repo", str(repo)])
+
+        assert code == 1
+        out = capsys.readouterr().out
+        assert "FAIL [malformed-heading]" in out
+        assert "OK:" not in out
+
+
+class TestMergedParserFailuresAreUnevaluated:
+    def test_a_syntax_error_in_the_merged_parser_returns_two(
+        self, script: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A parser that cannot load is unevaluated, not a header defect."""
+        repo = tmp_path / "broken-parser"
+        repo.mkdir()
+        _git(repo, "init", "-b", "main")
+        _write(repo, _backlog(BASE_HEADER, [ALPHA, BETA]))
+        _commit(repo, "base")
+        _git(repo, "checkout", "-b", "other")
+        (repo / "scripts" / "backlog_graph.py").write_text(
+            "def this_will_not_parse(:\n",
+            encoding="utf-8",
+        )
+        _commit(repo, "break the merged parser")
+        _git(repo, "checkout", "main")
+
+        code = script.main(["--base", "main", "--head", "other", "--repo", str(repo)])
+
+        assert code == 2
+        out = capsys.readouterr().out
+        assert "COULD NOT EVALUATE" in out
+        assert "SyntaxError" in out
+        assert "OK:" not in out
 
 
 class TestItReadsBytes:

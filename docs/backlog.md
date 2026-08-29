@@ -1996,10 +1996,32 @@ else would carry them:**
 
 - [ ] **pending**
 
-**`scripts/merged_backlog_recount.py` landed 2026-08-28 and is not wired into
-CI.** That was deliberate: whether CI *already* covers part of this is an open
-empirical question, and wiring a job before answering it risks the exact failure
-this repository keeps finding — a green check that examined the wrong pair.
+**`scripts/merged_backlog_recount.py` is proposed in PR #131 and is not wired
+into CI.** That was deliberate: whether CI *already* covers part of this is an
+open empirical question, and wiring a job before answering it risks the exact
+failure this repository keeps finding — a green check that examined the wrong
+pair.
+
+**Exact-head review found two false-pass paths before merge.** Both are fixed in
+the same PR and pinned by regressions that fail against the reviewed code:
+
+- a header claiming 188 items with zero item headings parsed zero items and
+  exited 0, because `parse_backlog` cannot run header validation without an item
+  boundary and the wrapper never called `find_defects`, which owns the
+  `no-items` refusal;
+- `--base`, `--head` and `--repo` selected a merged backlog but the wrapper
+  loaded `backlog_graph.py` beside its own `__file__`. A merge changing parser
+  semantics could therefore pass under rules that would not exist in the merge.
+  The backlog bytes and parser bytes now come from the **same merged tree**.
+
+**A second independent review found one further false pass and one exit-code
+misclassification.** A malformed item heading could be omitted from the parsed
+items while the header matched the remaining subset; non-header parse defects
+were only notes, so that partial parse exited 0. Every defect reported by the
+merged parser is now fatal. A merged parser that could not compile or execute
+raised a traceback and exited 1, conflating "could not evaluate" with "evaluated
+and defective"; parser compilation, execution and API failures now print the
+exception and exit 2. Both paths have regressions.
 
 **The question.** CI triggers on `pull_request` as well as `push`, and
 `actions/checkout@v4` is used with no `ref:` override. If that means the

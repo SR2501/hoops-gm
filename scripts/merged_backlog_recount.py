@@ -62,7 +62,7 @@ that reported success is the shape every guard here exists to avoid.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import hashlib
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -71,21 +71,27 @@ from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKLOG_PATH = "docs/backlog.md"
+PARSER_PATH = "scripts/backlog_graph.py"
 
 
-def load_backlog_graph() -> ModuleType:
-    """Import ``backlog_graph`` by path, so the rules have exactly one owner."""
-    script = Path(__file__).resolve().parent / "backlog_graph.py"
-    spec = importlib.util.spec_from_file_location("backlog_graph", script)
-    if spec is None or spec.loader is None:  # pragma: no cover - import plumbing
-        raise RuntimeError(f"could not load {script}")
-    module = importlib.util.module_from_spec(spec)
+def load_backlog_graph(source: bytes, *, source_label: str) -> ModuleType:
+    """Load the parser bytes read from the merge tree.
+
+    Loading the checkout's adjacent ``backlog_graph.py`` is a false-pass path:
+    ``--base``, ``--head`` and ``--repo`` may describe a merge whose parser is
+    different from the checkout running this wrapper. The backlog and the rules
+    that judge it must come from the same tree.
+    """
+    digest = hashlib.sha256(source).hexdigest()[:16]
+    name = f"_merged_backlog_graph_{digest}"
+    module = ModuleType(name)
+    module.__file__ = source_label
     # Registered before execution: ``backlog_graph`` defines dataclasses, and
     # ``@dataclass`` resolves annotations through ``sys.modules[cls.__module__]``.
     # An unregistered module makes that lookup return None and the import dies
     # inside the standard library, several frames from anything that names it.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    sys.modules[name] = module
+    exec(compile(source, source_label, "exec"), module.__dict__)
     return module
 
 
@@ -102,8 +108,8 @@ def _git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess[bytes
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
 
 
-def merged_backlog_text(base: str, head: str, *, cwd: Path = REPO_ROOT) -> str:
-    """The backlog as it will exist after merging ``head`` into ``base``.
+def merged_tree(base: str, head: str, *, cwd: Path = REPO_ROOT) -> str:
+    """Return the tree id produced by merging ``head`` into ``base``.
 
     Raises :class:`LookupError` when the merge cannot be evaluated, which the
     caller must report rather than treat as clean.
@@ -120,11 +126,21 @@ def merged_backlog_text(base: str, head: str, *, cwd: Path = REPO_ROOT) -> str:
     tree = stdout.splitlines()[0].strip() if stdout.strip() else ""
     if not tree:
         raise LookupError("git merge-tree produced no tree id")
+    return tree
 
-    blob = _git(["cat-file", "blob", f"{tree}:{BACKLOG_PATH}"], cwd=cwd)
+
+def tree_blob(tree: str, path: str, *, cwd: Path = REPO_ROOT) -> bytes:
+    """Read ``path`` exactly as stored in ``tree``."""
+    blob = _git(["cat-file", "blob", f"{tree}:{path}"], cwd=cwd)
     if blob.returncode != 0:
-        raise LookupError(f"{BACKLOG_PATH} is not present in the merged tree {tree}")
-    return blob.stdout.decode("utf-8")
+        raise LookupError(f"{path} is not present in the merged tree {tree}")
+    return blob.stdout
+
+
+def merged_backlog_text(base: str, head: str, *, cwd: Path = REPO_ROOT) -> str:
+    """The backlog as it will exist after merging ``head`` into ``base``."""
+    tree = merged_tree(base, head, cwd=cwd)
+    return tree_blob(tree, BACKLOG_PATH, cwd=cwd).decode("utf-8")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -142,46 +158,77 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo = Path(args.repo)
     try:
-        text = merged_backlog_text(args.base, args.head, cwd=repo)
+        tree = merged_tree(args.base, args.head, cwd=repo)
+        text = tree_blob(tree, BACKLOG_PATH, cwd=repo).decode("utf-8")
+        parser_source = tree_blob(tree, PARSER_PATH, cwd=repo)
     except LookupError as exc:
         print(f"COULD NOT EVALUATE: {exc}")
         return 2
 
-    graph = load_backlog_graph()
-    items, defects = graph.parse_backlog(text)
+    try:
+        graph = load_backlog_graph(
+            parser_source,
+            source_label=f"{tree}:{PARSER_PATH}",
+        )
+        items, defects = graph.parse_backlog(text)
+        # parse_backlog cannot validate a header against zero parsed items:
+        # there is no first item that tells it where the file's preamble ends.
+        # find_defects owns the explicit no-items refusal, and omitting it made
+        # a file claiming 188 items but containing zero headings print
+        # "0 items", "OK", exit 0.
+        defects = list(defects) + list(graph.find_defects(items))
+        known_statuses = sorted(graph.KNOWN_STATUSES)
+        item_count = len(items)
+        counts = dict.fromkeys(known_statuses, 0)
+        for item in items:
+            if item.status in counts:
+                counts[item.status] += 1
+        rendered_defects = [
+            (
+                defect.kind,
+                f"line {defect.line}: " if defect.line else "",
+                defect.message,
+            )
+            for defect in defects
+        ]
+    except Exception as exc:
+        # The parser is executable source from the merge being evaluated, not a
+        # library this wrapper controls. A syntax error, import-time failure or
+        # missing parser API means the merge could not be judged. Surface the
+        # exact failure as exit 2 rather than letting a traceback exit 1, which
+        # this tool reserves for a successfully evaluated defective merge.
+        print(
+            "COULD NOT EVALUATE: "
+            f"{tree}:{PARSER_PATH} could not judge {BACKLOG_PATH}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return 2
 
     print(f"merged {args.base} <- {args.head}")
-    print(f"  merged {BACKLOG_PATH}: {len(items)} items")
-    counts = dict.fromkeys(sorted(graph.KNOWN_STATUSES), 0)
-    for item in items:
-        if item.status in counts:
-            counts[item.status] += 1
+    print(f"  merged {BACKLOG_PATH}: {item_count} items")
     print("  " + ", ".join(f"{value} {key}" for key, value in counts.items()))
 
-    header_defects = [d for d in defects if "header" in d.kind]
-    if header_defects:
+    if rendered_defects:
         print()
-        for defect in header_defects:
-            where = f"line {defect.line}: " if defect.line else ""
-            print(f"  FAIL [{defect.kind}] {where}{defect.message}")
+        for kind, where, message in rendered_defects:
+            print(f"  FAIL [{kind}] {where}{message}")
         print()
-        print(
-            "Recount from the MERGED file above and correct the header on your "
-            "branch. Never reconcile the two branches' headers against each "
-            "other: on 2026-08-28 the right answer was neither side, twice."
-        )
+        if any("header" in kind for kind, _, _ in rendered_defects):
+            print(
+                "Recount from the MERGED file above and correct the header on "
+                "your branch. Never reconcile the two branches' headers against "
+                "each other: on 2026-08-28 the right answer was neither side, "
+                "twice."
+            )
+        else:
+            print(
+                "The merged parser reported a defect in the merged backlog. "
+                "Fix the merged file before treating its header as trustworthy."
+            )
         return 1
 
-    other = [d for d in defects if "header" not in d.kind]
-    if other:
-        print()
-        print(f"  note: {len(other)} non-header defect(s) in the merged file:")
-        for defect in other[:10]:
-            print(f"    [{defect.kind}] {defect.message[:160]}")
-        print("  These are backlog_graph's to fail on; this script checks the header.")
-
     print()
-    print("OK: the merged file's header describes the merged file.")
+    print("OK: the merged parser reports the merged backlog is internally consistent.")
     return 0
 
 
