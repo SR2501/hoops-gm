@@ -26,11 +26,15 @@ Two of them are worth flagging up front:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from threading import Barrier, Event
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -895,6 +899,135 @@ def test_an_empty_board_can_advance_to_picks_without_a_regression(session: Sessi
     evidence = feed_service.source_board_evidence(session, draft, now=NOW)
     assert evidence.board is not None
     assert evidence.board.picks_made == EARLY_PICKS
+
+
+def test_an_older_overlapping_request_cannot_replace_newer_board_state(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two request sessions may finish out of arrival order without moving back."""
+    league = _league(session)
+    draft = _draft(session, league)
+    old_payload = _snapshot(
+        session,
+        html=load("predraft"),
+        dedupe_key="GET:concurrent:old",
+        created_at=NOW,
+    )
+    draft_id = draft.id
+    session.commit()
+
+    old_at_lock = Event()
+    release_old = Event()
+    real_lock = feed_service._lock_board_scope
+
+    def delay_old_request(lock_session: Session, locked_draft: Draft) -> None:
+        if not old_at_lock.is_set():
+            old_at_lock.set()
+            assert release_old.wait(timeout=10), "newer request never released the older request"
+        real_lock(lock_session, locked_draft)
+
+    monkeypatch.setattr(feed_service, "_lock_board_scope", delay_old_request)
+
+    def ingest_old() -> object:
+        response = client.post(f"/api/v1/drafts/{draft_id}/feed/ingest", json={"apply": False})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="older-board-ingest") as executor:
+        older = executor.submit(ingest_old)
+        assert old_at_lock.wait(timeout=10), "older request did not reach the board lock"
+
+        newer_at = NOW + timedelta(seconds=30)
+        with cast("FastAPI", client.app).state.database.session() as writer:
+            new_payload = _snapshot(
+                writer,
+                html=load("early"),
+                dedupe_key="GET:concurrent:new",
+                created_at=newer_at,
+            )
+
+        newer = client.post(
+            f"/api/v1/drafts/{draft_id}/feed/ingest",
+            json={"apply": False},
+        )
+        assert newer.status_code == 200, newer.text
+        release_old.set()
+        older.result(timeout=10)
+
+    with cast("FastAPI", client.app).state.database.session() as check:
+        state = check.get(DraftSourceBoardState, draft_id)
+        assert state is not None
+        assert state.latest_bridge_payload_id == new_payload.id
+        assert state.latest_bridge_payload_id > old_payload.id
+        assert state.contact_at == newer_at
+        assert state.picks_made == EARLY_PICKS
+        assert check.scalar(select(func.count()).select_from(DraftSourceBoardState)) == 1
+        assert check.scalar(select(func.count()).select_from(DraftSourceBoardReading)) == 2
+
+    source = client.get(f"/api/v1/drafts/{draft_id}/source-board").json()
+    assert source["status"] == "available"
+    assert source["board"]["picks_made"] == EARLY_PICKS
+    assert client.get(f"/api/v1/drafts/{draft_id}/events").json()["events"] == []
+    draft_body = client.get(f"/api/v1/drafts/{draft_id}").json()
+    assert all(participant["holdings"] == [] for participant in draft_body["participants"])
+    assert "participant_id" not in str(source)
+    assert "budget" not in str(source)
+
+
+def test_two_concurrent_first_ingests_share_one_state_and_reading(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock exists before the singleton, so its first insertion is serialized."""
+    league = _league(session)
+    draft = _draft(session, league)
+    payload = _snapshot(
+        session,
+        html=load("early"),
+        dedupe_key="GET:concurrent:first",
+        created_at=NOW,
+    )
+    draft_id = draft.id
+    session.commit()
+
+    both_loaded = Barrier(2)
+    real_lock = feed_service._lock_board_scope
+
+    def align_first_ingests(lock_session: Session, locked_draft: Draft) -> None:
+        both_loaded.wait(timeout=10)
+        real_lock(lock_session, locked_draft)
+
+    monkeypatch.setattr(feed_service, "_lock_board_scope", align_first_ingests)
+
+    def ingest() -> int:
+        response = client.post(f"/api/v1/drafts/{draft_id}/feed/ingest", json={"apply": False})
+        assert response.status_code == 200, response.text
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(lambda _: ingest(), range(2))) == [200, 200]
+
+    with cast("FastAPI", client.app).state.database.session() as check:
+        state = check.get(DraftSourceBoardState, draft_id)
+        assert state is not None
+        assert state.latest_bridge_payload_id == payload.id
+        assert check.scalar(select(func.count()).select_from(DraftSourceBoardState)) == 1
+        assert check.scalar(select(func.count()).select_from(DraftSourceBoardReading)) == 1
+        assert (
+            check.scalar(
+                select(func.count())
+                .select_from(DraftFeedObservation)
+                .where(DraftFeedObservation.draft_id == draft_id)
+            )
+            == EARLY_PICKS
+        )
+
+    assert client.get(f"/api/v1/drafts/{draft_id}/events").json()["events"] == []
+    draft_body = client.get(f"/api/v1/drafts/{draft_id}").json()
+    assert all(participant["holdings"] == [] for participant in draft_body["participants"])
 
 
 def test_source_board_readings_are_isolated_by_draft(session: Session) -> None:

@@ -51,6 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import lock_refresh_scope
 from hoops_gm.db.models import (
     BridgePayload,
     Draft,
@@ -62,6 +63,7 @@ from hoops_gm.db.models import (
     DraftStatus,
     FantasyTeam,
     League,
+    RefreshArtifactType,
 )
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed.observations import (
@@ -478,6 +480,7 @@ def _record_board_attempt(
     result: RecognitionResult,
     *,
     contact_at: datetime,
+    bridge_payload_id: int,
 ) -> None:
     """Persist board contact and each unique successful content reading.
 
@@ -491,21 +494,28 @@ def _record_board_attempt(
     if state is None:
         state = DraftSourceBoardState(
             draft_id=draft.id,
+            latest_bridge_payload_id=bridge_payload_id,
             recogniser=BOARD_RECOGNISER,
             contact_at=contact_at,
         )
         session.add(state)
         session.flush()
-    state.contact_at = contact_at
+    latest_attempt = bridge_payload_id >= state.latest_bridge_payload_id
+    if latest_attempt:
+        state.latest_bridge_payload_id = bridge_payload_id
+        state.contact_at = contact_at
     if result.rejected is not None:
-        state.refusal_reason = result.rejected
+        if latest_attempt:
+            state.refusal_reason = result.rejected
         return
 
     board = result.source_board
     if board is None:  # pragma: no cover - recogniser contract
-        state.refusal_reason = "board_metadata_missing"
+        if latest_attempt:
+            state.refusal_reason = "board_metadata_missing"
         return
-    state.refusal_reason = None
+    if latest_attempt:
+        state.refusal_reason = None
 
     existing_reading = session.scalar(
         select(DraftSourceBoardReading).where(
@@ -514,7 +524,7 @@ def _record_board_attempt(
         )
     )
     if existing_reading is not None:
-        if state.artifact_key == board.artifact_key:
+        if latest_attempt and state.artifact_key == board.artifact_key:
             # Same current content, newly observed. Mutable labels and board
             # freshness may advance without manufacturing another reading.
             state.recogniser = board.recogniser
@@ -548,6 +558,7 @@ def _record_board_attempt(
 
     reading = DraftSourceBoardReading(
         draft_id=draft.id,
+        bridge_payload_id=bridge_payload_id,
         artifact_key=board.artifact_key,
         recogniser=board.recogniser,
         observed_at=board.observed_at,
@@ -577,14 +588,25 @@ def _record_board_attempt(
             raise
         return
 
-    state.artifact_key = board.artifact_key
-    state.recogniser = board.recogniser
-    state.board_observed_at = board.observed_at
-    state.layout = board.layout
-    state.seat_count = board.seat_count
-    state.round_count = board.round_count
-    state.picks_made = board.picks_made
-    state.seat_labels = list(board.seat_labels)
+    if latest_attempt:
+        state.artifact_key = board.artifact_key
+        state.recogniser = board.recogniser
+        state.board_observed_at = board.observed_at
+        state.layout = board.layout
+        state.seat_count = board.seat_count
+        state.round_count = board.round_count
+        state.picks_made = board.picks_made
+        state.seat_labels = list(board.seat_labels)
+
+
+def _lock_board_scope(session: Session, draft: Draft) -> None:
+    """Serialize one draft's board ingestion before its singleton exists."""
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key=f"draft-source-board:{draft.id}",
+        season=draft.league.season,
+    )
 
 
 def _tally(counter: dict[str, int], reason: str) -> None:
@@ -618,6 +640,17 @@ def ingest_bridge(
         .scalars()
         .all()
     )
+    # A state row cannot lock its own first insertion. The independent scope
+    # serializes both creation and update through commit on SQLite and Postgres.
+    # It is taken after the bounded capture read so an older request that was
+    # delayed here can still be identified by payload id and refused permission
+    # to move the singleton backwards.
+    if any(
+        row.source in SNAPSHOT_CAPTURE_SOURCES
+        and league_id_in_page_url(row.request_url) == context.fantrax_league_id
+        for row in rows
+    ):
+        _lock_board_scope(session, draft)
     # Selected newest-first so ``scan_limit`` keeps the *recent* window, then
     # walked oldest-first so observations are written in publication order.
     #
@@ -731,7 +764,13 @@ def ingest_bridge(
             context=context,
             draft_format=draft_format,
         )
-        _record_board_attempt(session, draft, result, contact_at=row.created_at)
+        _record_board_attempt(
+            session,
+            draft,
+            result,
+            contact_at=row.created_at,
+            bridge_payload_id=row.id,
+        )
         if result.rejected is not None:
             # Deliberately **not** merged into ``rejected``, which is documented
             # as artifacts examined on the RPC path. A snapshot of the league
@@ -1824,7 +1863,7 @@ def load_board_readings(session: Session, draft: Draft) -> list[DraftSourceBoard
         session.execute(
             select(DraftSourceBoardReading)
             .where(DraftSourceBoardReading.draft_id == draft.id)
-            .order_by(DraftSourceBoardReading.observed_at, DraftSourceBoardReading.id)
+            .order_by(DraftSourceBoardReading.bridge_payload_id)
         )
         .scalars()
         .all()

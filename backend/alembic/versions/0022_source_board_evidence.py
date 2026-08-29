@@ -32,6 +32,7 @@ def upgrade() -> None:
     op.create_table(
         "draft_source_board_readings",
         sa.Column("draft_id", sa.Integer(), nullable=False),
+        sa.Column("bridge_payload_id", sa.Integer(), nullable=False),
         sa.Column("artifact_key", sa.String(length=128), nullable=False),
         sa.Column("recogniser", sa.String(length=64), nullable=False),
         sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
@@ -71,6 +72,12 @@ def upgrade() -> None:
             name=op.f("ck_draft_source_board_readings_seats_positive"),
         ),
         sa.ForeignKeyConstraint(
+            ["bridge_payload_id"],
+            ["bridge_payloads.id"],
+            name="fk_board_reading_bridge_payload",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
             ["draft_id"],
             ["drafts.id"],
             name=op.f("fk_draft_source_board_readings_draft_id_drafts"),
@@ -90,6 +97,11 @@ def upgrade() -> None:
             unique=False,
         )
         batch_op.create_index(
+            batch_op.f("ix_draft_source_board_readings_bridge_payload_id"),
+            ["bridge_payload_id"],
+            unique=False,
+        )
+        batch_op.create_index(
             batch_op.f("ix_draft_source_board_readings_draft_id"),
             ["draft_id"],
             unique=False,
@@ -103,6 +115,7 @@ def upgrade() -> None:
     op.create_table(
         "draft_source_board_states",
         sa.Column("draft_id", sa.Integer(), nullable=False),
+        sa.Column("latest_bridge_payload_id", sa.Integer(), nullable=False),
         sa.Column("artifact_key", sa.String(length=128), nullable=True),
         sa.Column("recogniser", sa.String(length=64), nullable=False),
         sa.Column("board_observed_at", sa.DateTime(timezone=True), nullable=True),
@@ -136,6 +149,12 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "seat_count IS NULL OR seat_count >= 1",
             name=op.f("ck_draft_source_board_states_source_board_seats_positive"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["latest_bridge_payload_id"],
+            ["bridge_payloads.id"],
+            name="fk_board_state_latest_bridge_payload",
+            ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["draft_id"],

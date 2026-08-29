@@ -269,6 +269,14 @@ class DraftSourceBoardReading(IntPk, TimestampMixin, Base):
     )
 
     draft_id: Mapped[int] = mapped_column(ForeignKey("drafts.id", ondelete="CASCADE"), index=True)
+    bridge_payload_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "bridge_payloads.id",
+            name="fk_board_reading_bridge_payload",
+            ondelete="RESTRICT",
+        ),
+        index=True,
+    )
     artifact_key: Mapped[str] = mapped_column(String(128), index=True)
     recogniser: Mapped[str] = mapped_column(String(64))
     observed_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
@@ -300,6 +308,16 @@ class DraftSourceBoardState(TimestampMixin, Base):
 
     draft_id: Mapped[int] = mapped_column(
         ForeignKey("drafts.id", ondelete="CASCADE"), primary_key=True
+    )
+    #: Arrival-order tie-break for the latest attempted page snapshot. Bridge
+    #: payload ids are monotonic even when SQLite rounds two ``created_at``
+    #: values to the same second.
+    latest_bridge_payload_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "bridge_payloads.id",
+            name="fk_board_state_latest_bridge_payload",
+            ondelete="RESTRICT",
+        )
     )
     #: Latest newly stored successful board digest. Retained on a refusal or a
     #: repeated content key; ``contact_at`` still advances for either attempt.
