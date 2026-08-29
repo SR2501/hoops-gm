@@ -113,7 +113,12 @@ measured at 5.5× in band composition and 68.2%/0% in partition composition.
 
 ---
 
-## 4. Change B — add §8 condition 9, calibration on the informative statuses
+## 4. Change B — historical rejected proposal; no §8 condition 9
+
+**Status: rejected as an activation gate and non-binding. Do not implement this
+section as a condition.** Its rationale is retained as proposal history only.
+Restricted calibration is instead computed and displayed beside the `p(play)` it
+grades under ADR-018; it blocks nothing and does not enter §8.
 
 **Why.** v2 §8's conditions 2 and 3 are close to unfailable against this
 holdout's composition. This is arithmetic on published denominators, and it has
@@ -141,17 +146,16 @@ excellent and whose `questionable` cell is worthless. In a project whose stated
 rule is that **calibration beats accuracy for `p(play)`**, that is the exact
 failure the gate exists to prevent.
 
-**Text, to be added to v2 §8:**
+**Historical proposed text — rejected, not added to v2 §8, and not to be
+implemented:**
 
-> **Condition 9.** Calibration-in-the-large and the binned calibration table of
-> §7 are additionally computed over the held-out rows carrying status in
-> {`questionable`, `probable`, `doubtful`} only (n = 510 direct outcomes,
-> declared here). Activation requires |CITL error| ≤ 0.10 **on this restricted
-> set as well as on the pooled set**. Where the restricted set holds fewer than
-> 30 direct outcomes for a status, that status is reported as counts alone and
-> the restricted CITL is computed over the remainder. The restricted figure is
-> the operative one for any downstream availability consumer; the pooled figure
-> is reported for comparability and is not sufficient on its own.
+The rejected proposal would have computed calibration-in-the-large and the §7
+binned calibration table over held-out rows carrying `questionable`, `probable`
+or `doubtful` only (n = 510 direct outcomes), then required restricted
+|CITL error| ≤ 0.10 for activation. **That requirement has no force.** There is
+no condition 9, the restricted figure is not operative for activation, and the
+pooled v2 conditions remain sufficient. ADR-018 governs the restricted figure's
+display-only use.
 
 ---
 
@@ -168,10 +172,11 @@ have been chosen to favour a result, because no result has been seen.
 - **No participation outcome was read.** The author's reproduction of the cohort
   (below) queried only those two tables and never opened `player_participation`.
   **The author does not know the conversion rate of any status.**
-- **Both changes are restrictive-only.** Change A adds a required report. Change
-  B adds a required condition to a gate that already defaults to veto. Neither
-  can make activation easier. A *loosening* change at this point would deserve
-  scrutiny this document does not supply, and none is proposed.
+- **At drafting time, both proposals were restrictive-only.** Change A proposed
+  a required report. Change B would have added a required condition to a gate
+  that already defaulted to veto. That historical argument did not bind either
+  proposal: Change A was later accepted, and Change B was rejected as an
+  activation gate and is non-binding.
 - **The cohort's predictor side has been read, and that is disclosed.** See §1.
   This is the residual exposure and it is not zero: a reader must take on trust
   that reading composition did not steer the choice of amendment. The mitigation

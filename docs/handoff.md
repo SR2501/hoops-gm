@@ -31949,3 +31949,42 @@ clock. No unique off-repository holding was created.
 checks and reviews on superseded head
 `803df75909a90122aa3c862e9255f1fdd274d917`. Do not merge or self-approve from
 this lane.
+
+---
+
+## 2026-08-29 - architect - Correction: rejected Change B is non-binding throughout
+
+Independent cumulative review blocked exact head
+`e213bfaad4932c832b5f4afece34d11e519e8e70` on three semantic defects. This
+entry corrects the preceding owner-rulings entry; it does not replace or edit
+that history.
+
+First, injury preregistration v3 section 4 retained proposal-era commands to add
+condition 9 even though the document top and section 10 said Change B was
+rejected. A current-status header cannot neutralize an implementable command
+farther down the same protocol. Section 4 now says exactly that it is a
+**historical rejected proposal**, **non-binding**, and **must not be implemented
+as a condition**. The rationale remains as history, but the proposed activation
+text is rewritten in past tense and says it has no force. Restricted calibration
+is display-only under ADR-018, blocks nothing, and there is no condition 9.
+
+Second, ADR-018 consequences still described the state after the 2026-08-27
+ruling as if it were current: all v3 proposed, v2 alone governing, and Change A
+unanswered. It now labels that paragraph **State immediately after the
+2026-08-27 ruling** and separately states the current post-2026-08-29 position:
+Change A is accepted under v3 with scoped acceptance; Change B remains
+display-only and non-gating; section 8 still has no ninth condition.
+
+Third, one inline `[architect inference: ...]` survived the seven-ruling rewrite.
+It is now an owner-confirmed consequence of the availability-scope ruling:
+maximising expected games alone is not the objective because that ignores stored
+recovery value, streaming capacity, talent, and portfolio shape. Exact search now
+must return zero occurrences of `[architect inference`.
+
+**Could not verify:** As before, no fit or unblind result exists. This correction
+changes protocol meaning and documentation consistency only. It does not test
+whether ADR-018 display behavior changes a live auction decision, and it does not
+supply a participant binding or NBA-auction board evidence.
+
+**Next:** Disregard checks and review on `e213bfaa`. Require exact-replacement-head
+CI and a fresh cumulative review. Do not merge or self-approve from this lane.

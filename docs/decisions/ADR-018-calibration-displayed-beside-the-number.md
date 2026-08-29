@@ -63,10 +63,14 @@ decision rather than as an inference from this one.
 
 ## Consequences
 
-v3 stays `Proposed`, v2 governs, and §8 keeps eight conditions and gains no
-ninth. **The restricted figure is now load-bearing for a screen**, so it cannot
-be dropped as merely post-hoc. v3's Change A (the era sensitivity) is untouched
-here and still owed an answer.
+**State immediately after the 2026-08-27 ruling:** v3 remained `Proposed`, v2
+alone governed, and Change A was still owed an answer. §8 kept eight conditions
+and gained no ninth. **The restricted figure became load-bearing for a screen**,
+so it could not be dropped as merely post-hoc.
+
+**Current state after the 2026-08-29 ruling:** Change A is accepted under v3
+with scoped acceptance. Change B remains display-only and non-gating under this
+ADR; §8 still has no ninth condition.
 
 ## Amendments
 

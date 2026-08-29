@@ -79,9 +79,10 @@ Two separate returns from one slot, and the second is the one that gets missed:
 > *"**You can't do that if you have fifteen healthy guys who are just pretty good
 > and reliable.**"*
 
-**A fully healthy roster is not the safe outcome. It is an illiquid one.**
-[architect inference: this inverts the naive objective. "Maximise expected games
-played" is the wrong target.]
+**Owner-confirmed 2026-08-29 under the availability-scope ruling:** A fully
+healthy roster is not automatically the safe outcome; it may be an illiquid one.
+Maximising expected games played is not the objective by itself, because it
+ignores stored recovery value, streaming capacity, talent and portfolio shape.
 
 ## The summary, in his words
 
