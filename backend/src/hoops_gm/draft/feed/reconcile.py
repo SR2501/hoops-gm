@@ -253,7 +253,9 @@ def _independence(
     if not left or not right:
         reason = "one_side_empty"
     elif shared_artifacts:
-        # The exact defect: the same bytes read into both sides.
+        # The exact defect: the same artifact read into both sides. Usually that
+        # artifact is response bytes; ADR-020 makes rendered-board identity the
+        # parsed board content instead.
         reason = "same_artifact_on_both_sides"
     elif shared_transports:
         reason = "same_transport_on_both_sides"

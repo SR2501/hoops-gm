@@ -1,6 +1,6 @@
 """The feed's contract: what the board heard, when, and how much to trust it.
 
-Two endpoints, and the split matters.
+Three endpoints, and the split matters.
 
 ``GET /drafts/{id}/feed`` reports. It is safe to poll, takes no lock, and is
 the screen's answer to the question a live draft makes urgent: *is this board
@@ -10,7 +10,11 @@ the clock it was computed on and the provenance it came from.
 ``POST /drafts/{id}/feed/ingest`` reads the sources and, optionally, appends
 what they imply to the log.
 
-**Neither one sends Fantrax anything but a GET.** ``routes/drafts.py``'s module
+``GET /drafts/{id}/source-board`` publishes the latest rendered-board evidence
+by source column. It contains no participant ids or budgets and never changes
+the event-backed draft board.
+
+**None sends Fantrax anything but a GET.** ``routes/drafts.py``'s module
 docstring is the authority for the distinction and it applies unchanged here:
 the Automation gate governs the path that acts on the owner's live account, and
 reading a public endpoint and writing to our own SQLite file is not that path.
@@ -39,7 +43,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -181,6 +185,72 @@ class ReconciliationOut(BaseModel):
     caveats: list[str]
 
 
+class BoardRegressionOut(BaseModel):
+    """One board slot the rendered board has lost since an earlier reading."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_seat: int
+    round_number: int
+    pick_in_round: int
+    player_label: str | None
+    #: The board digest of the newest reading that still held this slot, so the
+    #: capture behind it is findable.
+    last_seen_artifact_key: str
+
+
+class SourceBoardPickOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_seat: int
+    round_number: int
+    pick_in_round: int
+    overall_pick: int
+    player_label: str | None
+    player_external_id: str | None
+
+
+class SourceBoardColumnOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_seat: int
+    #: Fantrax may rename this while the column stays fixed. Display only.
+    mutable_label: str | None
+    picks: list[SourceBoardPickOut]
+
+
+class SourceBoardSnapshotOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_key: str
+    recogniser: str
+    observed_at: datetime
+    layout: str
+    seat_count: int
+    round_count: int
+    picks_made: int
+    columns: list[SourceBoardColumnOut]
+
+
+class SourceBoardResponse(BaseModel):
+    """Rendered source evidence, never participant-attributed draft state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    draft_id: int
+    as_of: datetime
+    #: ``no_reading`` and ``refused`` are explicit so zero picks cannot masquerade
+    #: as a successful empty board.
+    status: Literal["available", "refused", "no_reading"]
+    refusal_reason: str | None
+    contact_at: datetime | None
+    contact_age_seconds: float | None
+    board: SourceBoardSnapshotOut | None
+    board_age_seconds: float | None
+    regressions: list[BoardRegressionOut]
+    caveats: list[str]
+
+
 class FeedStatusResponse(BaseModel):
     """Everything the screen needs to say how much it can be trusted."""
 
@@ -191,8 +261,7 @@ class FeedStatusResponse(BaseModel):
     #: just the feed.
     as_of: datetime
     #: ``null`` when the feed can run. A string when this draft cannot be fed
-    #: at all — most often ``seats_not_linked``, which is every mock against
-    #: strangers and is a refusal rather than a failure.
+    #: at all — for example, when its league is not linked to Fantrax.
     context_unavailable: str | None
     freshness: list[FreshnessOut]
     reconciliation: ReconciliationOut | None
@@ -212,6 +281,11 @@ class FeedStatusResponse(BaseModel):
     #: publishes, so a screen can tell whether the board it holds is the board
     #: this status describes.
     last_sequence: int
+    #: Board slots an earlier rendered reading filled and the newest one does
+    #: not. ADR-020 decision 4: the regressed board is **stored**, this is
+    #: published, and nothing is retracted. Empty is the ordinary case; non-zero
+    #: is the owner's own description of the failure this feed exists for.
+    board_regressions: list[BoardRegressionOut] = []
 
 
 class SourceOutcomeOut(BaseModel):
@@ -228,7 +302,8 @@ class SourceOutcomeOut(BaseModel):
     #: means the bridge is not sending anything at all.
     artifacts_scanned: int
     artifacts_examined: int
-    #: Captures for this league that are page snapshots, not RPC bodies.
+    #: Captures for this league that are page snapshots, not RPC bodies. The
+    #: board recogniser may read source-coordinate picks from that HTML.
     #:
     #: A non-zero value with ``artifacts_examined == 0`` is the one reading of
     #: "nothing was examined" that is not about the userscript being broken or
@@ -237,6 +312,25 @@ class SourceOutcomeOut(BaseModel):
     #: different remedy from every other zero on this screen, so it gets its own
     #: number rather than being inferred from the absence of one.
     snapshots_for_this_league: int
+    #: Page snapshots of this league that parsed as a draft board.
+    #:
+    #: ``artifacts_examined: 0`` with this non-zero is the **healthy** state
+    #: ADR-020 was written for, and it is worth reading carefully because the
+    #: shape used to mean the opposite: Fantrax serves the draft room from its
+    #: service worker, so no RPC body is observable, and the picks are coming off
+    #: the rendered page instead. Zero here with ``snapshots_for_this_league``
+    #: non-zero is the case the service-worker note describes and is not healthy.
+    boards_read: int
+    #: Why a page snapshot of this league did not become a board reading.
+    #: ``board_refused:no_board_element`` on a snapshot of the league home is the
+    #: correct answer, not a fault; the reasons that matter are a renamed build
+    #: or a capture cut mid-grid, and each names itself.
+    board_refusals: dict[str, int]
+    #: True when older board snapshots were left unparsed by the board scan
+    #: bound. Previously stored readings still participate in regression
+    #: detection, but an older reading outside the first ingest's window can be
+    #: omitted; reported because a bounded scan must not resemble a complete one.
+    board_scan_truncated: bool
     rejected: dict[str, int]
     instants_recognised: int
     #: Instants stored with a field nulled because their ``kind`` forbids it: a
@@ -458,6 +552,71 @@ def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
         blocked=list(status.blocked),
         skipped=dict(status.skipped),
         last_sequence=status.last_sequence,
+        board_regressions=[
+            BoardRegressionOut(
+                source_seat=item.source_seat,
+                round_number=item.round_number,
+                pick_in_round=item.pick_in_round,
+                player_label=item.player_label,
+                last_seen_artifact_key=item.last_seen_artifact_key,
+            )
+            for item in status.board_regressions
+        ],
+    )
+
+
+def _source_board_out(evidence: feed_service.SourceBoardEvidence) -> SourceBoardResponse:
+    board = evidence.board
+    return SourceBoardResponse(
+        draft_id=evidence.draft_id,
+        as_of=evidence.as_of,
+        status=evidence.status,
+        refusal_reason=evidence.refusal_reason,
+        contact_at=evidence.contact_at,
+        contact_age_seconds=evidence.contact_age_seconds,
+        board_age_seconds=evidence.board_age_seconds,
+        board=(
+            SourceBoardSnapshotOut(
+                artifact_key=board.artifact_key,
+                recogniser=board.recogniser,
+                observed_at=board.observed_at,
+                layout=board.layout,
+                seat_count=board.seat_count,
+                round_count=board.round_count,
+                picks_made=board.picks_made,
+                columns=[
+                    SourceBoardColumnOut(
+                        source_seat=column.source_seat,
+                        mutable_label=column.mutable_label,
+                        picks=[
+                            SourceBoardPickOut(
+                                source_seat=pick.source_seat,
+                                round_number=pick.round_number,
+                                pick_in_round=pick.pick_in_round,
+                                overall_pick=pick.overall_pick,
+                                player_label=pick.player_label,
+                                player_external_id=pick.player_external_id,
+                            )
+                            for pick in column.picks
+                        ],
+                    )
+                    for column in board.columns
+                ],
+            )
+            if board is not None
+            else None
+        ),
+        regressions=[
+            BoardRegressionOut(
+                source_seat=item.source_seat,
+                round_number=item.round_number,
+                pick_in_round=item.pick_in_round,
+                player_label=item.player_label,
+                last_seen_artifact_key=item.last_seen_artifact_key,
+            )
+            for item in evidence.regressions
+        ],
+        caveats=list(evidence.caveats),
     )
 
 
@@ -476,6 +635,23 @@ def _draft_pick_source(request: Request) -> feed_service.DraftPickSource | None:
     if client is None:
         return None
     return client  # type: ignore[no-any-return]
+
+
+@router.get(
+    "/{draft_id}/source-board",
+    response_model=SourceBoardResponse,
+    responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    summary="Latest rendered source board, without participant attribution",
+)
+def get_source_board(draft_id: int, session: SessionDep, request: Request) -> SourceBoardResponse:
+    """Publish source-coordinate evidence without changing draft state or events."""
+    require_loopback_host(
+        request,
+        error_code="drafts_local_only",
+        detail="Draft source-board evidence is only served to the local machine.",
+    )
+    draft = _require_draft(session, draft_id)
+    return _source_board_out(feed_service.source_board_evidence(session, draft))
 
 
 @router.get(
@@ -552,6 +728,9 @@ def ingest_feed(
                 artifacts_scanned=source.artifacts_scanned,
                 artifacts_examined=source.artifacts_examined,
                 snapshots_for_this_league=source.snapshots_for_this_league,
+                boards_read=source.boards_read,
+                board_refusals=dict(source.board_refusals),
+                board_scan_truncated=source.board_scan_truncated,
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
                 coerced_to_kind=source.coerced_to_kind,

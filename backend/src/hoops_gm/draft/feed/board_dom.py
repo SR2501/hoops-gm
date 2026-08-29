@@ -56,6 +56,7 @@ from typing import Final
 
 __all__ = [
     "BOARD_BODY_CLASS",
+    "BOARD_COLUMN_CLASS",
     "BOARD_HEADER_CLASS",
     "BoardParseRefused",
     "BoardPick",
@@ -409,11 +410,20 @@ def parse_draft_board(
     is produced by ``new Date(...).toISOString()``, which is genuinely UTC --
     checked against the code that emits it rather than against the ``Z`` on the
     string, because AGENTS.md records a field in this project that wears a
-    ``Z`` and is Eastern. What is *not* safe is the ``captured_at`` column on a
-    stored ``bridge_payloads`` row, which has had the offset stripped and is a
-    UTC instant wearing no marker at all. Refusing a naive value forces that
-    decision to be made where the justification lives instead of being guessed
-    here.
+    ``Z`` and is Eastern.
+
+    **What this docstring used to say about the stored column was wrong.** It
+    claimed ``bridge_payloads.captured_at`` "has had the offset stripped and is
+    a UTC instant wearing no marker at all", and made refusing a naive value the
+    caller's problem on that basis. The column is
+    :class:`~hoops_gm.db.base.UTCDateTime`, whose ``process_result_value``
+    re-attaches UTC on the way out precisely because SQLite drops the offset, so
+    a row read back through the ORM is **aware**. The refusal below is still
+    right and its justification is now the general one: a naive datetime reaching
+    a parser is a value whose zone somebody has already guessed, and this is not
+    the place to guess it again. A caller reading the column with raw SQL, or
+    any future caller holding a naive instant, still meets a named refusal
+    instead of a silent five-hour shift.
 
     :raises BoardParseRefused: for anything that would otherwise yield a
         partial reading.
@@ -421,9 +431,9 @@ def parse_draft_board(
     if captured_at.tzinfo is None or captured_at.utcoffset() is None:
         raise BoardParseRefused(
             "naive_captured_at",
-            "captured_at must be timezone-aware; a stored bridge_payloads row "
-            "carries a naive UTC instant and attaching the zone is the caller's "
-            "decision, not this parser's guess",
+            "captured_at must be timezone-aware; a naive instant is one whose "
+            "zone somebody has already guessed, and this parser is not the "
+            "place to guess it a second time",
         )
 
     builder = _DomBuilder()

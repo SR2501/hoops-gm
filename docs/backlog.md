@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**65 done - 0 blocked - 122 pending - 187 total**
+**66 done - 0 blocked - 123 pending - 189 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4249,3 +4249,44 @@ no feed at all (which is every draft recorded by hand, including the one this
 screen's fixture was captured from), and its own recorded fixture. That is
 plumbing rather than a label, and it was filed rather than rushed at 23:00 on
 the night the screen landed.
+
+### `source-board-evidence-api` - Publishing the rendered board without inventing participant identity
+
+- [x] **done**
+- **Depends on:** `draft-board-dom-parser`
+
+Added `GET /api/v1/drafts/{draft_id}/source-board`. It returns an explicit
+`available`, `refused` or `no_reading` state; the latest successful parsed board
+grouped by `source_seat`; mutable source labels; server-clock board and contact
+freshness; regressions; and the exact-content undo blind spot. It returns no
+participant ids or budgets. Board observations preserve source
+round/pick/overall/player fields and a dedicated `source_seat` column, remain
+`source_board_evidence_only`, and never append `draft_events`.
+
+The state row is separate from pick observations because a refusal and a
+zero-pick board otherwise both have zero pick rows. Keeping only observations
+would reproduce the failure this endpoint exists to prevent: "could not read
+the board" rendered as "the source board has no picks".
+
+This does not complete `draft-board-feed-integration`. The existing
+`/draft/{id}` page remains authoritative and event-backed, and its participant
+columns and budgets remain unchanged. Source-column attribution still needs an
+explicit by-construction binding, while auction and NBA board applicability
+remain unestablished. `board-dimensions-per-draft` remains a separate follow-on.
+
+### `source-board-evidence-panel` - Showing source columns beside the authoritative draft board
+
+- [ ] **pending**
+- **Depends on:** `source-board-evidence-api`
+
+Add a read-only evidence panel to `/draft/:id` that consumes
+`SourceBoardResponse` from `GET /api/v1/drafts/{draft_id}/source-board`. Render
+picked players grouped by `source_seat`, with mutable labels visibly described
+as labels rather than identity, plus board/contact age, named refusal state and
+regressions. Do not merge source columns into `DraftParticipant`, do not show
+budgets on the source panel, and do not imply that matching column positions
+establish ownership.
+
+**Acceptance:** `no_reading` and `refused` are distinct visible states rather
+than empty boards; the exact-content undo blind spot and football-snake-only
+evidence are visible; the existing event-backed `DraftSeats` board is unchanged.
