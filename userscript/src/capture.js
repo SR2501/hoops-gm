@@ -21,16 +21,20 @@
   const FANTRAX_HOSTS = new Set(["fantrax.com", "www.fantrax.com"]);
   const FANTRAX_LEAGUE_PATH_PREFIX = "/fantasy/league/";
   const LOCAL_BACKEND_ORIGIN = "http://127.0.0.1:8000";
-  // Automatic rendered-view snapshots are a lower-confidence fallback for
-  // service-worker-private responses. Keep them bounded and deliberately
-  // slow: navigation gets a prompt settled snapshot, while ordinary DOM
-  // churn can produce at most one new attempt per minute.
+  // Rendered-view snapshots are the only observed source of live draft picks:
+  // /fxpa/req is service-worker-private and getDraftPicks returned no picks
+  // against a finished draft. Keep capture bounded and deliberately slow.
   const AUTO_SNAPSHOT_MAX_CHARS = 250000;
   const AUTO_SNAPSHOT_SETTLE_MS = 2000;
   const AUTO_SNAPSHOT_MAX_SETTLE_MS = 10000;
   const AUTO_SNAPSHOT_NAV_MIN_INTERVAL_MS = 5000;
   const AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS = 60000;
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
+  const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
+  const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
+  const DRAFT_BOARD_HEADER_SELECTOR = ".league-draft-board__header";
+  const DRAFT_BOARD_BODY_SELECTOR = ".league-draft-board__body";
+  const DRAFT_CHAT_ROOT_SELECTOR = ".chat-room";
   // Fixed, not derived from window.location: capture is only ever installed
   // on pages matching the userscript's own narrow @match rule, and a fixed
   // base keeps filtering deterministic and testable outside a browser.
@@ -128,6 +132,17 @@
         parsed.pathname.startsWith(FANTRAX_LEAGUE_PATH_PREFIX) &&
         parsed.pathname.length > FANTRAX_LEAGUE_PATH_PREFIX.length
       );
+    } catch {
+      return false;
+    }
+  }
+
+  function isFantraxDraftPage(url) {
+    if (!isFantraxLeaguePage(url)) {
+      return false;
+    }
+    try {
+      return DRAFT_PAGE_PATH.test(new URL(url, CAPTURE_BASE).pathname);
     } catch {
       return false;
     }
@@ -830,17 +845,9 @@
     return doc.documentElement || null;
   }
 
-  /**
-   * Clones the selected root (never touches the live DOM) and strips
-   * `<script>`/`<style>`/`<noscript>` so no inline script content or
-   * stylesheet text is forwarded -- only rendered markup and its visible
-   * text/attribute content. Bounded so one export cannot send an unbounded
-   * payload.
-   */
-  function buildDomSnapshotHtml(doc, { maxChars = DOM_SNAPSHOT_MAX_CHARS } = {}) {
-    const root = selectSnapshotRoot(doc);
+  function cloneAndSanitizeSnapshotRoot(root) {
     if (!root || typeof root.cloneNode !== "function") {
-      return "";
+      return null;
     }
     const clone = root.cloneNode(true);
     if (typeof clone.querySelectorAll === "function") {
@@ -851,8 +858,6 @@
       }
       // Never carry form-control state into an automatic or manual snapshot.
       // Only the detached clone is changed; the live Fantrax DOM is untouched.
-      // These values are not request bodies, but stripping them structurally
-      // prevents a typed search/chat value from becoming one by accident.
       for (const node of Array.from(
         clone.querySelectorAll("input, textarea, select, option")
       )) {
@@ -870,13 +875,142 @@
         }
       }
     }
-    const html = typeof clone.outerHTML === "string" ? clone.outerHTML : "";
-    const limit = Number.isSafeInteger(maxChars) && maxChars > 0
+    return clone;
+  }
+
+  function snapshotLimit(maxChars, fallback = DOM_SNAPSHOT_MAX_CHARS) {
+    return Number.isSafeInteger(maxChars) && maxChars > 0
       ? maxChars
-      : DOM_SNAPSHOT_MAX_CHARS;
-    return html.length > limit
-      ? `${html.slice(0, limit)}\n<!-- hoops-gm bridge: truncated at ${limit} chars -->`
-      : html;
+      : fallback;
+  }
+
+  function truncateSnapshotHtml(html, limit) {
+    const marker = truncationMarker(limit);
+    if (marker.length > limit) {
+      return "";
+    }
+    const prefixBudget = limit - marker.length - 1;
+    // A raw slice can end inside an attribute, causing the parser to treat the
+    // marker as attribute text. A literal ">" is legal inside a quoted
+    // attribute, so scan tag syntax rather than searching for that byte.
+    let inTag = false;
+    let quote = null;
+    let lastCompleteTag = -1;
+    for (let index = 0; index < Math.min(prefixBudget, html.length); index += 1) {
+      const char = html[index];
+      if (!inTag) {
+        if (char === "<") {
+          inTag = true;
+        }
+        continue;
+      }
+      if (quote !== null) {
+        if (char === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === ">") {
+        lastCompleteTag = index;
+        inTag = false;
+      }
+    }
+    const prefix = lastCompleteTag >= 0 ? html.slice(0, lastCompleteTag + 1) : "";
+    return prefix ? `${prefix}\n${marker}` : marker;
+  }
+
+  function truncationMarker(limit) {
+    return `<!-- hoops-gm bridge: truncated at ${limit} chars -->`;
+  }
+
+  function chatOmissionMarker(limit) {
+    return `<!-- hoops-gm bridge: auxiliary chat omitted at ${limit} char cap -->`;
+  }
+
+  function snapshotCloneHtml(
+    clone,
+    {
+      maxChars,
+      fallbackMaxChars = DOM_SNAPSHOT_MAX_CHARS,
+      refuseTruncation = false,
+    } = {}
+  ) {
+    const html = clone && typeof clone.outerHTML === "string" ? clone.outerHTML : "";
+    const limit = snapshotLimit(maxChars, fallbackMaxChars);
+    if (html.length <= limit) {
+      return html;
+    }
+    if (refuseTruncation) {
+      throw new Error(
+        `draft board snapshot is ${html.length} chars, exceeding the ${limit}-char ` +
+        "automatic capture cap; no partial board was sent"
+      );
+    }
+    return truncateSnapshotHtml(html, limit);
+  }
+
+  /**
+   * Clones the selected root (never touches the live DOM) and strips
+   * `<script>`/`<style>`/`<noscript>` so no inline script content or
+   * stylesheet text is forwarded -- only rendered markup and its visible
+   * text/attribute content. Bounded so one export cannot send an unbounded
+   * payload.
+   */
+  function buildDomSnapshotHtml(doc, { maxChars = DOM_SNAPSHOT_MAX_CHARS } = {}) {
+    const root = selectSnapshotRoot(doc);
+    const clone = cloneAndSanitizeSnapshotRoot(root);
+    if (!clone) {
+      return "";
+    }
+    return snapshotCloneHtml(clone, { maxChars });
+  }
+
+  function buildDraftBoardSnapshotHtml(doc, { maxChars = AUTO_SNAPSHOT_MAX_CHARS } = {}) {
+    let root;
+    let chatRoot;
+    try {
+      root = doc.querySelector(DRAFT_BOARD_ROOT_SELECTOR);
+      chatRoot = doc.querySelector(DRAFT_CHAT_ROOT_SELECTOR);
+    } catch {
+      root = null;
+      chatRoot = null;
+    }
+    const clone = cloneAndSanitizeSnapshotRoot(root);
+    if (!clone || typeof clone.querySelector !== "function") {
+      throw new Error(
+        `draft page has no cloneable ${DRAFT_BOARD_ROOT_SELECTOR} subtree; no snapshot was sent`
+      );
+    }
+    const missing = [
+      DRAFT_BOARD_HEADER_SELECTOR,
+      DRAFT_BOARD_BODY_SELECTOR,
+    ].filter((selector) => !clone.querySelector(selector));
+    if (missing.length > 0) {
+      throw new Error(
+        `draft board snapshot is missing ${missing.join(" and ")}; no partial board was sent`
+      );
+    }
+    const limit = snapshotLimit(maxChars, AUTO_SNAPSHOT_MAX_CHARS);
+    const boardHtml = snapshotCloneHtml(clone, {
+      maxChars,
+      fallbackMaxChars: AUTO_SNAPSHOT_MAX_CHARS,
+      refuseTruncation: true,
+    });
+    const chatClone = cloneAndSanitizeSnapshotRoot(chatRoot);
+    const chatHtml = chatClone && typeof chatClone.outerHTML === "string"
+      ? chatClone.outerHTML
+      : "";
+    if (!chatHtml) {
+      return boardHtml;
+    }
+    const combined = `${boardHtml}\n${chatHtml}`;
+    if (combined.length <= limit) {
+      return combined;
+    }
+    const withoutChat = `${boardHtml}\n${chatOmissionMarker(limit)}`;
+    return withoutChat.length <= limit ? withoutChat : boardHtml;
   }
 
   /**
@@ -907,7 +1041,9 @@
       return { captured: false, reason: "page is hidden" };
     }
     try {
-      const html = buildDomSnapshotHtml(doc, { maxChars });
+      const html = isFantraxDraftPage(win.location.href)
+        ? buildDraftBoardSnapshotHtml(doc, { maxChars })
+        : buildDomSnapshotHtml(doc, { maxChars });
       if (!html) {
         return { captured: false, reason: "no exportable content found on this page" };
       }
@@ -920,7 +1056,11 @@
         logger,
         `hoops-gm bridge: automatic rendered-view capture failed (${err && err.message})`
       );
-      return { captured: false, reason: "unexpected error" };
+      return {
+        captured: false,
+        reason: err && typeof err.message === "string" ? err.message : "unexpected error",
+        refusal: true,
+      };
     }
   }
 
@@ -1477,7 +1617,7 @@
     let observing = false;
     let pendingSince = null;
     let pendingKind = null;
-    let lastCaptureAt = Number.NEGATIVE_INFINITY;
+    let lastAttemptAt = Number.NEGATIVE_INFINITY;
     let lastUrl = win.location.href;
     let wasPaired = hasPairedLocalTransport(transport);
     let wasReady = doc.readyState !== "loading";
@@ -1513,6 +1653,11 @@
 
     async function runSnapshot() {
       timeoutId = null;
+      // This request is now running, not pending. A mutation arriving while
+      // transport is awaited starts a new mutation cycle and must use the
+      // mutation interval rather than inheriting this request's navigation kind.
+      pendingSince = null;
+      pendingKind = null;
       if (
         stopped ||
         doc.visibilityState === "hidden" ||
@@ -1524,14 +1669,19 @@
         resetPending();
         return;
       }
-      try {
-        const result = await captureRenderedViewSnapshot({ capture, win, doc, logger });
-        if (result.captured) {
-          lastCaptureAt = nowMs();
+      lastAttemptAt = nowMs();
+      const result = await captureRenderedViewSnapshot({ capture, win, doc, logger });
+      if (
+        !result.captured &&
+        result.refusal === true &&
+        status &&
+        typeof status.recordRefusal === "function"
+      ) {
+        try {
+          status.recordRefusal(result.reason);
+        } catch {
+          // The strip must never be able to stop the capture watcher.
         }
-      } finally {
-        pendingSince = null;
-        pendingKind = null;
       }
     }
 
@@ -1561,7 +1711,7 @@
       const deadlineAt = pendingSince + settleDeadlineDelay;
       const dueAt = Math.max(
         Math.min(quietAt, deadlineAt),
-        lastCaptureAt + minInterval
+        lastAttemptAt + minInterval
       );
       if (timeoutId !== null) {
         cancelTimeout(timeoutId);
@@ -1751,6 +1901,7 @@
     FXPA_REQ_PATHNAME,
     shouldCapture,
     isFantraxLeaguePage,
+    isFantraxDraftPage,
     normalizeBody,
     buildEnvelope,
     computeDedupeKey,
@@ -1763,6 +1914,7 @@
     readExposedAppState,
     selectSnapshotRoot,
     buildDomSnapshotHtml,
+    buildDraftBoardSnapshotHtml,
     captureRenderedViewSnapshot,
     hasPairedLocalTransport,
     installAutomaticRenderedViewCapture,

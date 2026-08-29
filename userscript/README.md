@@ -233,15 +233,28 @@ and two are implemented here:
    ordinary same-view mutation attempts at least 60 seconds apart; exact-body
    dedupe independently drops unchanged views.
 
-   Only a detached clone of `main`, `#root`, `#app`, or finally `body` is
-   serialized. Scripts, styles, noscript content, and form-control state are
-   stripped from the clone; the live page is never changed. Automatic output
-   is capped at 250,000 characters and tagged `source: "rendered-view"` so it
-   can never be mistaken for a raw `/fxpa/req` response. It never reads request
-   objects, request bodies, headers, cookies, local/session storage, or
-   service-worker internals. A backend failure is warned and dropped without
-   an immediate retry loop; its in-flight key is released so a later naturally
-   rate-limited page event can resume collection after the backend returns.
+   On a draft route, only a detached clone of `.league-draft-board` is
+   serialized. That subtree contains both parser-required anchors — the seat
+   header and complete board body — while excluding the navbar/status markup
+   before it. The `.chat-room` subtree is appended only when it fits after the
+   complete board, preserving the parser's optional corroboration without
+   letting chat compete with the grid for budget. When it also fits, an omitted
+   chat gets its own auxiliary marker, not the parser's board-truncation marker,
+   so later board drift keeps its truthful refusal code; a near-cap board wins
+   over even that metadata. If either board anchor is absent or the board itself
+   exceeds the unchanged 250,000-character cap, no partial snapshot is sent and
+   the refusal appears in the status strip. Other league routes clone `main`,
+   `#root`, `#app`, or finally `body`; generic truncation stops at a tag boundary
+   so its marker cannot become part of an attribute value.
+
+   Scripts, styles, noscript content, and form-control state are stripped from
+   every clone; the live page is never changed. Automatic output is tagged
+   `source: "rendered-view"` so it can never be mistaken for a raw `/fxpa/req`
+   response. It never reads request objects, request bodies, headers, cookies,
+   local/session storage, or service-worker internals. A backend failure is
+   warned and dropped without an immediate retry loop; its in-flight key is
+   released so a later naturally rate-limited page event can resume collection
+   after the backend returns.
 3. **Manual export (guaranteed, owner-triggered).** Independent of which
    layer produced the data, the owner can invoke **hoops-gm: capture current
    Fantrax view** from Tampermonkey's extension menu at any moment. This runs
@@ -531,7 +544,8 @@ lookalike page events, the **absence** of the removed Cache Storage watcher
 timer, and the finding itself still recorded in the source), the automatic
 rendered-view fallback (exact Fantrax/local/paired guards, initial settle, SPA
 URL detection, mutation rate limiting, dedupe, visibility, detached-clone
-sanitization, and size bounds), the manual export (`captureManual`
+sanitization, draft-board scoping, parser-anchor checks, loud over-budget
+refusal, and tag-boundary truncation on other pages), the manual export (`captureManual`
 bypassing the `/fxpa/req` filter, app-state preference over DOM snapshot,
 script/style stripping, size truncation, and the Tampermonkey menu wiring),
 and the status strip (secret redaction in refusal text, the four silent

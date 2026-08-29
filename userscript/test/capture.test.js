@@ -83,6 +83,26 @@ test("isFantraxLeaguePage accepts only scoped HTTPS league pages", async () => {
   );
 });
 
+test("isFantraxDraftPage scopes only draft routes inside a Fantrax league", async () => {
+  const capture = await loadCapture();
+  assert.equal(
+    capture.isFantraxDraftPage("https://www.fantrax.com/fantasy/league/abc/draft"),
+    true
+  );
+  assert.equal(
+    capture.isFantraxDraftPage("https://www.fantrax.com/fantasy/league/abc/draft/board"),
+    true
+  );
+  assert.equal(
+    capture.isFantraxDraftPage("https://www.fantrax.com/fantasy/league/abc/draft-history"),
+    false
+  );
+  assert.equal(
+    capture.isFantraxDraftPage("https://example.test/fantasy/league/abc/draft"),
+    false
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Normalization: malformed / non-JSON bodies
 // ---------------------------------------------------------------------------
@@ -1019,6 +1039,28 @@ function makeDynamicRoot(readContent) {
   };
 }
 
+function makeDraftBoardRoot(readContent, { header = true, body = true } = {}) {
+  return {
+    cloneNode() {
+      return {
+        querySelectorAll: () => [],
+        querySelector(selector) {
+          if (selector === ".league-draft-board__header") {
+            return header ? {} : null;
+          }
+          if (selector === ".league-draft-board__body") {
+            return body ? {} : null;
+          }
+          return null;
+        },
+        get outerHTML() {
+          return readContent();
+        },
+      };
+    },
+  };
+}
+
 function makeFakeClock() {
   let current = 0;
   let nextId = 1;
@@ -1072,19 +1114,22 @@ test("buildDomSnapshotHtml strips script/style/noscript but keeps rendered conte
   assert.match(html, /<div>content<\/div>/);
 });
 
-test("buildDomSnapshotHtml truncates output past the size bound", async () => {
+test("buildDomSnapshotHtml truncates at a tag boundary so the marker is never an attribute", async () => {
   const capture = await loadCapture();
   const huge = "x".repeat(600000);
   const root = {
     cloneNode: () => ({
-      outerHTML: `<div>${huge}</div>`,
+      outerHTML: `<div data-long="safe>${huge}"><span>after</span></div>`,
       querySelectorAll: () => [],
     }),
   };
   const doc = { querySelector: (selector) => (selector === "main" ? root : null) };
   const html = capture.buildDomSnapshotHtml(doc);
-  assert.ok(html.length < huge.length + 200);
   assert.match(html, /truncated/);
+  assert.ok(html.length <= 500000, "the marker is part of the configured cap");
+  const markerAt = html.indexOf("<!-- hoops-gm bridge: truncated at");
+  assert.equal(markerAt, 0, "no complete tag fits before the cut, so only the marker is safe");
+  assert.doesNotMatch(html, /data-long=/, "an over-budget opening tag is discarded whole");
 });
 
 test("buildDomSnapshotHtml sanitizes only the detached clone's form state", async () => {
@@ -1158,7 +1203,7 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
     },
   });
   const win = {
-    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/players" },
   };
   const instance = {
     captureRenderedView: (details) => {
@@ -1177,6 +1222,7 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
   assert.equal(captured.length, 1);
   assert.equal(captured[0].url, win.location.href);
   assert.match(captured[0].raw, /truncated at 50 chars/);
+  assert.ok(captured[0].raw.length <= 50);
 
   doc.visibilityState = "hidden";
   assert.equal(
@@ -1204,6 +1250,195 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
   assert.equal(captured.length, 1);
 });
 
+test("automatic draft snapshot excludes navbar and chat so only the complete board spends the cap", async () => {
+  const capture = await loadCapture();
+  const captured = [];
+  const boardHtml = [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    '<div class="league-draft-board__body">all rounds and picks</div>',
+    "</league-draft-board-table>",
+  ].join("");
+  const board = makeDraftBoardRoot(() => boardHtml);
+  const chatHtml = `<chat-room class="chat-room">${"c".repeat(300)}</chat-room>`;
+  const chat = makeDraftBoardRoot(() => chatHtml);
+  const unrelatedPage = makeDynamicRoot(
+    () => `<main><nav>${"n".repeat(300)}</nav>${boardHtml}${chatHtml}</main>`
+  );
+  const doc = {
+    visibilityState: "visible",
+    querySelector(selector) {
+      if (selector === ".league-draft-board") {
+        return board;
+      }
+      if (selector === ".chat-room") {
+        return chat;
+      }
+      return selector === "main" ? unrelatedPage : null;
+    },
+  };
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft/board" },
+  };
+  const instance = {
+    captureRenderedView: (details) => {
+      captured.push(details);
+      return true;
+    },
+  };
+  const maxChars = boardHtml.length + 100;
+
+  const result = await capture.captureRenderedViewSnapshot({
+    capture: instance,
+    win,
+    doc,
+    maxChars,
+  });
+
+  assert.equal(result.captured, true);
+  assert.equal(result.reason, "rendered-view");
+  assert.equal(captured.length, 1);
+  assert.ok(captured[0].raw.startsWith(boardHtml));
+  assert.match(captured[0].raw, /auxiliary chat omitted at/);
+  assert.doesNotMatch(
+    captured[0].raw,
+    /hoops-gm bridge: truncated at/,
+    "the backend must not misclassify later board drift as a cut grid"
+  );
+  assert.doesNotMatch(captured[0].raw, /<nav>|<chat-room/);
+  assert.ok(captured[0].raw.length <= maxChars);
+});
+
+test("automatic draft snapshot retains chat corroboration only when it fits after the board", async () => {
+  const capture = await loadCapture();
+  const captured = [];
+  const boardHtml = [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    '<div class="league-draft-board__body">all rounds and picks</div>',
+    "</league-draft-board-table>",
+  ].join("");
+  const chatHtml = [
+    '<chat-room class="chat-room">',
+    '<div class="chat-message__name">Seat 01 drafted - 1-1 [1]</div>',
+    "</chat-room>",
+  ].join("");
+  const board = makeDraftBoardRoot(() => boardHtml);
+  const chat = makeDraftBoardRoot(() => chatHtml);
+  const result = await capture.captureRenderedViewSnapshot({
+    capture: {
+      captureRenderedView: (details) => {
+        captured.push(details);
+        return true;
+      },
+    },
+    win: { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } },
+    doc: {
+      visibilityState: "visible",
+      querySelector(selector) {
+        if (selector === ".league-draft-board") {
+          return board;
+        }
+        return selector === ".chat-room" ? chat : null;
+      },
+    },
+    maxChars: boardHtml.length + chatHtml.length + 1,
+  });
+
+  assert.equal(result.captured, true);
+  assert.equal(captured[0].raw, `${boardHtml}\n${chatHtml}`);
+  assert.match(captured[0].raw, /chat-message__name/);
+});
+
+test("a near-cap draft board drops chat metadata rather than exceeding the cap", async () => {
+  const capture = await loadCapture();
+  const boardHtml = [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    '<div class="league-draft-board__body">all rounds and picks</div>',
+    "</league-draft-board-table>",
+  ].join("");
+  const board = makeDraftBoardRoot(() => boardHtml);
+  const chat = makeDraftBoardRoot(
+    () => '<chat-room class="chat-room"><div class="chat-message__name">pick</div></chat-room>'
+  );
+  const html = capture.buildDraftBoardSnapshotHtml(
+    {
+      querySelector(selector) {
+        if (selector === ".league-draft-board") {
+          return board;
+        }
+        return selector === ".chat-room" ? chat : null;
+      },
+    },
+    { maxChars: boardHtml.length }
+  );
+
+  assert.equal(html, boardHtml);
+  assert.equal(html.length, boardHtml.length);
+});
+
+test("automatic draft snapshot refuses an over-budget board instead of sending a partial grid", async () => {
+  const capture = await loadCapture();
+  const captured = [];
+  const warnings = [];
+  const boardHtml = [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    `<div class="league-draft-board__body">${"p".repeat(300)}</div>`,
+    "</league-draft-board-table>",
+  ].join("");
+  const board = makeDraftBoardRoot(() => boardHtml);
+  const doc = {
+    visibilityState: "visible",
+    querySelector: (selector) => (selector === ".league-draft-board" ? board : null),
+  };
+  const result = await capture.captureRenderedViewSnapshot({
+    capture: {
+      captureRenderedView: (details) => {
+        captured.push(details);
+        return true;
+      },
+    },
+    win: { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } },
+    doc,
+    logger: { warn: (message) => warnings.push(message) },
+    maxChars: 250,
+  });
+
+  assert.equal(result.captured, false);
+  assert.equal(result.refusal, true);
+  assert.match(result.reason, /exceeding the 250-char automatic capture cap/);
+  assert.match(result.reason, /no partial board was sent/);
+  assert.equal(captured.length, 0);
+  assert.equal(warnings.length, 1, "the refusal must be visible rather than silently skipped");
+  assert.match(warnings[0], /automatic rendered-view capture failed/);
+});
+
+test("automatic draft snapshot refuses when the parser-required header is outside the board subtree", async () => {
+  const capture = await loadCapture();
+  const warnings = [];
+  const board = makeDraftBoardRoot(
+    () => '<league-draft-board-table class="league-draft-board"></league-draft-board-table>',
+    { header: false }
+  );
+  const result = await capture.captureRenderedViewSnapshot({
+    capture: { captureRenderedView: () => true },
+    win: { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } },
+    doc: {
+      visibilityState: "visible",
+      querySelector: (selector) => (selector === ".league-draft-board" ? board : null),
+    },
+    logger: { warn: (message) => warnings.push(message) },
+  });
+
+  assert.equal(result.captured, false);
+  assert.equal(result.refusal, true);
+  assert.match(result.reason, /missing \.league-draft-board__header/);
+  assert.match(result.reason, /no partial board was sent/);
+  assert.equal(warnings.length, 1);
+});
+
 test("automatic watcher captures initial settle, rate-limited mutations, and SPA navigation", async () => {
   const capture = await loadCapture();
   const clock = makeFakeClock();
@@ -1224,6 +1459,12 @@ test("automatic watcher captures initial settle, rate-limited mutations, and SPA
     }
   }
   const root = makeDynamicRoot(() => view);
+  const board = makeDraftBoardRoot(() => [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    `<div class="league-draft-board__body">${view}</div>`,
+    "</league-draft-board-table>",
+  ].join(""));
   const windowListeners = new Map();
   const documentListeners = new Map();
   const win = {
@@ -1235,7 +1476,12 @@ test("automatic watcher captures initial settle, rate-limited mutations, and SPA
     readyState: "complete",
     visibilityState: "visible",
     documentElement: root,
-    querySelector: (selector) => (selector === "main" ? root : null),
+    querySelector: (selector) => {
+      if (selector === ".league-draft-board" && win.location.href.includes("/draft")) {
+        return board;
+      }
+      return selector === "main" ? root : null;
+    },
     addEventListener: (name, handler) => documentListeners.set(name, handler),
     removeEventListener: (name) => documentListeners.delete(name),
   };
@@ -1302,6 +1548,132 @@ test("automatic watcher captures initial settle, rate-limited mutations, and SPA
   assert.equal(clock.pendingTimeouts(), 0);
   assert.equal(clock.pendingIntervals(), 0);
   assert.equal(windowListeners.size, 0);
+});
+
+test("automatic watcher publishes an unsafe draft snapshot refusal to the status strip", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const refusals = [];
+  const board = makeDraftBoardRoot(() => [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    `<div class="league-draft-board__body">${"p".repeat(250000)}</div>`,
+    "</league-draft-board-table>",
+  ].join(""));
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: board,
+    querySelector: (selector) => (selector === ".league-draft-board" ? board : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: () => { throw new Error("partial board was sent"); } },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 0,
+    maxSettleMs: 0,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 60000,
+    status: {
+      observeContext: () => {},
+      recordRefusal: (reason) => refusals.push(reason),
+    },
+    logger: { warn: () => {} },
+  });
+
+  clock.advance(0);
+  await flushMicrotasks();
+
+  assert.equal(refusals.length, 1);
+  assert.match(refusals[0], /no partial board was sent/);
+
+  watcher.requestSnapshot("mutation");
+  clock.advance(59999);
+  await flushMicrotasks();
+  assert.equal(refusals.length, 1, "a refusal is still an attempt and must be rate-limited");
+  clock.advance(1);
+  await flushMicrotasks();
+  assert.equal(refusals.length, 2);
+  watcher.uninstall();
+});
+
+test("a mutation during an in-flight snapshot is rate-limited from attempt start", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const root = makeDynamicRoot(() => "players");
+  let calls = 0;
+  let resolveFirst;
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: {
+      captureRenderedView: () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return true;
+      },
+    },
+    transport: {
+      backendOrigin: "http://127.0.0.1:8000",
+      isPaired: () => true,
+    },
+    win: {
+      location: { href: "https://www.fantrax.com/fantasy/league/abc/players" },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    doc: {
+      readyState: "complete",
+      visibilityState: "visible",
+      documentElement: root,
+      querySelector: (selector) => (selector === "main" ? root : null),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 0,
+    maxSettleMs: 0,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 60000,
+  });
+
+  clock.advance(0);
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+
+  watcher.requestSnapshot("mutation");
+  resolveFirst(true);
+  await flushMicrotasks();
+  clock.advance(59999);
+  await flushMicrotasks();
+  assert.equal(calls, 1, "in-flight churn cannot queue an immediate second serialization");
+  clock.advance(1);
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  watcher.uninstall();
 });
 
 test("automatic watcher waits for document-start DOMContentLoaded before initial capture", async () => {
