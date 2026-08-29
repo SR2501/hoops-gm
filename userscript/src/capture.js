@@ -1260,6 +1260,9 @@
       lastRefusalSource: null,
       lastRefusalAtMs: null,
     };
+    const scopedRefusals = new Map();
+    let unscopedRefusal = null;
+    let refusalSequence = 0;
     const listeners = new Set();
 
     function nowMs() {
@@ -1285,16 +1288,33 @@
       return { ...state };
     }
 
-    function clearRefusalFor(source) {
-      if (
-        state.lastRefusalSource !== null &&
-        state.lastRefusalSource !== source
-      ) {
+    function syncRefusalState() {
+      const candidates = [
+        ...(unscopedRefusal ? [unscopedRefusal] : []),
+        ...scopedRefusals.values(),
+      ];
+      const latest = candidates.reduce(
+        (selected, candidate) =>
+          !selected || candidate.sequence > selected.sequence ? candidate : selected,
+        null
+      );
+      if (!latest) {
+        state.lastRefusal = null;
+        state.lastRefusalSource = null;
+        state.lastRefusalAtMs = null;
         return;
       }
-      state.lastRefusal = null;
-      state.lastRefusalSource = null;
-      state.lastRefusalAtMs = null;
+      state.lastRefusal = latest.message;
+      state.lastRefusalSource = latest.source;
+      state.lastRefusalAtMs = latest.atMs;
+    }
+
+    function clearRefusalFor(source) {
+      unscopedRefusal = null;
+      if (source !== null) {
+        scopedRefusals.delete(source);
+      }
+      syncRefusalState();
     }
 
     return {
@@ -1327,10 +1347,19 @@
         emit();
       },
       recordRefusal(message, source = null) {
-        state.lastRefusal = sanitizeStatusText(message) || "unknown error";
-        state.lastRefusalSource =
-          typeof source === "string" && source ? source : null;
-        state.lastRefusalAtMs = nowMs();
+        const refusalSource = typeof source === "string" && source ? source : null;
+        const refusal = {
+          message: sanitizeStatusText(message) || "unknown error",
+          source: refusalSource,
+          atMs: nowMs(),
+          sequence: refusalSequence += 1,
+        };
+        if (refusalSource === null) {
+          unscopedRefusal = refusal;
+        } else {
+          scopedRefusals.set(refusalSource, refusal);
+        }
+        syncRefusalState();
         emit();
       },
       observeContext({ paired } = {}) {

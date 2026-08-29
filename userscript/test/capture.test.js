@@ -2228,6 +2228,9 @@ test("an unrelated success cannot clear an automatic board refusal", async () =>
   const status = capture.createBridgeStatus({ now: () => 1 });
 
   status.recordRefusal("draft board snapshot exceeds cap", "rendered-view");
+  status.recordRefusal("backend temporarily unavailable");
+  assert.equal(status.snapshot().lastRefusal, "backend temporarily unavailable");
+
   status.recordDelivered("manual-export");
   assert.equal(status.snapshot().lastRefusal, "draft board snapshot exceeds cap");
   assert.equal(status.snapshot().lastRefusalSource, "rendered-view");

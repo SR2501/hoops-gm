@@ -31665,8 +31665,10 @@ in-flight pending-state, and refusal-source guards were each mutation-checked
 green -> red -> green. An eighth independent review on the rebased head found
 the comment-state and marker-spoof defects; the ninth exact-head review found the
 unrelated-success clearing defect; the tenth found that an unchanged 0.5.2 version
-would prevent installed scripts from receiving any fix. All drove fixes, and a
-fresh exact-head review is still required after the version commit. Local Code gates passed: 92
+would prevent installed scripts from receiving any fix; the eleventh found that
+a transient failure could overwrite the sticky board refusal before unrelated
+recovery cleared it. All drove fixes, and a fresh exact-head review is still
+required after the layered-refusal commit. Local Code gates passed: 92
 userscript tests plus build; frontend lint,
 type-check, 380 tests and build; backend Ruff, format, strict mypy and 2,335
 tests (1 skipped, 41 deselected); scripts lint/format, secret scan, document
