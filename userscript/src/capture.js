@@ -1311,9 +1311,6 @@
 
     function clearRefusalFor(source) {
       unscopedRefusal = null;
-      if (source !== null) {
-        scopedRefusals.delete(source);
-      }
       syncRefusalState();
     }
 
@@ -1346,19 +1343,40 @@
         clearRefusalFor(state.lastSource);
         emit();
       },
-      recordRefusal(message, source = null) {
+      recordRefusal(message, source = null, recoveryToken = null) {
         const refusalSource = typeof source === "string" && source ? source : null;
         const refusal = {
           message: sanitizeStatusText(message) || "unknown error",
           source: refusalSource,
           atMs: nowMs(),
           sequence: refusalSequence += 1,
+          recoveryToken: Number.isSafeInteger(recoveryToken) ? recoveryToken : null,
         };
         if (refusalSource === null) {
           unscopedRefusal = refusal;
         } else {
           scopedRefusals.set(refusalSource, refusal);
         }
+        syncRefusalState();
+        emit();
+      },
+      recordRecovery(source, recoveryToken) {
+        const recoverySource = typeof source === "string" && source ? source : null;
+        if (recoverySource === null) {
+          return;
+        }
+        const refusal = scopedRefusals.get(recoverySource);
+        if (
+          !refusal ||
+          !Number.isSafeInteger(recoveryToken) ||
+          (
+            refusal.recoveryToken !== null &&
+            recoveryToken <= refusal.recoveryToken
+          )
+        ) {
+          return;
+        }
+        scopedRefusals.delete(recoverySource);
         syncRefusalState();
         emit();
       },
@@ -1680,6 +1698,7 @@
     let pendingSince = null;
     let pendingKind = null;
     let lastAttemptAt = Number.NEGATIVE_INFINITY;
+    let attemptSequence = 0;
     let lastUrl = win.location.href;
     let wasPaired = hasPairedLocalTransport(transport);
     let wasReady = doc.readyState !== "loading";
@@ -1732,15 +1751,33 @@
         return;
       }
       lastAttemptAt = nowMs();
+      const attemptToken = attemptSequence += 1;
+      const attemptUrl = win.location.href;
+      const attemptIsDraft = isFantraxDraftPage(attemptUrl);
       const result = await captureRenderedViewSnapshot({ capture, win, doc, logger });
       if (
+        result.captured &&
+        attemptIsDraft &&
+        status &&
+        typeof status.recordRecovery === "function"
+      ) {
+        try {
+          status.recordRecovery("rendered-view", attemptToken);
+        } catch {
+          // The strip must never be able to stop the capture watcher.
+        }
+      } else if (
         !result.captured &&
         result.refusal === true &&
         status &&
         typeof status.recordRefusal === "function"
       ) {
         try {
-          status.recordRefusal(result.reason, "rendered-view");
+          status.recordRefusal(
+            result.reason,
+            attemptIsDraft ? "rendered-view" : null,
+            attemptIsDraft ? attemptToken : null
+          );
         } catch {
           // The strip must never be able to stop the capture watcher.
         }

@@ -1707,6 +1707,72 @@ test("a mutation during an in-flight snapshot is rate-limited from attempt start
   watcher.uninstall();
 });
 
+test("an older rendered-view completion cannot clear a newer board refusal", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ now: clock.now });
+  let boardBody = "safe board";
+  let resolveFirst;
+  const board = makeDraftBoardRoot(() => [
+    '<league-draft-board-table class="league-draft-board">',
+    '<div class="league-draft-board__header">all seats</div>',
+    `<div class="league-draft-board__body">${boardBody}</div>`,
+    "</league-draft-board-table>",
+  ].join(""));
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: {
+      captureRenderedView: () => new Promise((resolve) => {
+        resolveFirst = resolve;
+      }),
+    },
+    transport: {
+      backendOrigin: "http://127.0.0.1:8000",
+      isPaired: () => true,
+    },
+    win: {
+      location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    doc: {
+      readyState: "complete",
+      visibilityState: "visible",
+      documentElement: board,
+      querySelector: (selector) => (selector === ".league-draft-board" ? board : null),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 0,
+    maxSettleMs: 0,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 60000,
+    status,
+    logger: { warn: () => {} },
+  });
+
+  clock.advance(0);
+  await flushMicrotasks();
+  boardBody = "x".repeat(250000);
+  watcher.requestSnapshot("mutation");
+  clock.advance(60000);
+  await flushMicrotasks();
+  assert.match(status.snapshot().lastRefusal, /no partial board was sent/);
+
+  resolveFirst(true);
+  await flushMicrotasks();
+  assert.match(
+    status.snapshot().lastRefusal,
+    /no partial board was sent/,
+    "attempt 1 cannot recover the refusal raised by attempt 2"
+  );
+  watcher.uninstall();
+});
+
 test("automatic watcher waits for document-start DOMContentLoaded before initial capture", async () => {
   const capture = await loadCapture();
   const clock = makeFakeClock();
@@ -2254,7 +2320,7 @@ test("an unrelated success cannot clear an automatic board refusal", async () =>
   const capture = await loadCapture();
   const status = capture.createBridgeStatus({ now: () => 1 });
 
-  status.recordRefusal("draft board snapshot exceeds cap", "rendered-view");
+  status.recordRefusal("draft board snapshot exceeds cap", "rendered-view", 2);
   status.recordRefusal("backend temporarily unavailable");
   assert.equal(status.snapshot().lastRefusal, "backend temporarily unavailable");
 
@@ -2263,6 +2329,18 @@ test("an unrelated success cannot clear an automatic board refusal", async () =>
   assert.equal(status.snapshot().lastRefusalSource, "rendered-view");
 
   status.recordDuplicate("rendered-view");
+  assert.equal(
+    status.snapshot().lastRefusal,
+    "draft board snapshot exceeds cap",
+    "generic same-source delivery state is not correlated to the board attempt"
+  );
+  status.recordRecovery("rendered-view", 1);
+  assert.equal(
+    status.snapshot().lastRefusal,
+    "draft board snapshot exceeds cap",
+    "an older in-flight attempt cannot clear a newer refusal"
+  );
+  status.recordRecovery("rendered-view", 3);
   assert.equal(status.snapshot().lastRefusal, null);
   assert.equal(status.snapshot().lastRefusalSource, null);
 });
