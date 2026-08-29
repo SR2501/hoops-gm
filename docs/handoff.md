@@ -31665,3 +31665,55 @@ hazard - in a new place, and it will bite the next lane that writes a tool befor
 committing it. Found by the coordinator reading the worktree, not by me: I ran
 `ruff check scripts backend` on whole directories and got exit 0, which is why my
 run and the diff-scoped run disagreed.
+
+---
+
+## 2026-08-29 - Exact-head review closed four merged-recount failure paths
+
+**Agent:** `data-engineer`. Corrective follow-up on PR #131 before merge.
+
+### What the first review found
+
+The reviewed head could falsely pass in two ways:
+
+1. `parse_backlog` cannot validate a header when it finds no item boundary.
+   Because the wrapper did not call `find_defects`, a file claiming 188 items
+   but containing no headings printed `0 items`, `OK`, and exited 0.
+2. The merged backlog was parsed by `backlog_graph.py` beside the wrapper's
+   `__file__`. `--base`, `--head`, and `--repo` therefore selected the data but
+   not the rules. A merge that changed parser semantics could pass under rules
+   absent from the resulting tree.
+
+Both were reproduced before correction. The wrapper now reads
+`docs/backlog.md` and `scripts/backlog_graph.py` from the same
+`git merge-tree --write-tree` result, executes those parser bytes, and combines
+`parse_backlog` defects with `find_defects`, including `no-items`.
+
+### What the independent second review found
+
+One more false pass remained: a malformed heading could disappear from the
+parsed item set while the header matched only the parseable subset. The wrapper
+printed that parse defect as a note and exited 0. It now treats **every defect
+reported by the merged parser as fatal**; limiting failure to header-shaped
+defects recreated the same partial-observation hazard the tool exists to catch.
+
+A broken merged parser also raised an uncaught traceback and exited 1. That was
+not a pass, but it conflated "could not evaluate" with "evaluated and
+defective." Compilation, execution, required-API access, item counting, and
+defect rendering now form one explicit evaluation boundary. Failures print the
+exception type and message and exit 2. `KeyboardInterrupt`, `SystemExit`, and
+other non-`Exception` process controls are deliberately not swallowed.
+
+Thirteen focused tests now include old-code-discriminating regressions for all
+four paths: no items, parser provenance, partial parse, and broken parser.
+
+### Could not verify
+
+- The open CI-wiring question from the preceding entry remains open. This unit
+  hardens the standalone tool; it does not establish whether GitHub's
+  `pull_request` checkout already runs `backlog_graph.py` against the generated
+  merge commit.
+- Dynamic execution was exercised with the repository's real parser and with a
+  syntax-broken parser. I did not construct every possible import-time or API
+  incompatibility; the evaluation boundary reports any ordinary `Exception`
+  as unevaluable rather than claiming success.
