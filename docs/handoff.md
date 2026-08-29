@@ -31753,3 +31753,15 @@ The first full-suite run found two integration mistakes and was not treated as a
 A fresh diff review found that both independent `AsyncBoundary` warnings inherited the draft page's fixed bottom-right positioning, so a failed source refresh could cover the authoritative board's warning and Refresh button. The source loader now owns a wrapper whose warning stays inline; the authoritative board alone keeps the fixed auction-clock warning. Structural DOM and stylesheet tests pin the two placements. The final full frontend gate after this repair is lint clean, type-check clean, **405 tests across 28 files**, and a successful production build. The repository policy gates remained green.
 
 **Could not verify:** Per coordinator instruction, no dev server was started, so the two-warning layout was not measured in a real browser. The CSS fix removes the shared fixed coordinates by construction and is covered at the selector and containment seams; exact rendered placement still awaits coordinator-owned demo inspection and GitHub CI.
+
+---
+
+## 2026-08-29 - frontend - Corrected retained-empty refusal and cross-draft source leakage
+
+**Changed:** Repaired both blockers from the independent cumulative review of PR #135 at `eb8e79e`. A refused latest attempt that retains an earlier accepted zero-pick board now calls it a **retained accepted empty reading** and says explicitly that it does not describe the refused attempt as empty; it no longer calls the combined state "not a refusal state." `SourceBoardEvidenceLoader` is now keyed by draft id, so valid-route navigation remounts the source reader instead of carrying the previous draft's warm `useAsync` data through the next request. The transition test drives draft 1 available evidence into a pending draft 2 request, proves draft 1 evidence disappears during loading, then fails draft 2 and proves the old evidence stays absent.
+
+**Now true:** The focused review-repair set passes 48 tests. The complete frontend Code gate after both repairs passes lint, type-check, **407 tests across 28 files**, and production build. Backlog graph, document terminators, secret scan, and diff whitespace remain green; no backlog status or header changed in this repair.
+
+**Could not verify:** No live backend, database, or browser was started, so route-transition paint and the retained-empty refusal copy were exercised in jsdom rather than the coordinator-owned visible demo. GitHub CI had not yet run against the eventual replacement head when this correction was appended.
+
+**Next:** Freeze the replacement PR head for a fresh independent cumulative review. Do not merge or self-approve from this lane.

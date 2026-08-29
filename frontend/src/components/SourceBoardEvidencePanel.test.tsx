@@ -164,4 +164,23 @@ describe('source-board evidence panel', () => {
       'available empty board, not a no-reading or refusal state',
     )
   })
+
+  it('names a zero-pick board retained beneath a refusal as earlier accepted evidence', () => {
+    const refusedWithRetainedEmpty = evidence('refused')
+    refusedWithRetainedEmpty.board = {
+      ...refusedWithRetainedEmpty.board!,
+      picks_made: 0,
+      columns: [],
+    }
+
+    render(<SourceBoardEvidencePanel evidence={refusedWithRetainedEmpty} />)
+
+    const empty = screen.getByTestId('source-board-empty')
+    expect(screen.getByTestId('source-board-refused')).toHaveTextContent(
+      'Latest source-board attempt refused',
+    )
+    expect(empty).toHaveTextContent('retained accepted empty reading contains no picks')
+    expect(empty).toHaveTextContent('beneath the refused latest attempt')
+    expect(empty).not.toHaveTextContent('not a no-reading or refusal state')
+  })
 })

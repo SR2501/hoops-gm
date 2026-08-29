@@ -101,8 +101,9 @@ export function SourceBoardEvidencePanel({ evidence }: { evidence: SourceBoardRe
 
           {board.picks_made === 0 ? (
             <p className="source-board__notice" data-testid="source-board-empty">
-              This accepted source reading contains no picks. It is an available empty board, not a
-              no-reading or refusal state.
+              {response.status === 'refused'
+                ? 'This retained accepted empty reading contains no picks. It remains visible beneath the refused latest attempt; it does not describe that refused attempt as an empty board.'
+                : 'This accepted source reading contains no picks. It is an available empty board, not a no-reading or refusal state.'}
             </p>
           ) : null}
 

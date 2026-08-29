@@ -1,8 +1,11 @@
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import userEvent from '@testing-library/user-event'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import auctionEvents from '../test/fixtures/draft-auction-events.recorded.json'
 import auctionState from '../test/fixtures/draft-auction-state.recorded.json'
+import snakeEvents from '../test/fixtures/draft-snake-events.recorded.json'
+import snakeState from '../test/fixtures/draft-snake-state.recorded.json'
 import type { SourceBoardResponse } from '../api/draftTypes'
 import { DraftPage } from './DraftPage'
 
@@ -22,6 +25,42 @@ const noReading: SourceBoardResponse = {
     'an exact-content undo reuses an existing artifact key and cannot appear as a new regression',
     'evidence is from one football snake draft; NBA and auction board support is unestablished',
   ],
+}
+
+function availableSource(draftId: number, playerLabel: string): SourceBoardResponse {
+  return {
+    ...noReading,
+    draft_id: draftId,
+    status: 'available',
+    contact_at: '2026-08-29T18:00:00Z',
+    contact_age_seconds: 1,
+    board_age_seconds: 1,
+    board: {
+      artifact_key: `board:${String(draftId)}`,
+      recogniser: 'board_dom',
+      observed_at: '2026-08-29T18:00:00Z',
+      layout: 'snake',
+      seat_count: 1,
+      round_count: 1,
+      picks_made: 1,
+      columns: [
+        {
+          source_seat: 1,
+          mutable_label: `Draft ${String(draftId)} label`,
+          picks: [
+            {
+              source_seat: 1,
+              round_number: 1,
+              pick_in_round: 1,
+              overall_pick: 1,
+              player_label: playerLabel,
+              player_external_id: null,
+            },
+          ],
+        },
+      ],
+    },
+  }
 }
 
 function renderBoard() {
@@ -99,5 +138,62 @@ describe('the source-board request on the draft page', () => {
     expect(await screen.findByText(/authoritative participant\/event board above is unchanged/i))
       .toBeInTheDocument()
     expect(screen.getByText('Rendered board capture is unavailable.')).toBeInTheDocument()
+  })
+
+  it('clears the previous draft source reading through the next draft loading and failure', async () => {
+    let failSecondSource = (_value: Response): void => {
+      throw new Error('second source request did not start')
+    }
+    const pendingSecondSource = new Promise<Response>((resolve) => {
+      failSecondSource = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        const forSecondDraft = url.includes('/drafts/2')
+
+        if (url.includes('/source-board')) {
+          return forSecondDraft
+            ? pendingSecondSource
+            : Promise.resolve(response(availableSource(1, 'Draft one source player')))
+        }
+
+        if (url.includes('/events')) {
+          return Promise.resolve(response(forSecondDraft ? snakeEvents : auctionEvents))
+        }
+        return Promise.resolve(response(forSecondDraft ? snakeState : auctionState))
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/draft/1']}>
+        <Link to="/draft/2">Open draft two</Link>
+        <Routes>
+          <Route path="/draft/:draftId" element={<DraftPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Draft one source player')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('link', { name: 'Open draft two' }))
+
+    expect(await screen.findByText('Loading rendered source-board evidence…')).toBeInTheDocument()
+    expect(screen.queryByText('Draft one source player')).not.toBeInTheDocument()
+
+    failSecondSource(
+      response(
+        {
+          error: 'source_board_unavailable',
+          detail: 'Draft two source board did not answer.',
+          request_id: 'req-source-draft-two',
+        },
+        503,
+      ),
+    )
+
+    expect(await screen.findByText('Draft two source board did not answer.')).toBeInTheDocument()
+    expect(screen.queryByText('Draft one source player')).not.toBeInTheDocument()
   })
 })

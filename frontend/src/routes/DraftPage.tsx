@@ -166,7 +166,7 @@ function DraftBoardLoader({ draftId }: { draftId: number }) {
       >
         {(bundle) => <DraftBoardView bundle={bundle} onRecorded={refresh} />}
       </AsyncBoundary>
-      <SourceBoardEvidenceLoader draftId={draftId} tick={tick} />
+      <SourceBoardEvidenceLoader key={draftId} draftId={draftId} tick={tick} />
     </article>
   )
 }
