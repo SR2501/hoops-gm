@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**64 done - 0 blocked - 123 pending - 187 total**
+**65 done - 0 blocked - 122 pending - 187 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1903,7 +1903,7 @@ than a parsing one. See `draft-board-feed-integration`.
 
 ### `bridge-snapshot-budget` - The snapshot cap is one league size away from eating the board
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-board-dom-parser`
 
 `AUTO_SNAPSHOT_MAX_CHARS` is 250,000 in `userscript/src/capture.js`. On the
@@ -1931,6 +1931,32 @@ evidence of the margin, or the snapshot is scoped to the board subtree rather
 than the page, or truncation is reported to the backend as a first-class field
 rather than inferred from a marker. `board_dom.py` already refuses a board cut
 mid-grid, so this is about not reaching that state on draft night.
+
+**Landed in `userscript/src/capture.js`.** Automatic captures on Fantrax draft
+routes now clone only `.league-draft-board`, the smallest observed subtree that
+contains both parser-required anchors: `.league-draft-board__header` and
+`.league-draft-board__body`. Navbar/status markup before the board no longer
+spends the unchanged 250,000-character cap. Optional chat corroboration is
+appended only when it fits after the complete board, so it can never cut the
+grid; when it also fits, omission carries a distinct auxiliary marker so the
+parser does not mislabel later board drift as truncation. A near-cap board wins
+over even that metadata. The detached board clone is refused before transport
+if either anchor is absent or the board itself is over budget, and the refusal
+reaches the visible bridge status strip. Non-draft snapshots still use the
+broader page roots, but truncation now backs up to a complete tag while tracking
+comment and quoted-attribute state, so the marker cannot land inside an
+attribute. The backend accepts the new terminal comment and the recorded legacy
+mid-attribute marker, but visible marker words cannot spoof truncation. A
+board-build refusal remains visible until a safe `rendered-view` delivery or
+duplicate clears it; unrelated manual/RPC success cannot hide the automatic
+board failure. The served userscript version is bumped to 0.5.3 so an installed
+0.5.2 can actually receive these fixes.
+
+Focused userscript tests reproduce the prior mid-attribute marker hazard, prove
+unrelated page markup is excluded, prove an over-budget board is never sent
+partially, and prove a missing parser header is loud. This closes the capture
+budget defect demonstrated by the recorded football snake board; it establishes
+nothing about the owner's NBA auction DOM, which has not been observed.
 
 ### `draft-board-feed-integration` - Joining a board reading to the draft feed
 

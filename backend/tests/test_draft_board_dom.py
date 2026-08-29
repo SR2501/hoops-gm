@@ -283,6 +283,30 @@ def test_truncation_is_detected_even_though_the_marker_is_not_a_comment() -> Non
     assert html.rindex("<", 0, marker_at) > html.rindex(">", 0, marker_at)
 
 
+def test_current_terminal_truncation_marker_is_detected() -> None:
+    html = f"{load('complete')}\n<!-- hoops-gm bridge: truncated at 250000 chars -->"
+
+    reading = parse_draft_board(html, captured_at=CAPTURED_AT)
+
+    assert reading.truncated
+    assert reading.picks_made == TOTAL_PICKS
+
+
+def test_visible_marker_words_cannot_spoof_snapshot_truncation() -> None:
+    html = load("complete")
+    spoofed = html.replace(
+        "</body>",
+        "<div>hoops-gm bridge: truncated at 250000 chars</div></body>",
+    ).replace("league-draft-board__body", "league-draft-board__grid")
+    assert spoofed != html
+    assert "hoops-gm bridge: truncated at 250000 chars" in spoofed
+
+    with pytest.raises(BoardParseRefused) as refusal:
+        parse_draft_board(spoofed, captured_at=CAPTURED_AT)
+
+    assert refusal.value.reason == "no_board_element"
+
+
 # --------------------------------------------------------------------------
 # 3. Does it refuse rather than shorten? (markup drift)
 # --------------------------------------------------------------------------

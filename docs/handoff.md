@@ -31625,3 +31625,75 @@ ADR-020 Decisions 1-4; neither amendment is accepted.
 this documentation-only unit, and its setup/storage shape remains for specialist
 implementation. The recorded board evidence still covers one football snake
 draft, not an NBA, linear, or auction draft.
+
+---
+
+## 2026-08-28 — bridge — Protected automatic draft-board snapshots
+
+**Changed:** Completed `bridge-snapshot-budget` without raising
+`AUTO_SNAPSHOT_MAX_CHARS` above 250,000 and without changing any action or
+write-path code. Automatic captures on Fantrax draft routes now clone the
+observed `.league-draft-board` subtree rather than arbitrary page markup and
+require its parser-owned `.league-draft-board__header` and
+`.league-draft-board__body` anchors on the detached clone. Navbar and status
+markup cannot consume the board budget. Optional `.chat-room` corroboration is
+appended only after the complete board and only when it fits; its omission uses
+a distinct auxiliary marker when that marker also fits, so the backend cannot
+misdiagnose later board drift as a cut grid. A board that itself exceeds the cap
+or lacks either anchor is not transported, and the refusal reaches the visible
+status strip. Generic non-draft truncation now reserves its marker inside the
+hard cap and tracks both comment and quoted-attribute state, so comment text or
+a `>` inside an attribute cannot recreate the recorded mid-attribute failure.
+The backend parser recognizes either the new terminal bridge comment or the
+recorded legacy marker proven to begin inside an open tag; visible marker words
+cannot spoof truncation. A board-build refusal stays visible until a safe
+rendered-view delivery or duplicate clears it, not an unrelated successful
+source. Refused and in-flight attempts share the existing mutation rate limit.
+The userscript package/build version is 0.5.3, so Tampermonkey can distinguish and
+install these fixes over the previously served 0.5.2.
+
+**Now true:** The full board wins the automatic-capture budget before every
+other draft-room region, while the parser's optional chat cross-check survives
+when space permits. Focused tests cover unrelated markup exhausting the old
+page-wide budget, an over-budget board producing no transport, missing header
+refusal, near-cap metadata accounting, comments and `>` inside quoted
+attributes, truthful chat-omission signalling, visible truncation-marker words,
+status-strip reporting, refusal throttling, a mutation arriving during awaited
+transport, and unrelated delivery after a board refusal. The over-budget,
+comment/quote-state, comment-boundary, safe-text, auxiliary-marker,
+legacy-marker-shape, refusal-rate, in-flight pending-state, refusal-source, and
+recovery-token guards were each mutation-checked
+green -> red -> green. An eighth independent review on the rebased head found
+the comment-state and marker-spoof defects; the ninth exact-head review found the
+unrelated-success clearing defect; the tenth found that an unchanged 0.5.2 version
+would prevent installed scripts from receiving any fix; the eleventh found that
+a transient failure could overwrite the sticky board refusal before unrelated
+recovery cleared it; the twelfth found a comment terminator could begin inside
+the content budget and end two bytes beyond it; the thirteenth found an older
+in-flight rendered-view completion could clear a newer same-source board refusal;
+the fourteenth found that generic truncation discarded almost an entire safe text
+node while backing up to the prior tag. All drove fixes, and a fresh exact-head
+review is still required after the safe-text commit. Local Code gates passed: 95
+userscript tests plus build; frontend lint,
+type-check, 380 tests and build; backend Ruff, format, strict mypy and 2,335
+tests (1 skipped, 41 deselected); scripts lint/format, secret scan, document
+terminators and backlog graph. The finished backlog recounts to its own header
+and its slug set is unchanged from the merge base.
+
+**Could not verify:** No real Fantrax draft room was available after this change,
+so the new selector/scoping path has not produced a live browser payload. Its
+DOM contract comes from the recorded 12-team, 18-round football snake capture:
+the finished board was measured at 208 KB, 22 of 42 board captures were
+page-truncated, and the reduced committed fixture confirms header and body share
+the `.league-draft-board` subtree. This does not establish that the owner's
+2026-27 NBA auction room uses that DOM, and no auction behaviour or
+applicability is claimed. Native Postgres was not run locally; the backend
+change is confined to truncation-sentinel recognition and tests, with no schema
+change. GitHub CI had not yet run against the exact final head when this entry
+was corrected.
+
+**Next:** `draft-board-feed-integration` can consume these complete
+`rendered-view` board fragments. Before relying on the path for the owner's
+auction, bridge must observe a real NBA auction room and either confirm these
+anchors or fail loudly and capture the new read-only contract; no auction action
+should be inferred from the football snake evidence.

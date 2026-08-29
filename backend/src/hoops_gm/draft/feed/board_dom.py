@@ -115,16 +115,18 @@ _CHAT_PICK = re.compile(r"drafted\s*-\s*(\d+)\s*-\s*(\d+)\s*\[\s*(\d+)\s*\]")
 #: wrong.
 _CHAT_LEAD_TOLERANCE: Final = 1
 
-#: Appended by ``capture.js`` when a snapshot exceeds ``AUTO_SNAPSHOT_MAX_CHARS``.
+#: Current and legacy markers appended by ``capture.js`` when a snapshot exceeds
+#: ``AUTO_SNAPSHOT_MAX_CHARS``.
 #:
-#: Matched against the raw string rather than against a comment node, because
-#: the userscript builds it as ``html.slice(0, limit)`` followed by the marker
-#: and the cut lands wherever it lands. In the recorded captures it lands
-#: *inside an attribute value* -- ``aria-describedby="cd`` then the marker --
-#: so an HTML parser folds the whole thing into that attribute and never
-#: reports a comment at all. Every truncated capture on record would otherwise
-#: have been read as untruncated.
-_TRUNCATION_MARKER = re.compile(r"hoops-gm bridge: truncated at (\d+) chars")
+#: Current capture emits a complete terminal comment. Historical captures put
+#: the same comment after a raw slice, which landed *inside an attribute value*.
+#: Keep that recorded shape readable, but do not scan arbitrary visible text:
+#: a team/chat label containing the marker words must not relabel board drift as
+#: truncation.
+_TERMINAL_TRUNCATION_MARKER = re.compile(
+    r"(?:\n)?<!-- hoops-gm bridge: truncated at (\d+) chars -->\s*\Z"
+)
+_LEGACY_TRUNCATION_MARKER = re.compile(r"<!-- hoops-gm bridge: truncated at (\d+) chars -->")
 
 _VOID_TAGS: Final = frozenset(
     {
@@ -385,6 +387,16 @@ def _max_chat_overall(root: _El) -> int:
     return highest
 
 
+def _snapshot_was_truncated(html: str) -> bool:
+    if _TERMINAL_TRUNCATION_MARKER.search(html) is not None:
+        return True
+    legacy = _LEGACY_TRUNCATION_MARKER.search(html)
+    if legacy is None:
+        return False
+    marker_at = legacy.start()
+    return html.rfind("<", 0, marker_at) > html.rfind(">", 0, marker_at)
+
+
 def parse_draft_board(
     html: str,
     *,
@@ -418,7 +430,7 @@ def parse_draft_board(
     builder.feed(html)
     builder.close()
     root = builder.root
-    truncated = _TRUNCATION_MARKER.search(html) is not None
+    truncated = _snapshot_was_truncated(html)
 
     def refuse(reason: str, detail: str) -> BoardParseRefused:
         # A truncated snapshot that fails a structural check almost certainly
