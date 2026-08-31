@@ -251,16 +251,22 @@ of this addendum stated Wiseman's gap as "23 straight games,
 2025-10-29..2025-12-18" as if that fully described him, which undercounts the
 first block by one game and omits the second, larger 52-game silent block
 entirely — the shape is closer to "present for one road trip in October, one in
-December, invisible the rest of the season" than to a single bounded absence,
-and the two-way/G-League reading below is weaker for him than for Huntley, who
-does return to steady coverage. Huntley and Wiseman's earlier segments still
-match a two-way/G-League assignment window, and the mechanism is confirmed
-structurally rather than by inference: the
-`g_league` `DnpReason` that `parse_participation_comment` explicitly detects
-(`"g league"`, `"g-league"`, `"two-way"`, `"assignment"`) fires on **zero** of
-the season's 43,037 rows — an assignment removes a player from the source
-entirely rather than labelling him, which is R35 made concrete. Conley's gap has
-no such assignment reading available.
+December, invisible the rest of the season" than to a single bounded absence.
+**NARROWED 2026-08-31 by architect ruling, on independent cumulative review**:
+this addendum previously read Huntley's and Wiseman's earlier segments as
+"matching a two-way/G-League assignment window" and treated the zero-`g_league`
+finding below as confirming that mechanism structurally. That overclaimed. What
+is verified is only that zero of the season's 43,037 rows carry
+`reason='g_league'` and that no `raw_comment` in the store matches the
+substrings `parse_participation_comment` checks for (`"g league"`, `"g-league"`,
+`"two-way"`, `"assignment"`) — this store's detector for that one cause never
+fires, this season. **That does not establish what caused any of the three
+gaps**: no dated, independent assignment or transaction record exists anywhere
+in this store for Conley, Huntley or Wiseman, so a G-League optioning, an
+unreported absence, a capture defect, or something else are all equally
+unruled-out. What survives, and is the actual finding this addendum supports,
+is narrower: player-specific silence exists, for reasons this store cannot
+determine, and it is invisible to the coverage tool below.
 
 **`hoops_gm.availability.coverage.measure_coverage` cannot see any of this.** It
 counts a game as observed the moment *any* participation row references it, so
@@ -272,15 +278,31 @@ list was exhaustive. Conley's window is the existence proof that the two claims
 differ: the key is present (his teammates resolve normally) and he is still
 absent from it entirely.
 
-**Cheapest source identified, not adopted.** `nba_api.stats.endpoints` contains
-exactly one roster-shaped call, `CommonTeamRoster` — a **current-snapshot**
-endpoint with no historical form, checked by enumerating the installed
-package's endpoint submodules. It cannot retroactively reconstruct 2025-26
-intervals; captured prospectively, one snapshot per team per day, it could
-build genuine roster-interval evidence for 2026-27 onward. No NBA
-transactions/waiver-wire endpoint exists in `nba_api` at all. An authoritative
-historical transactions source is a new, currently unvetted adapter, which this
-addendum names and does not select.
+**Cheapest source discussion, corrected 2026-08-31 by architect ruling on
+independent review.** This addendum previously called `CommonTeamRoster` a
+"current-snapshot endpoint with no historical form," concluded from enumerating
+`nba_api`'s endpoint submodules without calling it. That was wrong: installed
+`nba_api` **1.11.4**'s `CommonTeamRoster(team_id, season=..., ...)` accepts a
+`season` parameter and returns a genuinely different roster per season —
+independently verified with a single throttled live call pair (one team,
+`season="2025-26"` vs `"2024-25"`: 18 players each, 8 IDs present in one season
+and absent from the other). It is **season-scoped**, not current-only. What it
+still lacks is any per-player effective-date field: its headers are `TeamID,
+SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION, HEIGHT, WEIGHT,
+BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED`, and `HOW_ACQUIRED` is a
+sometimes-null text label carrying no date. A season-scoped, undated snapshot
+cannot reconstruct *within-season* roster intervals. `CommonAllPlayers` and
+`PlayerIndex` are the same shape and already adapted here (`nba-stats.md`) —
+existing, cheap, season-level evidence, not a within-season answer either. No
+NBA transactions/waiver-wire endpoint exists in `nba_api` at all. Captured
+**prospectively** at a regular cadence, `CommonTeamRoster` snapshots could
+bound a future roster change to the gap between two captures, which is cheaper
+than a new adapter and still short of a dated transaction record. Any
+implementation that calls `CommonTeamRoster` or any other not-yet-adapted NBA
+endpoint requires the Adapter gate in full — fixture, parser contract, loud live
+smoke — regardless of NBA already being an existing source elsewhere in this
+project. An authoritative historical transactions source is a new, currently
+unvetted adapter, which this addendum names and does not select.
 
 Reproduce these counts without a committed script — the queries were exploratory
 and are not shipped as adapter code, deliberately, because no source or fit is
