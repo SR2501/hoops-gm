@@ -118,6 +118,7 @@ _AUCTION_LOTS = (
 )
 
 _AUCTION_CORRECTION_LOT = ("Cassian Ferro", 10, Decimal("18.00"))
+_AUCTION_PLANS = (*_AUCTION_LOTS, _AUCTION_CORRECTION_LOT)
 
 _SNAKE_PICKS = (
     "Ansel Whitcombe",
@@ -216,6 +217,22 @@ def _seats(names: tuple[str, ...]) -> list[service.ParticipantSpec]:
     ]
 
 
+def _require_complete_auction_players(
+    selection_players: Sequence[CanonicalDraftPlayer] | None,
+) -> None:
+    """Refuse a canonical cohort that cannot cover every planned auction lot."""
+    if selection_players is None:
+        return
+    required = len(_AUCTION_PLANS)
+    supplied = len(selection_players)
+    if supplied < required:
+        raise DemoSeedRefused(
+            f"the composed auction requires {required} canonical players for its planned lots; "
+            f"received {supplied}. Refusing before any draft write rather than returning a "
+            "partial category board."
+        )
+
+
 def seed_auction_draft(
     session: Session,
     *,
@@ -224,10 +241,11 @@ def seed_auction_draft(
     """A recorded auction mock, driven through the real recorders.
 
     ``None`` preserves the standalone seed's invented, unresolved names. The
-    composed seed passes canonical players from its synthetic projection import;
-    only those supplied are selected, so a short cohort cannot be padded with
-    names that would make its category-table join partial without saying so.
+    composed seed passes canonical players from its synthetic projection import
+    and must supply enough for every planned lot; a short canonical cohort
+    refuses before the draft is created.
     """
+    _require_complete_auction_players(selection_players)
     league = _demo_league(
         session, name="Auction mock league", fmt=DraftType.AUCTION, budget=AUCTION_BUDGET
     )
@@ -242,16 +260,18 @@ def seed_auction_draft(
     )
     seats = {seat.team_slot: seat.id for seat in draft.participants}
 
-    plans = (*_AUCTION_LOTS, _AUCTION_CORRECTION_LOT)
     seeded_lots: list[tuple[str, int | None, int, Decimal]]
     if selection_players is None:
         seeded_lots = [
-            (player_label, None, winning_slot, price) for player_label, winning_slot, price in plans
+            (player_label, None, winning_slot, price)
+            for player_label, winning_slot, price in _AUCTION_PLANS
         ]
     else:
         seeded_lots = [
             (player.player_label, player.player_id, winning_slot, price)
-            for player, (_, winning_slot, price) in zip(selection_players, plans, strict=False)
+            for player, (_, winning_slot, price) in zip(
+                selection_players, _AUCTION_PLANS, strict=False
+            )
         ]
 
     state = service.load_state(session, draft)

@@ -23,6 +23,10 @@ $env:PYTHONPATH = "$PWD\src"
 python -m hoops_gm.dev.seed_demo --database-url "sqlite+pysqlite:///../demo_all.db"
 ```
 
+If you override `--cohort-size`, it must be at least **7** because the auction
+demo has seven planned lots. Values from 1 through 6 refuse before the
+transaction commits rather than printing success for a partial category board.
+
 Then serve it, from a **second** shell in `backend/`:
 
 ```powershell
@@ -116,7 +120,9 @@ category detail therefore says **7 of 7 selections joined**, and the seven seats
 holding one player render visible **1-to-7 per-game-rate rankings**. The player
 names are real only because the identity join requires canonical IDs; every
 projection value, selection, seat and price remains synthetic, and the page
-continues to say this is not expected performance.
+continues to say this is not expected performance. A composed cohort shorter
+than those seven planned lots refuses before any draft write; it never returns
+a successful partial board.
 
 **Do not test a screen by scanning it for error words.** A scan for
 `could not|cannot|failed|no current` returns **true on two working screens**:

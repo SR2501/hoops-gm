@@ -42,7 +42,7 @@ from hoops_gm.dev.seed_demo import (
     main,
     seed_demo,
 )
-from hoops_gm.dev.seed_draft import seed_drafts
+from hoops_gm.dev.seed_draft import CanonicalDraftPlayer, seed_drafts
 from hoops_gm.dev.seed_schedule_grid import (
     FANTRAX_LEAGUE_ID,
     LEAGUE_NAME,
@@ -225,6 +225,36 @@ def test_the_standalone_draft_seed_keeps_its_invented_names_unresolved(
         )
         == 4
     )
+
+
+def test_a_short_canonical_auction_sequence_refuses_before_any_draft_write(
+    database: Database,
+) -> None:
+    """A supplied canonical cohort is complete or the draft seed writes nothing."""
+    with pytest.raises(DemoSeedRefused) as refusal, database.session() as session:
+        canonical = [
+            Player(
+                full_name=f"Canonical {number}",
+                normalized_name=normalize_name(f"Canonical {number}").key,
+            )
+            for number in range(1, 7)
+        ]
+        session.add_all(canonical)
+        session.flush()
+        players = tuple(
+            CanonicalDraftPlayer(player_id=player.id, player_label=player.full_name)
+            for player in canonical
+        )
+        seed_drafts(session, auction_players=players)
+
+    assert "requires 7 canonical players" in str(refusal.value)
+    assert "received 6" in str(refusal.value)
+    assert "partial category board" in str(refusal.value)
+    with database.session() as session:
+        assert session.scalar(select(func.count()).select_from(Player)) == 0
+        assert session.scalar(select(func.count()).select_from(League)) == 0
+        assert session.scalar(select(func.count()).select_from(Draft)) == 0
+        assert session.scalar(select(func.count()).select_from(DraftEvent)) == 0
 
 
 def test_the_dashboard_league_is_the_one_both_screens_are_hardcoded_to(
@@ -540,6 +570,25 @@ def test_the_cli_prints_proof_grouped_by_screen_and_exits_zero(
     assert printed["draft_screen"]["auction_selections"] > 0
     assert printed["draft_screen"]["snake_selections"] > 0
     assert printed["frontend_expects_league_id"] == FRONTEND_LEAGUE_ID
+
+
+def test_the_cli_refuses_a_short_composed_cohort_without_leaving_partial_state(
+    database: Database, settings: Settings, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The operator sees a refusal, not a successful six-selection demo."""
+
+    exit_code = main(["--database-url", settings.database_url, "--cohort-size", "6"])
+
+    assert exit_code == 2
+    stderr = capsys.readouterr().err
+    assert "refused:" in stderr
+    assert "requires 7 canonical players" in stderr
+    assert "received 6" in stderr
+    with database.session() as session:
+        assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
+        assert session.scalar(select(func.count()).select_from(Projection)) == 0
+        assert session.scalar(select(func.count()).select_from(League)) == 0
+        assert session.scalar(select(func.count()).select_from(Draft)) == 0
 
 
 def test_the_cli_exits_two_and_names_the_repeat_run_on_a_second_go(

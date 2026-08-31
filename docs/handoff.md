@@ -32102,3 +32102,45 @@ run on the eventual committed head when this entry was appended.
 
 **Next:** Review and run CI on the frozen PR head, especially PostgreSQL. Do not
 merge or self-approve from this lane.
+
+---
+
+## 2026-08-31 - backend - Correction: short canonical demo cohorts refuse
+
+**Corrected:** The preceding composed-demo entry proved the default 60-player
+cohort and the eight-player test cohort, but its no-partial-board claim was
+false for `--cohort-size 1..6`. `seed_auction_draft` paired a non-NULL canonical
+sequence with seven planned lots using a non-strict zip, so a short sequence
+silently produced fewer selections and the CLI still returned success. The
+standalone `None` path was not affected.
+
+**Changed:** `seed_auction_draft` now validates a supplied canonical sequence
+before creating the demo league, draft, participants or events. Fewer than the
+seven planned auction lots raises the existing `DemoSeedRefused` with the
+required and supplied counts and names the partial-board hazard. Extra cohort
+players remain harmless; duplicate-ID policy was not added because the composed
+caller selects one row per canonical `Projection.player_id`.
+
+**Now true:** A six-player programmatic input raises before the first draft
+write. A composed six-player CLI run prints `refused:`, exits 2, and rolls back
+the schedule, projection, league and draft writes instead of returning a
+success-shaped six-selection category board. The standalone `seed_draft`
+continues to use its seven invented labels with NULL player ids.
+
+**Verification:** The complete targeted seed suites passed with 26 tests. The
+full offline backend suite passed with 2,380 passed, 1 skipped and 41
+deselected. Backend Ruff check and format, repository script Ruff check and
+format, and strict mypy over 229 source files passed. Mutation M13 disables only
+the new lower-bound call and both short-input tests fail because partial success
+returns; the complete harness reported 13 caught, zero survived and zero
+harness failures. Secret scan, diff whitespace and the combined backlog graph
+and recount passed at 69 done, 121 pending and 190 total.
+
+**Could not verify:** Native PostgreSQL was not available locally, so the
+replacement exact-head PostgreSQL job remains required. The category page was
+not rendered in a live browser, and no claim about the synthetic projection
+values changed. GitHub CI had not run on the eventual replacement head when
+this correction was appended.
+
+**Next:** Review and run CI on the frozen replacement head, especially the
+PostgreSQL suite. Do not merge or self-approve from this lane.

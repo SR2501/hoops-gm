@@ -43,6 +43,9 @@ attribution:
   standalone draft path and discards the exact projection-cohort IDs it just
   selected. Both API responses still answer 200, so only the end-to-end join
   assertion catches it.
+* **M13** disables the canonical-cohort lower bound. The six-player CLI then
+  returns a success-shaped partial auction again, and the direct boundary test
+  proves the refusal had to happen before the first draft write.
 """
 
 from __future__ import annotations
@@ -77,6 +80,7 @@ ENV = {
 TESTS = ["tests/test_seed_demo.py"]
 
 DEMO = "src/hoops_gm/dev/seed_demo.py"
+DRAFT = "src/hoops_gm/dev/seed_draft.py"
 GRID = "src/hoops_gm/dev/seed_schedule_grid.py"
 
 MUTATIONS: list[tuple[str, str, str, str]] = [
@@ -157,6 +161,12 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         DEMO,
         "    drafts = seed_drafts(session, auction_players=auction_players)",
         "    drafts = seed_drafts(session)",
+    ),
+    (
+        "M13 short canonical auction cohort guard disabled",
+        DRAFT,
+        "    _require_complete_auction_players(selection_players)\n    league = _demo_league(",
+        "    league = _demo_league(",
     ),
 ]
 

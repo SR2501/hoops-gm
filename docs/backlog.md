@@ -956,13 +956,16 @@ Three corrections to the reconstruction this unit started from, each driven:
   than a repeat. `looks_like_a_previous_demo_seed` adds the sentence that tells
   the two apart. It grants no permission and changes no guard.
 
-Mutation evidence in `scripts/mutate_seed_demo.py`: 12 mutations, 12 caught, 0
+Mutation evidence in `scripts/mutate_seed_demo.py`: 13 mutations, 13 caught, 0
 survived, 0 harness failures. M07 — a `session.commit()` between the two
 seeders, which is exactly what composing them at the shell does — is the only
 one that distinguishes "one atomic session" from "the refusal happened to fire
 before anything was written", and it reddens exactly one test. M12 removes the
 typed projection-cohort input from `seed_drafts`; both read routes still answer
 200, but the category join returns to 0 of 7 and the end-to-end test reddens.
+M13 disables the seven-player lower bound; the six-player composed seed returns
+success with a partial board again, so both the programmatic boundary and CLI
+refusal tests redden.
 
 **The composed category detail is now feedbackable.** `seed_demo` passes the
 exact canonical players from its synthetic `ProjectionImport` into
@@ -973,7 +976,10 @@ directly and no name is matched. On a fresh default database
 60-row synthetic cohort, joins 7 of 7, and ranks the seven occupied seats
 1-to-7 on the already-shipped per-game-rate table. Standalone `seed_draft`
 retains its invented labels and NULL IDs, so it remains the explicit unresolved
-read path rather than silently adopting composition-only semantics.
+read path rather than silently adopting composition-only semantics. A non-NULL
+canonical input shorter than the seven planned lots raises `DemoSeedRefused`
+before any draft write; the composed transaction therefore rolls back its
+earlier schedule and projection writes instead of returning a partial board.
 
 **A real store slipped every guard, and closing it was the larger half of this
 unit.** The owner's database at `hoops-gm-data/hoops_gm.db` holds 0 leagues and
