@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**68 done - 0 blocked - 121 pending - 189 total**
+**69 done - 0 blocked - 121 pending - 190 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2450,6 +2450,20 @@ expected-games fusion remain separate tasks.
 - **Depends on:** `draft-recommender`, `frontend-skeleton`, `risk-adjusted-valuation`
 
 The reasoning behind every overlay recommendation: full category math, punt-fit breakdown, durability and shutdown detail, contingent-value implications, schedule context, and live inflation state in auction. The overlay shows the decision, the dashboard shows why.
+
+### `dashboard-launchpad` - Turning the dashboard root into a working-surface launchpad
+
+- [x] **done** - Implemented 2026-08-31 by `frontend`.
+- **Depends on:** `draft-tracker-screen`, `frontend-skeleton`, `projections-ui`, `schedule-grid-ui`
+
+The root route names only surfaces that exist in the route table and distinguishes
+their existence from whether the current database can supply usable evidence. It
+reads the existing draft-list endpoint to link an in-progress auction and that
+same draft's league-category rate table without assuming either id. Drafts remain
+an observational recorder; Projections, Reliability, and Schedule are labelled
+evidence-only, and `dashboard-evidence-views` remains pending because this unit
+adds no recommendation, valuation, availability estimate, or decision-bearing
+arithmetic.
 
 ### `deployment` - Preparing deployment and the Postgres migration path
 
