@@ -956,11 +956,30 @@ Three corrections to the reconstruction this unit started from, each driven:
   than a repeat. `looks_like_a_previous_demo_seed` adds the sentence that tells
   the two apart. It grants no permission and changes no guard.
 
-Mutation evidence in `scripts/mutate_seed_demo.py`: 11 mutations, 11 caught, 0
+Mutation evidence in `scripts/mutate_seed_demo.py`: 13 mutations, 13 caught, 0
 survived, 0 harness failures. M07 — a `session.commit()` between the two
 seeders, which is exactly what composing them at the shell does — is the only
 one that distinguishes "one atomic session" from "the refusal happened to fire
-before anything was written", and it reddens exactly one test.
+before anything was written", and it reddens exactly one test. M12 removes the
+typed projection-cohort input from `seed_drafts`; both read routes still answer
+200, but the category join returns to 0 of 7 and the end-to-end test reddens.
+M13 disables the seven-player lower bound; the six-player composed seed returns
+success with a partial board again, so both the programmatic boundary and CLI
+refusal tests redden.
+
+**The composed category detail is now feedbackable.** `seed_demo` passes the
+exact canonical players from its synthetic `ProjectionImport` into
+`seed_drafts`' narrow optional input. The auction still goes through the
+production nomination, bid, sale and void writers; no draft row is constructed
+directly and no name is matched. On a fresh default database
+`/draft/1/categories` receives seven holdings whose IDs all belong to the
+60-row synthetic cohort, joins 7 of 7, and ranks the seven occupied seats
+1-to-7 on the already-shipped per-game-rate table. Standalone `seed_draft`
+retains its invented labels and NULL IDs, so it remains the explicit unresolved
+read path rather than silently adopting composition-only semantics. A non-NULL
+canonical input shorter than the seven planned lots raises `DemoSeedRefused`
+before any draft write; the composed transaction therefore rolls back its
+earlier schedule and projection writes instead of returning a partial board.
 
 **A real store slipped every guard, and closing it was the larger half of this
 unit.** The owner's database at `hoops-gm-data/hoops_gm.db` holds 0 leagues and
@@ -4205,10 +4224,12 @@ correcting any of them means inventing a number:
   on a sum, for that reason alone. The joined-player count is drawn beside every
   seat name. Correcting it means projecting the players nobody has drafted.
 - **Unranked is not last.** A seat with nothing joinable gets no rank, no tier
-  and no colour. This is not hypothetical: **every holding in the seeded demo
-  carries `player_id: null`**, because `seed_demo` invents draft names the
-  identity crosswalk cannot match, so the all-unranked board is what a
-  first-time reader meets. Nothing is matched by name, ever.
+  and no colour. The standalone `seed_draft` command still demonstrates this:
+  its invented labels deliberately carry `player_id: null`. The composed
+  `seed_demo` now exercises the other path honestly by passing canonical IDs
+  from its exact synthetic projection import, so the first category screen
+  joins 7 of 7 selections and ranks the seven occupied seats 1-to-7. Nothing is
+  matched by name, ever.
 - **The nine categories are unverified.** They come from
   `docs/league/2025-26-rules-baseline.md`, which calls itself historical and not
   verified for 2026-27. The served OpenAPI document exposes nineteen paths and

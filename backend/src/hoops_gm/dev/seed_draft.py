@@ -1,11 +1,13 @@
 """Seed a local database with two recorded mock drafts, end to end.
 
-**Every name, seat and price here is invented.** Nothing in this database is a
-record of a draft that happened, and a screenshot taken from the screen it
-drives proves *shape* and nothing else — not a real room's pace, not a real
-price distribution, not what a real nomination order looks like. The seeded
-drafts say so in their own ``notes`` field, so a reader who finds this database
-without finding this file still learns it from the data.
+**Every selection, seat and price here is invented.** Standalone player names
+are invented too. The composed demo may instead supply canonical names from its
+synthetic projection cohort so the category screen can exercise its identity
+join, but that still records no draft that happened. A screenshot proves
+*shape* and nothing else — not a real room's pace, not a real price distribution,
+not what a real nomination order looks like. The seeded drafts say so in their
+own ``notes`` field, so a reader who finds this database without finding this
+file still learns it from the data.
 
 **Why this exists.** ``GET /api/v1/drafts`` has never returned a non-empty body
 outside pytest, and a screen is about to be built against it. The same gap the
@@ -42,6 +44,7 @@ import argparse
 import json
 import sys
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -72,8 +75,9 @@ DEMO_PREFIX = "[demo] "
 SEEDED_AT = datetime(2026, 8, 21, 19, 30, tzinfo=UTC)
 
 DEMO_NOTE = (
-    "Synthetic. Every seat, name and price in this draft is invented and no "
-    "part of it records a draft that happened."
+    "Synthetic. Every seat, price and selection in this draft is invented. "
+    "Player labels may be canonical synthetic-demo cohort names; no part of "
+    "this records a draft that happened."
 )
 
 AUCTION_TEAMS = 12
@@ -100,10 +104,10 @@ _AUCTION_SEATS = (
 
 _SNAKE_SEATS = _AUCTION_SEATS[:SNAKE_TEAMS]
 
-#: Invented players. Deliberately not real NBA names: a demo database sitting
-#: next to real captures should not read as one, and this unit resolves nothing
-#: against the crosswalk anyway — `player_id` stays NULL throughout, which is
-#: exactly the state a mock on an un-ingested site produces.
+#: Standalone labels. Deliberately not real NBA names: a demo database sitting
+#: next to real captures should not read as one. ``seed_demo`` replaces them
+#: through the typed optional input; the standalone command leaves ``player_id``
+#: NULL, exactly the state a mock on an un-ingested site produces.
 _AUCTION_LOTS = (
     ("Ansel Whitcombe", 1, Decimal("62.00")),
     ("Dov Kestrel", 4, Decimal("48.00")),
@@ -112,6 +116,9 @@ _AUCTION_LOTS = (
     ("Teodor Fane", 11, Decimal("29.00")),
     ("Oskar Vellamo", 5, Decimal("22.00")),
 )
+
+_AUCTION_CORRECTION_LOT = ("Cassian Ferro", 10, Decimal("18.00"))
+_AUCTION_PLANS = (*_AUCTION_LOTS, _AUCTION_CORRECTION_LOT)
 
 _SNAKE_PICKS = (
     "Ansel Whitcombe",
@@ -127,6 +134,14 @@ _SNAKE_PICKS = (
     "Bodhi Ngata",
     "Solomon Reyes-Okafor",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalDraftPlayer:
+    """A canonical player the composed demo may record instead of an invented name."""
+
+    player_id: int
+    player_label: str
 
 
 @dataclass(frozen=True)
@@ -202,8 +217,35 @@ def _seats(names: tuple[str, ...]) -> list[service.ParticipantSpec]:
     ]
 
 
-def seed_auction_draft(session: Session) -> tuple[League, Draft, DraftStateView]:
-    """A recorded auction mock, driven through the real recorders."""
+def _require_complete_auction_players(
+    selection_players: Sequence[CanonicalDraftPlayer] | None,
+) -> None:
+    """Refuse a canonical cohort that cannot cover every planned auction lot."""
+    if selection_players is None:
+        return
+    required = len(_AUCTION_PLANS)
+    supplied = len(selection_players)
+    if supplied < required:
+        raise DemoSeedRefused(
+            f"the composed auction requires {required} canonical players for its planned lots; "
+            f"received {supplied}. Refusing before any draft write rather than returning a "
+            "partial category board."
+        )
+
+
+def seed_auction_draft(
+    session: Session,
+    *,
+    selection_players: Sequence[CanonicalDraftPlayer] | None = None,
+) -> tuple[League, Draft, DraftStateView]:
+    """A recorded auction mock, driven through the real recorders.
+
+    ``None`` preserves the standalone seed's invented, unresolved names. The
+    composed seed passes canonical players from its synthetic projection import
+    and must supply enough for every planned lot; a short canonical cohort
+    refuses before the draft is created.
+    """
+    _require_complete_auction_players(selection_players)
     league = _demo_league(
         session, name="Auction mock league", fmt=DraftType.AUCTION, budget=AUCTION_BUDGET
     )
@@ -218,8 +260,24 @@ def seed_auction_draft(session: Session) -> tuple[League, Draft, DraftStateView]
     )
     seats = {seat.team_slot: seat.id for seat in draft.participants}
 
-    state: DraftStateView | None = None
-    for index, (player, winning_slot, price) in enumerate(_AUCTION_LOTS):
+    seeded_lots: list[tuple[str, int | None, int, Decimal]]
+    if selection_players is None:
+        seeded_lots = [
+            (player_label, None, winning_slot, price)
+            for player_label, winning_slot, price in _AUCTION_PLANS
+        ]
+    else:
+        seeded_lots = [
+            (player.player_label, player.player_id, winning_slot, price)
+            for player, (_, winning_slot, price) in zip(
+                selection_players, _AUCTION_PLANS, strict=False
+            )
+        ]
+
+    state = service.load_state(session, draft)
+    for index, (player_label, player_id, winning_slot, price) in enumerate(
+        seeded_lots[: len(_AUCTION_LOTS)]
+    ):
         nominator = seats[(index % AUCTION_TEAMS) + 1]
         winner = seats[winning_slot]
         if index == 0:
@@ -230,7 +288,8 @@ def seed_auction_draft(session: Session) -> tuple[League, Draft, DraftStateView]
                 session,
                 draft,
                 participant_id=nominator,
-                player_label=player,
+                player_label=player_label,
+                player_id=player_id,
                 opening_bid=Decimal("1.00"),
                 occurred_at=SEEDED_AT,
             )
@@ -238,7 +297,12 @@ def seed_auction_draft(session: Session) -> tuple[League, Draft, DraftStateView]
                 session, draft, participant_id=seats[3], amount=price - Decimal("5.00")
             )
             state = service.record_sale(
-                session, draft, participant_id=winner, amount=price, player_label=player
+                session,
+                draft,
+                participant_id=winner,
+                amount=price,
+                player_label=player_label,
+                player_id=player_id,
             )
             continue
         if index == 1:
@@ -249,38 +313,57 @@ def seed_auction_draft(session: Session) -> tuple[League, Draft, DraftStateView]
                 draft,
                 participant_id=winner,
                 amount=price,
-                player_label=player,
+                player_label=player_label,
+                player_id=player_id,
                 note="sale only; nomination went past too fast to type",
             )
             continue
         state = service.record_nomination(
-            session, draft, participant_id=nominator, player_label=player
+            session,
+            draft,
+            participant_id=nominator,
+            player_label=player_label,
+            player_id=player_id,
         )
-        state = service.record_sale(session, draft, participant_id=winner, amount=price)
+        if player_id is None:
+            state = service.record_sale(session, draft, participant_id=winner, amount=price)
+        else:
+            state = service.record_sale(
+                session,
+                draft,
+                participant_id=winner,
+                amount=price,
+                player_label=player_label,
+                player_id=player_id,
+            )
 
     # A correction, recorded the only way this unit allows: appended, never
     # applied. The mistaken sale stays in the log and stops counting.
-    mistake = service.record_sale(
-        session,
-        draft,
-        participant_id=seats[9],
-        amount=Decimal("18.00"),
-        player_label="Cassian Ferro",
-        note="misheard; it was seat 10",
-    )
-    state = service.record_void(
-        session,
-        draft,
-        supersedes_sequence=mistake.last_sequence,
-        note="wrong seat",
-    )
-    state = service.record_sale(
-        session,
-        draft,
-        participant_id=seats[10],
-        amount=Decimal("18.00"),
-        player_label="Cassian Ferro",
-    )
+    if len(seeded_lots) > len(_AUCTION_LOTS):
+        player_label, player_id, winning_slot, price = seeded_lots[len(_AUCTION_LOTS)]
+        mistake = service.record_sale(
+            session,
+            draft,
+            participant_id=seats[9],
+            amount=price,
+            player_label=player_label,
+            player_id=player_id,
+            note=f"misheard; it was seat {winning_slot}",
+        )
+        state = service.record_void(
+            session,
+            draft,
+            supersedes_sequence=mistake.last_sequence,
+            note="wrong seat",
+        )
+        state = service.record_sale(
+            session,
+            draft,
+            participant_id=seats[winning_slot],
+            amount=price,
+            player_label=player_label,
+            player_id=player_id,
+        )
     return league, draft, state
 
 
@@ -316,9 +399,16 @@ def seed_snake_draft(session: Session) -> tuple[League, Draft, DraftStateView]:
     return league, draft, state
 
 
-def seed_drafts(session: Session) -> DraftSeedResult:
+def seed_drafts(
+    session: Session,
+    *,
+    auction_players: Sequence[CanonicalDraftPlayer] | None = None,
+) -> DraftSeedResult:
+    """Seed both formats; canonical auction players are opt-in for composition."""
     require_no_recorded_draft(session)
-    auction_league, auction_draft, auction_state = seed_auction_draft(session)
+    auction_league, auction_draft, auction_state = seed_auction_draft(
+        session, selection_players=auction_players
+    )
     snake_league, snake_draft, snake_state = seed_snake_draft(session)
     return DraftSeedResult(
         auction_league_id=auction_league.id,

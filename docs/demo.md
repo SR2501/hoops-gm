@@ -1,7 +1,7 @@
 # Running the demo
 
-**One command, one database, three screens.** If you have never seen this
-repository before, this page is enough.
+**One command, one database, three primary screens plus the draft category
+detail.** If you have never seen this repository before, this page is enough.
 
 The demo state used to live in three separate SQLite files, each built by a
 different lane, and one backend serves one file — so opening the dashboard gave
@@ -23,6 +23,10 @@ $env:PYTHONPATH = "$PWD\src"
 python -m hoops_gm.dev.seed_demo --database-url "sqlite+pysqlite:///../demo_all.db"
 ```
 
+If you override `--cohort-size`, it must be at least **7** because the auction
+demo has seven planned lots. Values from 1 through 6 refuse before the
+transaction commits rather than printing success for a partial category board.
+
 Then serve it, from a **second** shell in `backend/`:
 
 ```powershell
@@ -41,7 +45,8 @@ npm run dev
 ```
 
 `http://127.0.0.1:5173` → `/schedule`, `/projections` and `/draft` all answer
-from `demo_all.db`.
+from `demo_all.db`. Open the auction draft and follow **League categories**, or
+go directly to `/draft/1/categories` on a fresh database.
 
 ---
 
@@ -109,6 +114,16 @@ Against the committed fixtures the database holds **30 teams, 10 imported games
 (12 published, 2 pending), 21 scoring periods, 20 team-games, 60 projection rows
 and 2 mock drafts**.
 
+The composed auction selects seven canonical players from that exact synthetic
+projection import, through the production nomination/sale/void writers. The
+category detail therefore says **7 of 7 selections joined**, and the seven seats
+holding one player render visible **1-to-7 per-game-rate rankings**. The player
+names are real only because the identity join requires canonical IDs; every
+projection value, selection, seat and price remains synthetic, and the page
+continues to say this is not expected performance. A composed cohort shorter
+than those seven planned lots refuses before any draft write; it never returns
+a successful partial board.
+
 **Do not test a screen by scanning it for error words.** A scan for
 `could not|cannot|failed|no current` returns **true on two working screens**:
 `/schedule` legitimately renders *"this season is not fully scheduled"* — the
@@ -117,11 +132,12 @@ ADR-013 pending-games affordance, which the demo deliberately exercises — and
 is true and correct, because blended projections are a later phase. Count rows.
 Assert the presence you expect.
 
-Backing that up, `backend/tests/test_seed_demo.py` drives all three routes
-against **one** seeded database and counts what comes back. That is the
-regression test for this whole page: each seeder already had a test proving its
-own endpoint could answer, and a test that seeds one database and reads one
-endpoint stays green whether or not the other two are pointed somewhere else.
+Backing that up, `backend/tests/test_seed_demo.py` drives the three primary
+routes against **one** seeded database, then combines the auction state and
+current-projections responses exactly as the category page does. It asserts
+both the exact projection-import ID set and the resulting joined-player/ranked-
+seat counts. That is the regression test for this whole page: two individually
+valid responses stayed green in the old state while their join was empty.
 
 ---
 
@@ -290,7 +306,7 @@ so you can tell, and do not put it where the service would find it by default.
 |---|---|---|
 | `hoops_gm.dev.seed_schedule_grid` | teams, games, scoring periods, deadline calendar | `seed_projections` |
 | `hoops_gm.dev.seed_projections` | the above, plus players, positions and the synthetic cohort | `seed_demo` |
-| `hoops_gm.dev.seed_draft` | two mock drafts, through the real recorders | `seed_demo` |
+| `hoops_gm.dev.seed_draft` | two mock drafts, through the real recorders; standalone names stay unresolved, while `seed_demo` may supply typed canonical auction players | `seed_demo` |
 
 Running `seed_schedule_grid` before `seed_projections` is **redundant, not
 required** — `seed_projections` already calls it. It is harmless, and a runbook

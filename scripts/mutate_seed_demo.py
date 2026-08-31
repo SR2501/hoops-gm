@@ -39,6 +39,13 @@ attribution:
   that *is* present turns the whole guard into a no-op that still looks like a
   guard. It must be caught by a test that plants real evidence, not by one that
   merely reaches the function.
+* **M12** reproduces the category-screen defect: the composed seed calls the
+  standalone draft path and discards the exact projection-cohort IDs it just
+  selected. Both API responses still answer 200, so only the end-to-end join
+  assertion catches it.
+* **M13** disables the canonical-cohort lower bound. The six-player CLI then
+  returns a success-shaped partial auction again, and the direct boundary test
+  proves the refusal had to happen before the first draft write.
 """
 
 from __future__ import annotations
@@ -73,6 +80,7 @@ ENV = {
 TESTS = ["tests/test_seed_demo.py"]
 
 DEMO = "src/hoops_gm/dev/seed_demo.py"
+DRAFT = "src/hoops_gm/dev/seed_draft.py"
 GRID = "src/hoops_gm/dev/seed_schedule_grid.py"
 
 MUTATIONS: list[tuple[str, str, str, str]] = [
@@ -80,14 +88,14 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "M01 drafts seeded before projections (the ordering that refuses)",
         DEMO,
         "    projections = seed_projections(session, fixtures_dir=fixtures_dir,"
-        " cohort_size=cohort_size)\n    drafts = seed_drafts(session)",
+        " cohort_size=cohort_size)",
         "    drafts = seed_drafts(session)\n    projections = seed_projections("
         "session, fixtures_dir=fixtures_dir, cohort_size=cohort_size)",
     ),
     (
         "M02 draft state never seeded into this database (the original defect)",
         DEMO,
-        "    drafts = seed_drafts(session)",
+        "    drafts = seed_drafts(session, auction_players=auction_players)",
         "    drafts = DraftSeedResult(0, 0, 0, 0, 0, 0, 0, 0)",
     ),
     (
@@ -120,9 +128,9 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "M07 the two seeders commit separately (composing at the shell)",
         DEMO,
         "    projections = seed_projections(session, fixtures_dir=fixtures_dir,"
-        " cohort_size=cohort_size)\n    drafts = seed_drafts(session)",
+        " cohort_size=cohort_size)",
         "    projections = seed_projections(session, fixtures_dir=fixtures_dir,"
-        " cohort_size=cohort_size)\n    session.commit()\n    drafts = seed_drafts(session)",
+        " cohort_size=cohort_size)\n    session.commit()",
     ),
     (
         "M08 participation-ledger refusal never fires (the real-store gap)",
@@ -147,6 +155,18 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         GRID,
         "    tables = set(inspect(session.get_bind()).get_table_names())",
         "    tables = set()",
+    ),
+    (
+        "M12 composed draft drops the projection-cohort player IDs",
+        DEMO,
+        "    drafts = seed_drafts(session, auction_players=auction_players)",
+        "    drafts = seed_drafts(session)",
+    ),
+    (
+        "M13 short canonical auction cohort guard disabled",
+        DRAFT,
+        "    _require_complete_auction_players(selection_players)\n    league = _demo_league(",
+        "    league = _demo_league(",
     ),
 ]
 

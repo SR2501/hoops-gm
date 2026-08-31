@@ -166,6 +166,7 @@ class ProjectionsSeedResult:
     """What the seed put in the database, for the caller to assert against."""
 
     league_id: int
+    projection_import_id: int
     season: str
     schedule_version: str
     players_created: int
@@ -463,6 +464,7 @@ def seed_projections(
 
     return ProjectionsSeedResult(
         league_id=schedule.league_id,
+        projection_import_id=outcome.projection_import.id,
         season=SEASON,
         schedule_version=schedule.schedule_version,
         players_created=players.created,
