@@ -211,6 +211,75 @@ disjoint failure lists and no union.
 
 ---
 
+## Addendum, 2026-08-31: what an opportunity denominator would need, checked rather than assumed
+
+`docs/models/reliability-metrics.md` ships `coverage_status=incomplete_r35` /
+`opportunity_coverage=null` and states the merged data lacks "authoritative
+historical roster intervals and proof that every game returned a complete
+participation payload." This addendum re-derives that verdict against the live
+store above instead of trusting it, for `docs/backlog.md`'s
+`participation-opportunity-coverage`, and it holds — with three findings that
+were not on record before.
+
+**No NBA-side roster-interval or transaction table exists in this schema.**
+`rosters`, `roster_slots` and `transactions` each carry a
+`fantasy_team_id`/`league_id` foreign key into the Fantrax league tables — they
+are a fantasy owner's roster, not NBA team membership — and nothing else names
+an NBA roster window. `team_schedule` is empty (0 rows) here too, by the
+deliberate choice above to keep `ScheduleLeagueV2` out of the tip-off
+cross-check, but that specific absence is not load-bearing: which games a team
+played reconstructs cleanly from `nba_games.home_team_id`/`away_team_id` alone —
+checked, all 30 teams show exactly 82 games each for 2025-26.
+
+**A season-long injury absence does not, by itself, vanish.** Damian Lillard
+(`player_id=2751`, team 21) carries a row — mostly `inactive` — for **all 82**
+of his team's games with zero gap, which is the ledger behaving exactly as the
+thesis needs it to. But three players show a multi-game silence the ledger's
+own recorded 2025-11-19 outage (`0022500259`/`260`/`261`, above) does not
+explain: **Mike Conley** (`player_id=893`) has zero rows of any outcome for
+five straight team-14 games (2026-02-04..02-11) while 18 teammates have rows in
+that same window — a player-specific silence, not a source-wide one, with no
+explanation anywhere in this store; **CJ Huntley** (`player_id=2154`) is
+silent for 46 straight team-20 games (2025-11-17..2026-03-02); **James Wiseman**
+(`player_id=5109`) is silent for 23 straight team-18 games
+(2025-10-29..2025-12-18). Huntley and Wiseman's shape matches a two-way/G-League
+assignment window, and confirms it structurally rather than by inference: the
+`g_league` `DnpReason` that `parse_participation_comment` explicitly detects
+(`"g league"`, `"g-league"`, `"two-way"`, `"assignment"`) fires on **zero** of
+the season's 43,037 rows — an assignment removes a player from the source
+entirely rather than labelling him, which is R35 made concrete. Conley's gap has
+no such assignment reading available.
+
+**`hoops_gm.availability.coverage.measure_coverage` cannot see any of this.** It
+counts a game as observed the moment *any* participation row references it, so
+all three windows above report as fully observed — player-level completeness is
+currently unmeasured by anything committed. And `inactive_list_available=True`
+(all 43,037 rows here) certifies only that the source's `inactives` key was
+present, per `parse_box_score_summary_v3`'s own contract — not that the named
+list was exhaustive. Conley's window is the existence proof that the two claims
+differ: the key is present (his teammates resolve normally) and he is still
+absent from it entirely.
+
+**Cheapest source identified, not adopted.** `nba_api.stats.endpoints` contains
+exactly one roster-shaped call, `CommonTeamRoster` — a **current-snapshot**
+endpoint with no historical form, checked by enumerating the installed
+package's endpoint submodules. It cannot retroactively reconstruct 2025-26
+intervals; captured prospectively, one snapshot per team per day, it could
+build genuine roster-interval evidence for 2026-27 onward. No NBA
+transactions/waiver-wire endpoint exists in `nba_api` at all. An authoritative
+historical transactions source is a new, currently unvetted adapter, which this
+addendum names and does not select.
+
+Reproduce these counts without a committed script — the queries were exploratory
+and are not shipped as adapter code, deliberately, because no source or fit is
+proposed here. The equivalent ad hoc queries are: join `player_participation` to
+`nba_games` grouped by `player_id`, compare each single-team player's row count
+against `COUNT(*) FROM nba_games WHERE (home_team_id=? OR away_team_id=?) AND
+game_date BETWEEN <first_dt> AND <last_dt>`, and list the dates present in the
+second set but absent from the first. None of this used a fitted model, a paid
+source, or Fantrax access, and none of it computed a `p(play)`-adjacent
+quantity.
+
 ## Why the data is not committed and this file is
 
 The split is deliberate and predates this document: **the repository holds the

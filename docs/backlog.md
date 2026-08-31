@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**70 done - 0 blocked - 120 pending - 190 total**
+**70 done - 0 blocked - 121 pending - 191 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1544,8 +1544,8 @@ Backtest harness scoring the availability model against held-out seasons. Scores
 
 ### `availability-model` - Building the per-game availability model
 
-- [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it.
-- **Depends on:** `injury-status-conversion`, `participation-ledger`, `participation-ledger-population`, `schedule-density`
+- [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it. **CORRECTED 2026-08-31, `data-engineer`: this note is stale and both named routes are now closed** — `injury-status-conversion` is `done` and `participation-ledger-population` populated the direct non-play labels this note said were missing (43,037 rows, 596 players, 1,227/1,230 games). Left verbatim above rather than deleted, because the blocker it names really was the blocker at the time. **The graph itself does not show this item as blocked**, since every edge it names resolves to `done` — which is precisely the `backlog_graph.py`-documented failure mode of prose disagreeing with its own dependency line; see that script's own docstring. It is not ready either: re-deriving the question independently (not trusting this note or `reliability-metrics.md`'s `opportunity_coverage=null`) found a **third, previously uncounted route**, filed as `participation-opportunity-coverage` and added below as a dependency. In short: an honest per-game *opportunity* denominator - distinct from the direct play/non-play labels, which do exist - is not yet derivable, because no NBA-side roster-interval or transaction table exists in the ledger's schema and at least three players (`player_id` 893, 2154, 5109) show a multi-game silent participation gap the ledger's own recorded source outage does not explain, invisible to the only committed coverage tool because it measures game-level rather than player-level completeness. See that item for the full evidence.
+- **Depends on:** `injury-status-conversion`, `participation-ledger`, `participation-ledger-population`, `schedule-density`, `participation-opportunity-coverage`
 
 Per-player p(play) for each scheduled game, conditioned on B2B/density, rest days, road trips, age, career and recent minutes load, injury history and body part recurrence, current report status (via its conversion rate), and team playoff/tanking situation. Aggregates to expected games over any window (RoS, fantasy week, playoff weeks). Persists driver features for explainability.
 
@@ -3066,6 +3066,95 @@ observation", which is the distinction the whole availability thesis rests on.
 
 Gate: Adapter gate — this runs the existing ingest against the live source at
 scale. No new model.
+
+### `participation-opportunity-coverage` - Establishing an honest per-player, per-scheduled-game opportunity denominator
+
+- [ ] **pending**
+- **Depends on:** `participation-ledger-population`
+
+**2026-08-31, `data-engineer`, re-derived rather than trusted.** `availability-model`
+needs a per-player, per-scheduled-game *opportunity* count — the denominator
+against which observed play/non-play is a rate — and that denominator does not
+exist yet. `docs/models/reliability-metrics.md` already ships
+`coverage_status=incomplete_r35` / `opportunity_coverage=null` for exactly this
+reason; this item re-checks that verdict against the live 2025-26 store at
+`C:\Users\steverones\hoops-gm-data\hoops_gm.db` (43,037 rows, 596 players,
+1,227/1,230 final games) rather than accepting it, and the verdict holds — with
+sharper reasons than were on record before.
+
+**(1) No NBA-side roster-interval or transaction table exists anywhere in this
+schema.** Checked via `sqlite_master`: `rosters`, `roster_slots` and
+`transactions` all carry a `fantasy_team_id`/`league_id` foreign key into the
+Fantrax league tables — they record a Fantrax owner's roster, not NBA team
+membership — and no other table names an NBA-team roster window at all. This is
+not missing data; it is a capability the ingested sources have never been asked
+for. `team_schedule` is also empty (0 rows) in this store, by the deliberate
+choice recorded in `docs/adapters/participation-ledger-store.md` to keep
+`ScheduleLeagueV2` out of the tip-off cross-check — but that specific gap is not
+the blocker: which games a team played is fully reconstructable from
+`nba_games.home_team_id`/`away_team_id` alone (verified: all 30 teams show
+exactly 82 games each for 2025-26).
+
+**(2) Long-absence players do not uniformly vanish, and where they do it is a
+named, structural mechanism, not noise.** A player who remains on one NBA
+roster through a season-long injury is fully covered: Damian Lillard
+(`player_id=2751`) carries a participation row — mostly `inactive` — for **all
+82** of team 21's games, with zero gap. But three players show a multi-game
+silent gap the ledger's own 3-game 2025-11-19 source outage (`0022500259`/
+`260`/`261`, already named in `participation-ledger-store.md`) does not explain:
+Mike Conley (`player_id=893`, 5 straight team-14 games, 2026-02-04..02-11, while
+18 other team-14 players have rows in that same window — a player-specific
+silence, not a source-wide one), CJ Huntley (`player_id=2154`, 46 straight
+team-20 games, 2025-11-17..2026-03-02), and James Wiseman (`player_id=5109`, 23
+straight team-18 games, 2025-10-29..2025-12-18 — reproduced separately). Huntley
+and Wiseman's pattern matches a two-way/G-League assignment window; **and the
+`g_league` `DnpReason` the parser explicitly detects (`"g league"`, `"g-league"`,
+`"two-way"`, `"assignment"` substrings in `parse_participation_comment`) fires on
+zero of the 43,037 rows this season** — confirming an assignment produces no row
+at all rather than a labelled one, which is R35's warning made concrete rather
+than theoretical. Conley's gap has no such explanation available anywhere in
+this store.
+
+**(3) The only committed coverage tool measures game-level completeness, not
+player-level completeness, and would call all three windows above fully
+observed.** `hoops_gm.availability.coverage.measure_coverage` counts a game as
+observed once *any* participation row references it; every game in Conley's,
+Huntley's and Wiseman's gaps has other players' rows and so reads as 100%
+observed under `LedgerCoverage`. A player-specific silence is therefore
+currently invisible to the one tool built to answer exactly this question.
+
+**(4) `inactive_list_available=True` certifies key-presence, not
+roster-exhaustiveness.** Per `parse_box_score_summary_v3`'s own contract, the
+flag means the source's `inactives` key was offered, not that every player who
+should appear in it does. Finding (2) is a direct existence proof that the two
+claims differ: Conley's window has the key present (his teammates' rows resolve
+normally) and still omits him entirely.
+
+**Cheapest source identified, not yet adopted.** `nba_api.stats.endpoints`
+contains exactly one roster-shaped call, `CommonTeamRoster`, which is a
+**current-snapshot** endpoint with no historical/dated form (checked by
+enumerating the installed package's endpoint submodules) — it cannot
+retroactively reconstruct 2025-26 intervals. It could be captured **prospectively**,
+one snapshot per team per day, to build genuine roster-interval evidence for
+2026-27 onward, at the cost of an ongoing throttled routine rather than a single
+backfill. No NBA transactions/waiver-wire endpoint exists in `nba_api` at all.
+An authoritative historical transactions source is therefore a **new, currently
+unvetted adapter** — naming it is this item's job; adopting one is not a call
+this item makes alone.
+
+Done when either (a) prospective `CommonTeamRoster` snapshots have accumulated
+enough roster-interval evidence for the window `availability-model` trains or
+evaluates against, or (b) a new roster/transactions adapter is approved and
+built under the Adapter gate (recorded fixture, contract test, documented
+throttle/retry/failure behaviour) and populated — **and**, in either case, a
+committed, tested report states per player-game whether opportunity is
+confirmed-observed, confirmed-absent, or unknown-not-derivable, with the unknown
+share counted and never coerced into either observed class, characterised well
+enough across rotation-relevant players for `quant` to rule under the Model gate
+on whether `availability-model` may proceed.
+
+Gate: Adapter gate for any new source. The coverage report itself is Code gate —
+descriptive counting over existing rows, nothing fitted.
 
 ### `preseason-news-ingest` - Ingesting preseason availability news for draft day
 
