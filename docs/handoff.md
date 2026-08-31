@@ -32365,3 +32365,62 @@ adapter surface) rather than re-deriving the negative finding above, and should
 treat any historical-transactions adapter as a new source needing its own
 Adapter-gate review and, given the project's stated posture on adding sources,
 owner awareness before work begins.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: two of the entry above's cited gap figures did not reproduce
+
+**Corrected**, after an independent code-review pass on the unmerged commit
+found the discrepancy by re-running the SQL rather than trusting the prose,
+exactly the check this project's house rules ask for. Two of five spot-checked
+numeric claims in the entry above did not reproduce:
+
+1. **CJ Huntley's date range was wrong.** Stated as "2025-11-17..2026-03-02".
+   Re-querying `nba_games` joined against `player_participation` for
+   `player_id=2154` against the whole of team 20's 82-game season shows the
+   actual contiguous missing block is **2025-11-18..2026-02-26** (still 46
+   games; only the boundary dates were wrong, off by the neighbouring real
+   `inactive` rows on 2025-11-16 and 2026-03-03).
+2. **James Wiseman's figure understated and mischaracterised the finding.**
+   Stated as "23 straight team-18 games, 2025-10-29..2025-12-18," presented as
+   if it fully described him. The corrected picture, from a full game-by-game
+   listing of team 18's 82 games: Wiseman carries a row for only **6 of 82**
+   team-18 games all season — three in October (2025-10-23, 10-25, 10-26), a
+   **24-game** silent block (2025-10-29..2025-12-18, one more than originally
+   stated), three more games (2025-12-20, 12-22, 12-23), then a **second,
+   larger 52-game silent block running from 2025-12-26 through the season's
+   end that the entry above never mentioned**. The two-way/G-League reading is
+   correspondingly weaker for him than for Huntley, who does return to steady
+   coverage; Wiseman's shape is closer to two brief appearances against a
+   near-total season-long absence.
+
+Both errors trace to the same mechanism: the ad hoc query that first surfaced
+these three players computed the gap only *within* the span between the
+player's own first and last observed row, so it correctly found the first
+silent block for each player but never checked whether coverage resumed for
+the rest of the season, and separately mis-transcribed Huntley's boundary
+dates when writing the entry above from the query output. Mike Conley's figure,
+the season-length team-game counts, the `g_league` reason count, and the
+Lillard 82/82 zero-gap control all independently reproduced.
+
+**Now true:** `docs/backlog.md`'s `participation-opportunity-coverage` item,
+`docs/governance/risks.md`'s `R64`, and the addendum in
+`docs/adapters/participation-ledger-store.md` are corrected in place (those
+three are living documents, not append-only) to the figures above. The
+underlying conclusion — an honest per-player opportunity denominator is not
+currently derivable, no NBA-side roster-interval table exists in this schema,
+and the committed coverage tool is game-level rather than player-level — is
+unchanged by this correction; only the specific evidence cited for two of
+three example players was wrong in the way described.
+
+**Could not verify:** Whether any other numeric claim in the entry above beyond
+the two identified and the four independently reproduced also fails to
+reproduce; the review that found this spot-checked five of the entry's
+claims, not all of them. Whether Wiseman's pattern (two brief NBA appearances
+against a near-season-long absence) reflects a real transaction this store
+cannot see, or a different data phenomenon — nothing in this store
+distinguishes those readings, which is exactly the gap
+`participation-opportunity-coverage` exists to name.
+
+**Next:** This correction is itself part of the same unmerged, unpushed
+documentation-only unit and has not yet been independently re-reviewed.

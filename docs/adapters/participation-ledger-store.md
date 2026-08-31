@@ -240,10 +240,22 @@ explain: **Mike Conley** (`player_id=893`) has zero rows of any outcome for
 five straight team-14 games (2026-02-04..02-11) while 18 teammates have rows in
 that same window — a player-specific silence, not a source-wide one, with no
 explanation anywhere in this store; **CJ Huntley** (`player_id=2154`) is
-silent for 46 straight team-20 games (2025-11-17..2026-03-02); **James Wiseman**
-(`player_id=5109`) is silent for 23 straight team-18 games
-(2025-10-29..2025-12-18). Huntley and Wiseman's shape matches a two-way/G-League
-assignment window, and confirms it structurally rather than by inference: the
+silent for 46 straight team-20 games (2025-11-18..2026-02-26, bookended by real
+`inactive` rows on 2025-11-16 and 2026-03-03); **James Wiseman**
+(`player_id=5109`) carries a row for only **6 of team 18's 82 games all
+season** — three at the start (2025-10-23, 10-25, 10-26), silence for the next
+24 straight games (2025-10-29..2025-12-18), three more (2025-12-20, 12-22,
+12-23), then silence for the remaining 52 games through the season's end, never
+resolving. **CORRECTED 2026-08-31 after independent review**: an earlier draft
+of this addendum stated Wiseman's gap as "23 straight games,
+2025-10-29..2025-12-18" as if that fully described him, which undercounts the
+first block by one game and omits the second, larger 52-game silent block
+entirely — the shape is closer to "present for one road trip in October, one in
+December, invisible the rest of the season" than to a single bounded absence,
+and the two-way/G-League reading below is weaker for him than for Huntley, who
+does return to steady coverage. Huntley and Wiseman's earlier segments still
+match a two-way/G-League assignment window, and the mechanism is confirmed
+structurally rather than by inference: the
 `g_league` `DnpReason` that `parse_participation_comment` explicitly detects
 (`"g league"`, `"g-league"`, `"two-way"`, `"assignment"`) fires on **zero** of
 the season's 43,037 rows — an assignment removes a player from the source

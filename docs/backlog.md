@@ -3105,15 +3105,22 @@ silent gap the ledger's own 3-game 2025-11-19 source outage (`0022500259`/
 Mike Conley (`player_id=893`, 5 straight team-14 games, 2026-02-04..02-11, while
 18 other team-14 players have rows in that same window — a player-specific
 silence, not a source-wide one), CJ Huntley (`player_id=2154`, 46 straight
-team-20 games, 2025-11-17..2026-03-02), and James Wiseman (`player_id=5109`, 23
-straight team-18 games, 2025-10-29..2025-12-18 — reproduced separately). Huntley
-and Wiseman's pattern matches a two-way/G-League assignment window; **and the
-`g_league` `DnpReason` the parser explicitly detects (`"g league"`, `"g-league"`,
-`"two-way"`, `"assignment"` substrings in `parse_participation_comment`) fires on
-zero of the 43,037 rows this season** — confirming an assignment produces no row
-at all rather than a labelled one, which is R35's warning made concrete rather
-than theoretical. Conley's gap has no such explanation available anywhere in
-this store.
+team-20 games, 2025-11-18..2026-02-26), and James Wiseman (`player_id=5109`,
+present for only 6 of team 18's 82 games all season: three in October, silence
+for the next 24 games through 2025-12-18, three more, then silence for the
+remaining 52 games through the season's end, never resolving — **CORRECTED
+2026-08-31 after independent review**, which found this store's own draft note
+had understated the first block by one game and omitted the second, larger
+block entirely). Huntley's earlier segment and Wiseman's two brief segments
+match a two-way/G-League assignment window, though Wiseman's near-total absence
+after 2025-12-23 is the more concerning shape and his reading is weaker than
+Huntley's, who does return to steady coverage; **and the `g_league` `DnpReason`
+the parser explicitly detects (`"g league"`, `"g-league"`, `"two-way"`,
+`"assignment"` substrings in `parse_participation_comment`) fires on zero of the
+43,037 rows this season** — confirming an assignment produces no row at all
+rather than a labelled one, which is R35's warning made concrete rather than
+theoretical. Conley's gap has no such explanation available anywhere in this
+store.
 
 **(3) The only committed coverage tool measures game-level completeness, not
 player-level completeness, and would call all three windows above fully
