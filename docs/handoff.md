@@ -31862,3 +31862,129 @@ interleaving, and native PostgreSQL remains CI-only here.
 
 **Next:** Replace the PR head, disregard every check and review on the superseded
 head, then require exact-head CI and a fresh cumulative review before merge.
+
+---
+
+## 2026-08-29 - architect - Owner rulings: injury protocol, board evidence, and draft-day contract
+
+Started from exact `main` base `810230ba657941df785e50bbc642a3371de3a2b8`.
+This is documentation-only: no model was fitted, no outcome was read, and no
+live-account behavior changed.
+
+**Injury ruling, exactly:** **Accept Change A only; retain the prior Change B
+ruling.** Change A is binding before unblind as a preregistered v2 section 7
+report-era sensitivity. Refit the legacy-only and short-lead-only development
+subsets and report both against the same 100% short-lead held-out partition.
+Pooled remains primary; the era split is diagnostic and enters no activation
+condition. It measures training-era sensitivity, not held-out legacy calibration,
+and v3 is weaker than v2 on predictor-side prospectivity because cohort
+composition was already read. Cite **v3 with scoped acceptance**.
+
+Change B remains the 2026-08-27 display-only ruling. Restricted calibration is
+computed and displayed beside the `p(play)` it grades under ADR-018, blocks
+nothing, and does not enter v2 section 8. There is no condition 9. The frozen
+50/25/25 split, lead-time bands, and calibration thresholds did not move.
+
+**ADR-020 ruling, exactly:** **Accept both amendments.** Decisions 1-4 remain
+accepted from 2026-08-28. On 2026-08-29 the owner accepted the measured
+layout/truncation and per-draft-dimension amendment, already implemented in
+PR #136, and the fail-closed participant-binding amendment. Source columns and
+mutable labels cannot enter participant-attributed events until setup records an
+explicit one-to-one source-column-to-participant binding or equivalent independent
+anchor. Acceptance creates or populates no binding, enables no authoritative
+participant picks or budgets, and establishes no NBA, auction, or
+`layout="other"` support. Missing or contradictory binding still refuses.
+
+**Draft-day rulings — all seven substantive consequences reviewed 2026-08-29:**
+
+1. **Confirmed:** availability adjusts comparable players, has a ceiling, should
+   not be overbuilt, and must not dominate talent. "Do not put too much energy
+   into that" is scope guidance, not modesty.
+2. **Modified:** automatic tracking remains load-bearing. Manual pick/state repair
+   is permitted only as a catastrophe firebreak, after a loud failure. The
+   existing recorder already supplies it through append-only manual pick,
+   nomination, bid and sale events plus void-event corrections, so no speculative
+   backlog item was added.
+3. **Confirmed:** the remote room creates no discretion constraint. Important
+   warnings may be loud without obscuring Fantrax controls or overwhelming the
+   owner.
+4. **Confirmed:** the typical two-minute auction pace supports readable evidence
+   behind a recommendation; the old 8-30 second glance-only constraint does not
+   govern.
+5. **Confirmed:** in-season lineup management changes the draft cost of
+   unreliability and is no longer in the first-cut set. It remains after the
+   draft-day deadline set, but is protected ahead of live scorecard, schedule UI
+   and trade surfaces when scope slips.
+6. **Confirmed:** advise everywhere, override nowhere. Warn loudly but never veto
+   an owner draft pick. Invalid/unsafe automation refusals remain a distinct
+   fail-closed safety boundary.
+7. **Modified:** early mocks and observed reactions meaningfully inform valuation
+   trust, but are neither the sole nor a 100% deciding instrument.
+
+`docs/what-draft-day-looks-like.md` is now owner-reviewed, names both
+modifications, and contains no unresolved inference marker. Owner quotations were
+not rewritten as rulings.
+
+**Backlog and plan effect:** no task status changed. `injury-status-conversion`
+and `draft-board-feed-integration` remain pending. The backlog records the
+existing catastrophe-only recorder/void mechanism; no gap and therefore no new
+item was demonstrated. The plan removes Phase 11 lineup manager from the
+first-cut set while preserving its post-draft sequencing. The backlog recount
+remains **189 items: 68 done, 0 blocked, 121 pending**.
+
+Applicable documentation and policy gates are document terminators, backlog
+graph/recount, repository secret scan, targeted status/marker searches, diff
+whitespace, and the append-only checker with seeded-CR, one-byte-flip, and
+truncated-base negative controls. Exact-head CI is required after push.
+
+**Could not verify:** no fit or unblind exists, so no calibration or era-sensitivity
+result exists. Outcome-side independence remains unverified by design. ADR-020
+evidence remains one football snake draft rather than the owner's NBA auction,
+and the participant binding does not exist. The emergency recorder/void mechanism
+exists and is tested as a general manual path; this docs-only lane did not run a
+timed live-auction catastrophe rehearsal proving the owner can use it under the
+clock. No unique off-repository holding was created.
+
+**Next:** require exact-replacement-head CI and independent review. Disregard all
+checks and reviews on superseded head
+`803df75909a90122aa3c862e9255f1fdd274d917`. Do not merge or self-approve from
+this lane.
+
+---
+
+## 2026-08-29 - architect - Correction: rejected Change B is non-binding throughout
+
+Independent cumulative review blocked exact head
+`e213bfaad4932c832b5f4afece34d11e519e8e70` on three semantic defects. This
+entry corrects the preceding owner-rulings entry; it does not replace or edit
+that history.
+
+First, injury preregistration v3 section 4 retained proposal-era commands to add
+condition 9 even though the document top and section 10 said Change B was
+rejected. A current-status header cannot neutralize an implementable command
+farther down the same protocol. Section 4 now says exactly that it is a
+**historical rejected proposal**, **non-binding**, and **must not be implemented
+as a condition**. The rationale remains as history, but the proposed activation
+text is rewritten in past tense and says it has no force. Restricted calibration
+is display-only under ADR-018, blocks nothing, and there is no condition 9.
+
+Second, ADR-018 consequences still described the state after the 2026-08-27
+ruling as if it were current: all v3 proposed, v2 alone governing, and Change A
+unanswered. It now labels that paragraph **State immediately after the
+2026-08-27 ruling** and separately states the current post-2026-08-29 position:
+Change A is accepted under v3 with scoped acceptance; Change B remains
+display-only and non-gating; section 8 still has no ninth condition.
+
+Third, one inline `[architect inference: ...]` survived the seven-ruling rewrite.
+It is now an owner-confirmed consequence of the availability-scope ruling:
+maximising expected games alone is not the objective because that ignores stored
+recovery value, streaming capacity, talent, and portfolio shape. Exact search now
+must return zero occurrences of `[architect inference`.
+
+**Could not verify:** As before, no fit or unblind result exists. This correction
+changes protocol meaning and documentation consistency only. It does not test
+whether ADR-018 display behavior changes a live auction decision, and it does not
+supply a participant binding or NBA-auction board evidence.
+
+**Next:** Disregard checks and review on `e213bfaa`. Require exact-replacement-head
+CI and a fresh cumulative review. Do not merge or self-approve from this lane.

@@ -1,20 +1,18 @@
 # Injury-status conversion — preregistration v3
 
-**Status: `Proposed`.** Not accepted, not binding, not in force. v2 remains the
-governing protocol until the owner binds this document. It is written by `quant`
-— the agent this protocol grades — and for that reason `quant` does not approve
-it. The separation is the same one `bridge` has from `safety` on the write path,
-and it is not waived by the proposer being confident.
+**Status: Scoped acceptance.** On 2026-08-29 the project owner accepted Change A
+(§3) only. The governing protocol is **v3 with scoped acceptance**: frozen v2
+plus Change A, binding before unblind as a preregistered v2 §7 sensitivity. All
+other v3 proposal text remains non-binding. Change B (§4) is not accepted as an
+activation gate; ADR-018's 2026-08-27 display-only ruling governs it.
 
-**Supersedes:** `docs/models/injury-status-conversion-preregistration.md` (v2,
-freeze id `injury-status-conversion-v2-20260821T145900Z`), if and only if bound.
+**Relationship to v2:** This scoped acceptance does not supersede
+`docs/models/injury-status-conversion-preregistration.md` wholesale. Its freeze
+id remains `injury-status-conversion-v2-20260821T145900Z`, with only the accepted
+Change A reporting obligation added.
 
 **Author:** `quant`. **Drafted:** 2026-08-23, pre-unblind.
-**Decision required from:** owner. **Recommendation:** adopt.
-
-**The owner was asked on 2026-08-27 and declined the binary. See §9.** The status
-line above is unchanged and is not changed by that ruling: this document is still
-`Proposed`, v2 still governs, and §8 still holds eight conditions.
+**Owner rulings:** 2026-08-27 (§9) and 2026-08-29 (§10).
 
 ---
 
@@ -115,7 +113,12 @@ measured at 5.5× in band composition and 68.2%/0% in partition composition.
 
 ---
 
-## 4. Change B — add §8 condition 9, calibration on the informative statuses
+## 4. Change B — historical rejected proposal; no §8 condition 9
+
+**Status: rejected as an activation gate and non-binding. Do not implement this
+section as a condition.** Its rationale is retained as proposal history only.
+Restricted calibration is instead computed and displayed beside the `p(play)` it
+grades under ADR-018; it blocks nothing and does not enter §8.
 
 **Why.** v2 §8's conditions 2 and 3 are close to unfailable against this
 holdout's composition. This is arithmetic on published denominators, and it has
@@ -143,17 +146,16 @@ excellent and whose `questionable` cell is worthless. In a project whose stated
 rule is that **calibration beats accuracy for `p(play)`**, that is the exact
 failure the gate exists to prevent.
 
-**Text, to be added to v2 §8:**
+**Historical proposed text — rejected, not added to v2 §8, and not to be
+implemented:**
 
-> **Condition 9.** Calibration-in-the-large and the binned calibration table of
-> §7 are additionally computed over the held-out rows carrying status in
-> {`questionable`, `probable`, `doubtful`} only (n = 510 direct outcomes,
-> declared here). Activation requires |CITL error| ≤ 0.10 **on this restricted
-> set as well as on the pooled set**. Where the restricted set holds fewer than
-> 30 direct outcomes for a status, that status is reported as counts alone and
-> the restricted CITL is computed over the remainder. The restricted figure is
-> the operative one for any downstream availability consumer; the pooled figure
-> is reported for comparability and is not sufficient on its own.
+The rejected proposal would have computed calibration-in-the-large and the §7
+binned calibration table over held-out rows carrying `questionable`, `probable`
+or `doubtful` only (n = 510 direct outcomes), then required restricted
+|CITL error| ≤ 0.10 for activation. **That requirement has no force.** There is
+no condition 9, the restricted figure is not operative for activation, and the
+pooled v2 conditions remain sufficient. ADR-018 governs the restricted figure's
+display-only use.
 
 ---
 
@@ -170,10 +172,11 @@ have been chosen to favour a result, because no result has been seen.
 - **No participation outcome was read.** The author's reproduction of the cohort
   (below) queried only those two tables and never opened `player_participation`.
   **The author does not know the conversion rate of any status.**
-- **Both changes are restrictive-only.** Change A adds a required report. Change
-  B adds a required condition to a gate that already defaults to veto. Neither
-  can make activation easier. A *loosening* change at this point would deserve
-  scrutiny this document does not supply, and none is proposed.
+- **At drafting time, both proposals were restrictive-only.** Change A proposed
+  a required report. Change B would have added a required condition to a gate
+  that already defaulted to veto. That historical argument did not bind either
+  proposal: Change A was later accepted, and Change B was rejected as an
+  activation gate and is non-binding.
 - **The cohort's predictor side has been read, and that is disclosed.** See §1.
   This is the residual exposure and it is not zero: a reader must take on trust
   that reading composition did not steer the choice of amendment. The mitigation
@@ -291,8 +294,9 @@ post-hoc and gates nothing.
 
 **What that means for this document, precisely.**
 
-- **v3 is not bound.** It remains `Proposed`; v2 remains the governing protocol;
-  the fit proceeds under v2 exactly as §7 describes.
+- **As of the 2026-08-27 ruling, v3 was not bound.** It remained `Proposed`; v2
+  remained the governing protocol; the fit proceeded under v2 exactly as §7
+  describes.
 - **For Change B, the operational outcome is §7's outcome plus a display
   requirement.** The restricted calibration is still computed, still published,
   and still gates nothing. What is added is that it must appear beside the
@@ -300,9 +304,9 @@ post-hoc and gates nothing.
   `docs/decisions/ADR-018-calibration-displayed-beside-the-number.md`, which
   states plainly that a score the owner can ignore is what §7 calls a footnote,
   and that the claimed difference — visibility — is untested.
-- **Change A was not ruled on.** The era sensitivity is neither adopted nor
-  declined and is still owed an answer. Do not read this section as disposing of
-  it.
+- **As of 2026-08-27, Change A had not been ruled on.** The era sensitivity was
+  neither adopted nor declined and was still owed an answer. Do not read this
+  historical section as disposing of it.
 - **Nothing here licenses reopening §4's split or §7's bands.** §2 still holds.
 
 **Provenance, so it can be checked rather than trusted.** Recorded by
@@ -310,3 +314,30 @@ post-hoc and gates nothing.
 quotation is his; the framing around it is mine, and nobody writing in this
 repository heard it first-hand. If the framing misstates him, he should strike
 it — the quotation is the part that must survive.
+
+---
+
+## 10. Owner ruling — 2026-08-29
+
+**Exact ruling:** **Accept Change A only; retain the prior Change B ruling.**
+
+**Change A (§3) is owner-accepted and binding before unblind.** Report era is a
+preregistered v2 §7 sensitivity: refit on the legacy-only and short-lead-only
+development subsets, then report both against the same held-out partition,
+which is 100% short-lead. The pooled fit and evaluation remain primary. The era
+split is diagnostic and does not enter any v2 §8 activation condition.
+
+The limitation remains explicit: this measures **training-era sensitivity**, not
+held-out legacy calibration. This v3 scoped acceptance is also weaker than v2
+with respect to predictor-side prospectivity because the cohort composition had
+already been read. Cite the governing protocol as **v3 with scoped acceptance**,
+not as a replacement v2 freeze.
+
+**Change B (§4) is not accepted as an activation gate.** The 2026-08-27 ruling is
+unchanged: restricted calibration is computed and displayed beside the
+`p(play)` it grades, but it does not enter v2 §8 activation. ADR-018 remains the
+governing display decision. There is no condition 9.
+
+Nothing in this ruling reopens the frozen 50/25/25 split or the lead-time bands,
+authorizes a fit or outcome read, changes a calibration threshold, or changes
+the pending state of the implementation task.
