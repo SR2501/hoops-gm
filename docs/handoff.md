@@ -31988,3 +31988,69 @@ supply a participant binding or NBA-auction board evidence.
 
 **Next:** Disregard checks and review on `e213bfaa`. Require exact-replacement-head
 CI and a fresh cumulative review. Do not merge or self-approve from this lane.
+
+---
+
+## 2026-08-31 - frontend - Dashboard root is a working-surface launchpad
+
+Started from exact main `91650c658c979ad130d2938c8ed3ece9d14b4472`.
+`DashboardPage` no longer describes shipped Draft, Schedule, or Reliability
+routes as unbuilt. The root now links Drafts, Projections, Reliability, Schedule,
+and System, labels the analytical routes as evidence-only, and says explicitly
+that a reachable route does not establish that the current database has usable
+evidence. Backend health remains in `AppLayout` and therefore stays visible on
+every route.
+
+The root reads the existing `GET /api/v1/drafts` contract and, when present,
+links the newest in-progress auction directly to its board and to
+`/draft/{id}/categories`. Both links come from the same `DraftSummary`; no draft
+or league id is hardcoded, and the category route continues to read the draft
+state before resolving its league. If there are no drafts, the screen identifies
+an empty database rather than a missing surface. If the read fails, the static
+destinations remain reachable while the failure is shown through
+`AsyncBoundary`.
+
+The new recorded test uses `draft-list.recorded.json`, whose newer in-progress
+snake row precedes the auction row. With the auction-format predicate present,
+the board and category links both resolve to auction draft 1. Removing only that
+predicate made the named recorded-link test fail by selecting snake draft 2;
+the target text was asserted before mutation, and restoring it made the same
+test pass. Loading, populated, empty, and refusal paths are also covered. A
+pre-existing Schedule navigation test was narrowed to the primary navigation
+after independent diff review found the launchpad's second Schedule link made
+its global role query ambiguous.
+
+The full frontend Code gate passed: ESLint, TypeScript, all **411 tests in 29
+files**, and the production Vite build. Repository JavaScript ESLint, the secret
+scan, backlog graph, document terminators, diff whitespace, and the changed-path
+scope check passed. The backlog adds only `dashboard-launchpad`; no merge-base
+slug was dropped, and the finished file recounts **190 items: 69 done, 0 blocked,
+121 pending**. `dashboard-evidence-views` and `reliability-ui` remain pending.
+No backend or userscript file changed.
+
+The running demo at 1280x720 showed the auction launch card above all five
+surface cards, with no horizontal overflow and a document height of 809px.
+Following the direct links reached `/draft/1` and `/draft/1/categories`; shell
+health remained visible as backend version 0.1.0 in development. The category
+route then reported the current database truth: **0 of 7 selections joined to a
+projection row** because all seven holdings carry no player id.
+
+The first append attempt exposed the mixed-line-ending hazard the repository's
+byte gate exists for: the patch writer normalized the merge-base blob's 149
+historical CR bytes, so the working-tree check reported `prefix=False` and
+`currentCR=0`. The file was rebuilt from the exact merge-base blob plus this
+LF-only append; no historical byte was accepted from the normalized copy.
+
+**Could not verify:** Exact-head GitHub CI and its Linux build have not run yet.
+The browser check used the available running demo and one 1280x720 browser
+viewport; it was not an owner usability session, assistive-technology pass, or
+small-screen visual review. The current demo still cannot produce usable
+category rates for its auction because its holdings have no player ids; this
+unit exposes that state and does not repair or anticipate backend demo data.
+No recommendation, valuation, `p(play)`, availability estimate, or surface-parity
+enforcement was added, so the future decision surface and its parity with the
+overlay remain unverified by design.
+
+**Next:** Push the exact head, require exact-head CI and a fresh independent
+cumulative review, then hand the PR to the coordinator. Do not merge or
+self-approve from this lane.

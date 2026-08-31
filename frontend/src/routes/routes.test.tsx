@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,13 +8,6 @@ import { AppLayout, BackendStatus } from '../components/AppLayout'
 import { mockFetch, renderWithRouter } from '../test/helpers'
 
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
-const META = {
-  service: 'hoops-gm',
-  version: '0.1.0',
-  environment: 'development',
-  season: '2026-27',
-  entity_groups: ['identity', 'stats', 'league', 'schedule'],
-}
 const READY = { status: 'ok', database: 'ok', detail: null }
 
 afterEach(() => {
@@ -25,7 +18,7 @@ describe('the dashboard shell', () => {
   it('renders backend state from a real API call', async () => {
     mockFetch({
       '/health/ready': { body: READY },
-      '/api/v1/meta': { body: META },
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/health': { body: HEALTH },
     })
 
@@ -34,8 +27,10 @@ describe('the dashboard shell', () => {
     await waitFor(() => {
       expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend 0.1.0')
     })
-    expect(await screen.findByText('2026-27')).toBeInTheDocument()
-    expect(await screen.findByText('identity, stats, league, schedule')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Start here' })).toBeInTheDocument()
+    expect(
+      await screen.findByText(/The draft surfaces exist, but this database has no recorded drafts/),
+    ).toBeInTheDocument()
   })
 
   it('says so when the backend is unreachable instead of rendering blank', async () => {
@@ -46,14 +41,14 @@ describe('the dashboard shell', () => {
     await waitFor(() => {
       expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend unreachable')
     })
-    expect(await screen.findByText(/Could not load service metadata/)).toBeInTheDocument()
+    expect(await screen.findByText(/Could not load the draft launch data/)).toBeInTheDocument()
     // Both the shell status and the failed panel announce themselves.
     expect(await screen.findAllByRole('alert')).toHaveLength(2)
   })
 
   it('does not misclassify a malformed health response as unreachable', async () => {
     mockFetch({
-      '/api/v1/meta': { body: META },
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/health': {
         body: { status: 'ok' },
         headers: { 'X-Request-ID': 'req-bad-health' },
@@ -72,7 +67,7 @@ describe('the dashboard shell', () => {
 
   it('treats a proxy-generated 5xx with no backend request id as unreachable', async () => {
     mockFetch({
-      '/api/v1/meta': { body: META },
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/health': { status: 502, body: null },
     })
 
@@ -130,12 +125,16 @@ describe('the dashboard shell', () => {
   it('navigates to the system page and shows database readiness', async () => {
     mockFetch({
       '/health/ready': { body: READY },
-      '/api/v1/meta': { body: META },
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/health': { body: HEALTH },
     })
 
     renderWithRouter(<App />)
-    await userEvent.click(await screen.findByRole('link', { name: 'System' }))
+    await userEvent.click(
+      within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', {
+        name: 'System',
+      }),
+    )
 
     expect(await screen.findByRole('heading', { name: 'System' })).toBeInTheDocument()
     expect(await screen.findByTestId('readiness-database')).toHaveTextContent('ok')
@@ -146,6 +145,7 @@ describe('the dashboard shell', () => {
     // `ProjectionsPage.test.tsx` renders the page directly — so without this,
     // a page that works would still be unreachable and nothing would say so.
     mockFetch({
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/api/v1/leagues/1/projections/current': {
         status: 409,
         body: {
@@ -158,7 +158,11 @@ describe('the dashboard shell', () => {
     })
 
     renderWithRouter(<App />)
-    await userEvent.click(await screen.findByRole('link', { name: 'Projections' }))
+    await userEvent.click(
+      within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', {
+        name: 'Projections',
+      }),
+    )
 
     expect(await screen.findByRole('heading', { name: 'Projections' })).toBeInTheDocument()
     // Reached the endpoint and rendered its refusal in the screen's own words,
@@ -177,6 +181,7 @@ describe('the dashboard shell', () => {
     // inventory is the screen's actual claim and a mounted heading over an
     // empty body is precisely the "pretty shell" this unit exists to not be.
     mockFetch({
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/api/v1/leagues/1/projections/current': {
         status: 409,
         body: {
@@ -197,7 +202,11 @@ describe('the dashboard shell', () => {
     })
 
     renderWithRouter(<App />)
-    await userEvent.click(await screen.findByRole('link', { name: 'Reliability' }))
+    await userEvent.click(
+      within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', {
+        name: 'Reliability',
+      }),
+    )
 
     expect(await screen.findByRole('heading', { name: 'Reliability' })).toBeInTheDocument()
     // Both cohorts refused, and the screen's own content is still there — the
@@ -218,7 +227,6 @@ describe('the dashboard shell', () => {
         },
         headers: { 'X-Request-ID': 'req-ready-route' },
       },
-      '/api/v1/meta': { body: META },
       '/health': { body: HEALTH },
     })
 
@@ -230,22 +238,22 @@ describe('the dashboard shell', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Request req-ready-route')
   })
 
-  it('renders malformed 2xx metadata as an explicit contract error', async () => {
+  it('renders a malformed 2xx draft list as an explicit contract error', async () => {
     mockFetch({
       '/health/ready': { body: READY },
-      '/api/v1/meta': {
-        body: { ...META, entity_groups: 'identity' },
-        headers: { 'X-Request-ID': 'req-bad-meta-route' },
+      '/api/v1/drafts': {
+        body: { drafts: 'not-an-array' },
+        headers: { 'X-Request-ID': 'req-bad-drafts-route' },
       },
       '/health': { body: HEALTH },
     })
 
     renderWithRouter(<App />)
 
-    expect(await screen.findByText(/Could not load service metadata/)).toBeInTheDocument()
+    expect(await screen.findByText(/Could not load the draft launch data/)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('did not match the expected backend contract')
     expect(screen.getByRole('alert')).toHaveTextContent('Code invalid_response')
-    expect(screen.getByRole('alert')).toHaveTextContent('Request req-bad-meta-route')
+    expect(screen.getByRole('alert')).toHaveTextContent('Request req-bad-drafts-route')
   })
 
   it('navigates to the draft board from the shell', async () => {

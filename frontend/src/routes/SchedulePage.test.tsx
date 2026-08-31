@@ -1478,20 +1478,16 @@ describe('navigation', () => {
   it('reaches the schedule from the sidebar', async () => {
     mockFetch({
       [GRID_PATH]: { body: scheduleGrid() },
-      '/api/v1/meta': {
-        body: {
-          service: 'hoops-gm',
-          version: '0.1.0',
-          environment: 'development',
-          season: '2026-27',
-          entity_groups: ['schedule'],
-        },
-      },
+      '/api/v1/drafts': { body: { drafts: [] } },
       '/health': { body: HEALTH },
     })
 
     renderWithRouter(<App />)
-    await userEvent.click(await screen.findByRole('link', { name: 'Schedule' }))
+    await userEvent.click(
+      within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', {
+        name: 'Schedule',
+      }),
+    )
 
     expect(await screen.findByRole('heading', { name: 'Schedule' })).toBeInTheDocument()
     expect(await screen.findByTestId('schedule-grid')).toBeInTheDocument()
