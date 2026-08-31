@@ -32223,3 +32223,17 @@ quality or owner approval.
 **Next:** Commit and publish this exact unit, obtain exact-head review and every
 blocking GitHub CI result including native Postgres, and leave the pull request
 unmerged for independent approval. Do not rerun the consumed holdout.
+
+---
+
+## 2026-08-31 - quant - Correction: injury conversion backlog recount
+
+**Corrected:** The injury-status conversion entry above says, "The backlog now
+recounts 69 done, 0 blocked, 120 pending, 189 total." That sentence became stale
+when the branch was reconciled after PR #140. The authoritative finished
+`docs/backlog.md` recounts **70 done, 0 blocked, 120 pending, 190 total**. The
+existing entry is preserved unchanged.
+
+**Could not verify:** Hosted exact-head CI has not run for this append-only
+replacement head. No code, evidence, model card, backlog, estimator, split, fit,
+or holdout changed, and the holdout was not rerun.
