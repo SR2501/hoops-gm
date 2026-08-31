@@ -23,8 +23,9 @@ from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.models.availability import PlayerParticipation
-from hoops_gm.db.models.draft import Draft
+from hoops_gm.db.models.draft import Draft, DraftEvent
 from hoops_gm.db.models.enums import (
+    DraftEventType,
     DraftToolUsage,
     DraftType,
     GameStatus,
@@ -113,6 +114,117 @@ def test_both_mock_drafts_are_listed_with_the_selections_the_seed_recorded(
     )
     assert by_id[result.drafts.snake_draft_id]["format"]["draft_type"] == "snake"
     assert by_id[result.drafts.snake_draft_id]["selections_made"] == result.drafts.snake_selections
+
+
+def test_the_composed_auction_and_projection_responses_join_end_to_end(
+    client: TestClient,
+) -> None:
+    """The existing category page receives joinable inputs from one composed seed.
+
+    Two individually valid 200 responses are insufficient: before this change
+    every auction holding carried ``player_id=None``, so the category model joined
+    0 of 7 selections and ranked no seat. This drives the exact draft-state and
+    current-projections routes that page combines, then performs its ID join.
+    """
+
+    database: Database = client.app.state.database  # type: ignore[attr-defined]
+    with database.session() as session:
+        result = seed_demo(session, cohort_size=COHORT)
+
+    draft_response = client.get(f"/api/v1/drafts/{result.drafts.auction_draft_id}")
+    assert draft_response.status_code == 200, draft_response.text
+    draft_state = draft_response.json()
+
+    projections_response = client.get(
+        f"/api/v1/leagues/{draft_state['league_id']}/projections/current"
+    )
+    assert projections_response.status_code == 200, projections_response.text
+    current_projections = projections_response.json()
+
+    projection_ids = {row["player_id"] for row in current_projections["projections"]}
+    holdings = [
+        holding
+        for participant in draft_state["participants"]
+        for holding in participant["holdings"]
+    ]
+    joined_players = sum(
+        holding["player_id"] is not None and holding["player_id"] in projection_ids
+        for holding in holdings
+    )
+    ranked_seats = sum(
+        any(
+            holding["player_id"] is not None and holding["player_id"] in projection_ids
+            for holding in participant["holdings"]
+        )
+        for participant in draft_state["participants"]
+    )
+
+    assert len(holdings) == result.drafts.auction_selections == 7
+    assert draft_state["unresolved_player_count"] == 0
+    assert joined_players == len(holdings)
+    assert joined_players > 0
+    assert ranked_seats == 7
+    assert ranked_seats > 0
+
+    with database.session() as session:
+        exact_cohort_ids = set(
+            session.scalars(
+                select(Projection.player_id).where(
+                    Projection.projection_import_id == result.projections.projection_import_id
+                )
+            )
+        )
+        player_events = session.execute(
+            select(DraftEvent.event_type, DraftEvent.player_id).where(
+                DraftEvent.draft_id == result.drafts.auction_draft_id,
+                DraftEvent.event_type.in_((DraftEventType.NOMINATION, DraftEventType.SALE)),
+            )
+        ).all()
+
+    assert exact_cohort_ids == projection_ids
+    assert player_events
+    assert all(player_id is not None for _, player_id in player_events)
+    assert {player_id for _, player_id in player_events} <= exact_cohort_ids
+
+
+def test_the_standalone_draft_seed_keeps_its_invented_names_unresolved(
+    client: TestClient,
+) -> None:
+    """Canonical IDs are an opt-in composition seam, not new standalone semantics."""
+
+    database: Database = client.app.state.database  # type: ignore[attr-defined]
+    with database.session() as session:
+        result = seed_drafts(session)
+
+    response = client.get(f"/api/v1/drafts/{result.auction_draft_id}")
+    assert response.status_code == 200, response.text
+    state = response.json()
+    holdings = [
+        holding for participant in state["participants"] for holding in participant["holdings"]
+    ]
+
+    assert len(holdings) == result.auction_selections == 7
+    assert state["unresolved_player_count"] == 7
+    assert all(holding["player_id"] is None for holding in holdings)
+
+    with database.session() as session:
+        events = list(
+            session.scalars(
+                select(DraftEvent)
+                .where(DraftEvent.draft_id == result.auction_draft_id)
+                .order_by(DraftEvent.sequence)
+            )
+        )
+
+    assert all(event.player_id is None for event in events)
+    assert (
+        sum(
+            event.player_label is not None
+            for event in events
+            if event.event_type is DraftEventType.SALE
+        )
+        == 4
+    )
 
 
 def test_the_dashboard_league_is_the_one_both_screens_are_hardcoded_to(

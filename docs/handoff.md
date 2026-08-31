@@ -32054,3 +32054,51 @@ overlay remain unverified by design.
 **Next:** Push the exact head, require exact-head CI and a fresh independent
 cumulative review, then hand the PR to the coordinator. Do not merge or
 self-approve from this lane.
+
+---
+
+## 2026-08-31 - backend - Composed demo category joins
+
+**Changed:** The composed `seed_demo` now reads canonical players from the exact
+synthetic `ProjectionImport` it just wrote and passes them through a narrow typed
+optional input to `seed_drafts`. The auction still records every nomination,
+bid, sale and void through `hoops_gm.draft.service`; it constructs no draft event
+row directly and performs no name match. The standalone `seed_draft` path keeps
+its invented labels, NULL player ids, event shape and refusal semantics. Seeded
+draft notes and CLI copy now say that selections, seats, prices and projection
+values are synthetic even when a canonical player label is used.
+
+**Now true:** A fresh default 60-row composed demo produced draft 1 against
+league 2, and the existing draft-state and current-projections routes returned
+seven holdings, seven exact ID joins, seven ranked seats and zero unresolved
+holdings. `/draft/1/categories` therefore receives the inputs its existing
+per-game-rate model needs to render its 1-to-7 rankings instead of the previous
+0-of-7 all-unranked state. The endpoint and frontend arithmetic did not change;
+this is still explicitly not expected performance and adds no decision-bearing
+number. Tests bind every player-bearing auction event to the exact projection
+import, perform the same join over both real API responses, and separately pin
+the standalone unresolved path. Mutation M12 removes the typed cohort input:
+both routes still answer 200, but the end-to-end join test fails. The complete
+demo mutation harness reported 12 caught, zero survived and zero harness
+failures.
+
+**Verification:** Targeted seed tests passed. Backend Ruff check and format
+passed over the full package, strict mypy passed over 229 source files, and the
+full offline backend suite passed with 2,378 passed, 1 skipped and 41 deselected.
+Repository script Ruff check and format, secret scan, document terminators,
+diff whitespace and backlog graph/recount passed; the backlog header and slug
+set are unchanged, with no status change. A fresh read-only cumulative review
+found no significant issue. This unit calls no external source, changes no
+model or category arithmetic, and touches no live action queue or browser
+executor, so Adapter, Model and Automation gates do not apply.
+
+**Could not verify:** Native PostgreSQL was not available locally, so the exact
+PR-head PostgreSQL job remains required even though no schema or query contract
+changed. The category page was not rendered in a live browser; the verified
+boundary is the actual default CLI seed plus the two API responses and the
+existing category model's ID-join inputs. The projections remain synthetic
+contract exercise values, not expected player performance. GitHub CI had not
+run on the eventual committed head when this entry was appended.
+
+**Next:** Review and run CI on the frozen PR head, especially PostgreSQL. Do not
+merge or self-approve from this lane.

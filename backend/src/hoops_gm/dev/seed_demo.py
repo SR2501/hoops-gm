@@ -39,6 +39,9 @@ file.
   a mock draft configuration with no schedule attached — a second, quieter
   reason the order is load-bearing, and one that produces a wrong screen rather
   than a refusal.
+* The composed auction receives the exact canonical players written by the
+  synthetic projection import. The standalone draft command remains unresolved
+  by design; only this composition supplies IDs, and it supplies no name match.
 
 **Everything it writes is synthetic except the player names**, and the names
 have to be real because the identity resolver matches on them. See the two
@@ -79,9 +82,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings
+from hoops_gm.db.models.identity import Player
 from hoops_gm.db.models.league import League
+from hoops_gm.db.models.projections import Projection
 from hoops_gm.db.session import Database
-from hoops_gm.dev.seed_draft import DEMO_PREFIX, DraftSeedResult, seed_drafts
+from hoops_gm.dev.seed_draft import (
+    DEMO_PREFIX,
+    CanonicalDraftPlayer,
+    DraftSeedResult,
+    seed_drafts,
+)
 from hoops_gm.dev.seed_projections import (
     DEMO_COHORT_SIZE,
     ProjectionsSeedResult,
@@ -131,7 +141,16 @@ def seed_demo(
     """
 
     projections = seed_projections(session, fixtures_dir=fixtures_dir, cohort_size=cohort_size)
-    drafts = seed_drafts(session)
+    auction_players = tuple(
+        CanonicalDraftPlayer(player_id=player_id, player_label=player_label)
+        for player_id, player_label in session.execute(
+            select(Projection.player_id, Player.full_name)
+            .join(Player, Player.id == Projection.player_id)
+            .where(Projection.projection_import_id == projections.projection_import_id)
+            .order_by(Projection.player_id)
+        )
+    )
+    drafts = seed_drafts(session, auction_players=auction_players)
     return DemoSeedResult(projections=projections, drafts=drafts)
 
 
@@ -294,10 +313,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(json.dumps(proof(result, database_url=args.database_url), indent=2))
     print(
-        "\nEvery projection number, seat, name and price above is invented. Only the "
-        "player names on the projections screen are real, because the identity "
-        "resolver matches on them. A screenshot taken from any of these three screens "
-        "proves shape and nothing else.",
+        "\nEvery projection number, seat, selection and price above is invented. Only "
+        "the player names are real, because the projection identity resolver and the "
+        "draft category join need canonical players. A screenshot taken from any of "
+        "these screens proves shape and nothing else.",
         file=sys.stderr,
     )
     return 0
