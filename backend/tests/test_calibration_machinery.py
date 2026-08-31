@@ -340,7 +340,7 @@ def test_v2_condition_three_survives_a_seventy_seven_point_error_and_fails_at_se
 
 
 def test_restricting_to_the_informative_statuses_reports_the_undiluted_error() -> None:
-    """v3 §4's condition 9, computed. Restricted CITL is delta itself."""
+    """Change B's display-only diagnostic. Restricted CITL is delta itself."""
 
     delta = -0.77
     rows = status_cohort_with_informative_error(
@@ -351,7 +351,7 @@ def test_restricting_to_the_informative_statuses_reports_the_undiluted_error() -
     )
     restricted = build_calibration_report(
         rows,
-        provenance=Provenance.PROPOSED_V3_NOT_BOUND,
+        provenance=Provenance.DISPLAY_ONLY_ADR_018,
         binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
         restriction={"informative": "yes"},
     )
@@ -487,9 +487,14 @@ def test_a_restricted_report_may_not_claim_v2_preregistration() -> None:
         )
 
 
-def test_a_restricted_report_may_be_labelled_proposed_or_post_hoc() -> None:
+def test_a_restricted_report_records_its_actual_standing() -> None:
     rows = perfectly_calibrated_cohort({"a": 100, "b": 100}, {"a": 0.3, "b": 0.7})
-    for provenance in (Provenance.PROPOSED_V3_NOT_BOUND, Provenance.POST_HOC_DIAGNOSTIC):
+    for provenance in (
+        Provenance.PREREGISTERED_V2_SENSITIVITY,
+        Provenance.PREREGISTERED_V3_SCOPED_CHANGE_A,
+        Provenance.DISPLAY_ONLY_ADR_018,
+        Provenance.POST_HOC_DIAGNOSTIC,
+    ):
         report = build_calibration_report(
             rows,
             provenance=provenance,
@@ -498,6 +503,16 @@ def test_a_restricted_report_may_be_labelled_proposed_or_post_hoc() -> None:
         )
         assert report.restriction == (("group", "a"),)
         assert report.observations == 100
+
+
+def test_change_b_provenance_is_display_only_and_not_a_condition_nine() -> None:
+    assert Provenance.DISPLAY_ONLY_ADR_018.value == "display_only_adr_018"
+    source = Provenance.__doc__ or ""
+    module_source = __import__("hoops_gm.availability.calibration", fromlist=["Provenance"]).__doc__
+    assert module_source is not None
+    assert "display-only" in module_source
+    assert "there is no condition 9" in module_source
+    assert "condition 9" not in source
 
 
 def test_a_pooled_report_may_claim_v2_preregistration() -> None:

@@ -32144,3 +32144,82 @@ this correction was appended.
 
 **Next:** Review and run CI on the frozen replacement head, especially the
 PostgreSQL suite. Do not merge or self-approve from this lane.
+
+---
+
+## 2026-08-31 — quant — Injury-status conversion fit and held-out release
+
+**Changed:** Broke the outcome blind once under frozen preregistration v2 plus
+the owner's 2026-08-29 scoped acceptance of v3 Change A. Added the read-only,
+receipt-pinned fit/evaluation command in
+`hoops_gm.availability.injury_status_conversion`, synthetic contract coverage,
+and the CI-selected Model-gate backtest. The command verified the prepared merged
+store and adjacent receipt before opening outcomes, reproduced the committed
+canonical and direct-membership fingerprints plus every exclusion count, then
+wrote deterministic aggregate evidence to
+`backend/tests/model_evidence/injury_status_conversion_v1.json`. Replaced the
+pre-unblind model-card skeleton with the fitted result, mandatory shutdown-window
+limitation, explicit blind spots, Change A era sensitivity, and display-only
+subgroup evidence. Corrected calibration provenance so rejected Change B cannot
+be represented as condition 9. No raw payload, database, component-store row,
+player identity, browser surface, API, migration, or write path was committed.
+
+**Now true:** The frozen procedure selected `three_band_jeffreys`. Final
+development-plus-selection estimates are 0.0008725 for `out`/`doubtful`,
+0.5405882 for `questionable`, and 0.8585599 for `probable`/`available`. The
+3,940-row holdout reports Brier 0.0376449, CITL +0.0027131, ECE 0.0062994, and
+log loss 0.1163733. Its paired Brier difference against the refitted global
+baseline is -0.1006341 with the frozen 5,000-resample interval
+[-0.1087733, -0.0923892]. All eight v2 activation conditions pass; cohort
+reproduction is exact; deviations from the frozen estimator, split, and
+thresholds are empty. Change A is present as a required non-gating diagnostic:
+the legacy-only development refit has ECE 0.0040857 with no bin outside Wilson,
+while the short-lead-only development refit has ECE 0.0124028 and its uncertain
+and likely bins outside Wilson against the same short-lead holdout. Change B's
+510-row informative-status calibration is display-only/non-gating, and there is
+no condition 9. ADR-018 remains Proposed.
+
+The prepared store is 50,941,952 bytes with SHA-256
+`5fe6110e8c89b91a22a78563111b982eda003c5fe53990143e57e73949554a04`;
+the adjacent 2,159-byte receipt is
+`87befcf2e73d9fec803328f9a5d7281c098274d4c03a7bbf217bb44ad7be154d`.
+The emitted 50,097-byte evidence SHA-256 is
+`f9e4ace0aae41ef52cb3ef851e4630bc094f64ff1d79f3b01ba2b8c3963ded69`.
+Its implementation input is LF-normalized SHA-256
+`f4b16a9909a6e8e0d080da550c1ea3d8cb812132d8a61393df665bf7e643c14c`.
+The backlog now recounts 69 done, 0 blocked, 120 pending, 189 total; only the
+exact `injury-status-conversion` item moved from pending to done.
+
+Two independent quant reviews are preserved in
+`backend/tests/model_evidence/injury_status_conversion_review.md`. The
+pre-unblind review found no methodology or arithmetic blocker before outcome
+access. The post-unblind review independently recomputed every quantity possible
+from the aggregate evidence and found no release blocker; its one-character
+verbatim-limitation finding was corrected and pinned by an exact-equality test.
+The local Code gate is green: Ruff lint and format over 238 backend files, Ruff
+lint and format over 19 repository scripts, strict mypy over 232 source files,
+2,395 tests passed with 1 skipped and 41 deselected, no secrets in 502 tracked
+files, and a clean 189-item backlog graph. The complete Model gate passes 28
+tests with 2,409 deselected. Append-only document terminators and `git diff
+--check` are clean.
+
+**Could not verify:** The finite paired-bootstrap interval cannot be regenerated
+from aggregate bins because its seeded resamples require individual player-game
+rows and their order; the independent audit verified its point estimate,
+direction, seed, resample count, and pinned emitted endpoints without spending a
+second holdout evaluation. The 2025-26 shutdown-window fit cannot establish
+2026-27 calibration, and the model cannot see public-report truthfulness,
+post-report setbacks, trades, coaching or front-office intent, undisclosed
+injuries, or production conditional on playing. The player-game bootstrap does
+not account for within-player or within-game correlation. Native Postgres was
+not available locally; no schema changed, but GitHub CI remains the cross-dialect
+suite of record. The deliberately disjoint component stores remained unopened,
+so outcome-side assembly was validated through the pre-authorized merge receipt,
+stable fingerprints, and exclusion counts rather than a second component-store
+join. No live lineup, auction, API consumer, or browser display exercised these
+priors; this unit establishes Model-gate eligibility, not downstream decision
+quality or owner approval.
+
+**Next:** Commit and publish this exact unit, obtain exact-head review and every
+blocking GitHub CI result including native Postgres, and leave the pull request
+unmerged for independent approval. Do not rerun the consumed holdout.

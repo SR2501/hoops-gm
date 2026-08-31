@@ -1,0 +1,1328 @@
+{
+  "activation": {
+    "condition_9_exists": false,
+    "conditions": [
+      {
+        "name": "selected_model_is_status_conditioned",
+        "number": 1,
+        "passed": true
+      },
+      {
+        "name": "paired_brier_interval_upper_below_zero",
+        "number": 2,
+        "observed": -0.09238916108929127,
+        "passed": true
+      },
+      {
+        "name": "absolute_calibration_in_the_large_at_most_0_10",
+        "number": 3,
+        "observed": 0.002713100761360887,
+        "passed": true
+      },
+      {
+        "failures": [],
+        "name": "every_emitted_bin_has_at_least_20",
+        "number": 4,
+        "passed": true
+      },
+      {
+        "failures": [],
+        "name": "every_emitted_probability_inside_wilson_95",
+        "number": 5,
+        "passed": true
+      },
+      {
+        "name": "every_status_has_at_least_30_held_out_direct_outcomes",
+        "number": 6,
+        "observed": {
+          "available": 467,
+          "doubtful": 83,
+          "out": 2963,
+          "probable": 92,
+          "questionable": 335
+        },
+        "passed": true
+      },
+      {
+        "failures": [],
+        "name": "no_monotonic_reversal_across_three_declared_bands",
+        "number": 7,
+        "passed": true
+      },
+      {
+        "name": "cohort_fingerprint_and_exclusions_reproduce",
+        "number": 8,
+        "passed": true
+      }
+    ],
+    "conditions_present": 8,
+    "default": "veto",
+    "eligible_for_runtime_activation": true,
+    "runtime_wiring_changed_by_this_unit": false
+  },
+  "blind_break": {
+    "deviations_from_frozen_estimator_split_or_thresholds": [],
+    "held_out_evaluations": 1,
+    "tuning_after_held_out_access": false
+  },
+  "calibration_machinery_version": "calibration-machinery-v1",
+  "cannot_see": [
+    "whether a team's public injury designation is medically truthful",
+    "warm-up setbacks, illness, or coaching decisions after the last report",
+    "trades, buyouts, waivers, G League recalls, and roster eligibility events",
+    "coaching changes, minutes restrictions, shutdown policy, or front-office intent",
+    "undisclosed injuries or absences missing from the report",
+    "the 2026-27 season that this 2025-26 prior will be used for",
+    "within-player or within-game correlation in the player-game bootstrap interval"
+  ],
+  "cohort_reproduction": {
+    "all_match": true,
+    "checks": {
+      "canonical_counts": {
+        "expected": {
+          "available": 1489,
+          "doubtful": 221,
+          "out": 10453,
+          "probable": 435,
+          "questionable": 1191
+        },
+        "matches": true,
+        "observed": {
+          "available": 1489,
+          "doubtful": 221,
+          "out": 10453,
+          "probable": 435,
+          "questionable": 1191
+        }
+      },
+      "canonical_fingerprint": {
+        "expected": "8e1986229b3644daa1f7bffa3ce2362e8cfb438da4b1085c0803aebe53f8176e",
+        "matches": true,
+        "observed": "8e1986229b3644daa1f7bffa3ce2362e8cfb438da4b1085c0803aebe53f8176e"
+      },
+      "direct_counts": {
+        "expected": {
+          "available": 1485,
+          "doubtful": 217,
+          "out": 10278,
+          "probable": 434,
+          "questionable": 1184
+        },
+        "matches": true,
+        "observed": {
+          "available": 1485,
+          "doubtful": 217,
+          "out": 10278,
+          "probable": 434,
+          "questionable": 1184
+        }
+      },
+      "direct_membership_fingerprint": {
+        "expected": "bb67c0d20f1e8b91dd6148b3ce767478a89a88101a5301f2b4a2326c5ee1d12f",
+        "matches": true,
+        "observed": "bb67c0d20f1e8b91dd6148b3ce767478a89a88101a5301f2b4a2326c5ee1d12f"
+      },
+      "exclusion_counts": {
+        "expected": {
+          "resolved_observations_without_nba_anchor": {},
+          "resolved_observations_without_participation_row": {
+            "out": 56
+          },
+          "unresolved_player_identity": {
+            "available": 4,
+            "doubtful": 4,
+            "out": 119,
+            "probable": 1,
+            "questionable": 7
+          },
+          "with_non_direct_participation_outcome": {}
+        },
+        "matches": true,
+        "observed": {
+          "resolved_observations_without_nba_anchor": {},
+          "resolved_observations_without_participation_row": {
+            "out": 56
+          },
+          "unresolved_player_identity": {
+            "available": 4,
+            "doubtful": 4,
+            "out": 119,
+            "probable": 1,
+            "questionable": 7
+          },
+          "with_non_direct_participation_outcome": {}
+        }
+      }
+    }
+  },
+  "display_only_subgroups": {
+    "health_reason_proxy": {
+      "calibration": {
+        "binning": "distinct_emitted_probability",
+        "bins": [
+          {
+            "emitted_probability_within_interval": true,
+            "gap": 0.0004256556969009962,
+            "label": "p=0.000872",
+            "observations": 2238,
+            "observed_rate": 0.00044682752457551384,
+            "plays": 1,
+            "predicted_mean": 0.00087248322147651,
+            "wilson_high": 0.002526771677463492,
+            "wilson_low": 7.888038491159926e-05
+          },
+          {
+            "emitted_probability_within_interval": true,
+            "gap": -0.0075599128540305705,
+            "label": "p=0.540588",
+            "observations": 270,
+            "observed_rate": 0.5481481481481482,
+            "plays": 148,
+            "predicted_mean": 0.5405882352941176,
+            "wilson_high": 0.6064213938080661,
+            "wilson_low": 0.48852405423318274
+          },
+          {
+            "emitted_probability_within_interval": false,
+            "gap": -0.07677499053983194,
+            "label": "p=0.858560",
+            "observations": 433,
+            "observed_rate": 0.9353348729792148,
+            "plays": 405,
+            "predicted_mean": 0.8585598824393829,
+            "wilson_high": 0.9548846483578916,
+            "wilson_low": 0.9081286769289453
+          }
+        ],
+        "bins_below_population_floor": [],
+        "bins_outside_wilson_interval": [
+          "p=0.858560"
+        ],
+        "brier_score": 0.03285655053889653,
+        "calibration_in_the_large": -0.011673624591863663,
+        "declared_conventions": {
+          "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+          "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+          "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+          "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+          "duplicate_observations": "refused; the same forecast may not be counted twice",
+          "expected_calibration_error": "observation-weighted mean absolute bin gap",
+          "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+          "probability_decimals": "predictions rounded to 12 decimals before grouping",
+          "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+          "wilson_z_95": "1.959963984540054"
+        },
+        "expected_calibration_error": 0.012321443326759577,
+        "log_loss": 0.1058995050098509,
+        "log_loss_clipped_observations": 0,
+        "machinery_version": "calibration-machinery-v1",
+        "maximum_calibration_error": 0.07677499053983194,
+        "observations": 2941,
+        "observed_rate": 0.1883713022781367,
+        "plays": 554,
+        "population_floor": 20,
+        "predicted_mean": 0.17669767768627304,
+        "provenance": "post_hoc_diagnostic",
+        "restriction": [
+          [
+            "health_reason_proxy",
+            "yes"
+          ]
+        ]
+      },
+      "definition": [
+        "Concussion Protocol",
+        "Injury/Illness",
+        "Return to Competition Reconditioning"
+      ],
+      "gating": false,
+      "standing": "display-only post-hoc proxy required by the pre-unblind model-card skeleton; stated reason is not a feature or a trusted medical fact"
+    },
+    "informative_statuses": {
+      "calibration": {
+        "binning": "distinct_emitted_probability",
+        "bins": [
+          {
+            "emitted_probability_within_interval": true,
+            "gap": 0.00087248322147651,
+            "label": "p=0.000872",
+            "observations": 83,
+            "observed_rate": 0.0,
+            "plays": 0,
+            "predicted_mean": 0.00087248322147651,
+            "wilson_high": 0.04423530964197385,
+            "wilson_low": 3.469446951953614e-18
+          },
+          {
+            "emitted_probability_within_interval": true,
+            "gap": 0.04805092186128179,
+            "label": "p=0.540588",
+            "observations": 335,
+            "observed_rate": 0.4925373134328358,
+            "plays": 165,
+            "predicted_mean": 0.5405882352941176,
+            "wilson_high": 0.545853821414175,
+            "wilson_low": 0.43939001498824737
+          },
+          {
+            "emitted_probability_within_interval": false,
+            "gap": -0.08709229147366071,
+            "label": "p=0.858560",
+            "observations": 92,
+            "observed_rate": 0.9456521739130435,
+            "plays": 87,
+            "predicted_mean": 0.8585598824393827,
+            "wilson_high": 0.9765649360513676,
+            "wilson_low": 0.8790146952375347
+          }
+        ],
+        "bins_below_population_floor": [],
+        "bins_outside_wilson_interval": [
+          "p=0.858560"
+        ],
+        "brier_score": 0.17633523928676878,
+        "calibration_in_the_large": 0.015994086500657145,
+        "declared_conventions": {
+          "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+          "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+          "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+          "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+          "duplicate_observations": "refused; the same forecast may not be counted twice",
+          "expected_calibration_error": "observation-weighted mean absolute bin gap",
+          "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+          "probability_decimals": "predictions rounded to 12 decimals before grouping",
+          "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+          "wilson_z_95": "1.959963984540054"
+        },
+        "expected_calibration_error": 0.04741561911076223,
+        "log_loss": 0.5036034092141707,
+        "log_loss_clipped_observations": 0,
+        "machinery_version": "calibration-machinery-v1",
+        "maximum_calibration_error": 0.08709229147366071,
+        "observations": 510,
+        "observed_rate": 0.49411764705882355,
+        "plays": 252,
+        "population_floor": 20,
+        "predicted_mean": 0.5101117335594807,
+        "provenance": "display_only_adr_018",
+        "restriction": [
+          [
+            "informative",
+            "yes"
+          ]
+        ]
+      },
+      "condition_9_exists": false,
+      "definition": [
+        "doubtful",
+        "probable",
+        "questionable"
+      ],
+      "gating": false,
+      "standing": "display-only under ADR-018; Change B rejected as a gate"
+    }
+  },
+  "evidence_schema_version": 1,
+  "final_fit": {
+    "global_baseline": {
+      "candidate": "global_jeffreys",
+      "estimator": "(plays + 0.5) / (observations + 1)",
+      "groups": {
+        "all_statuses": {
+          "observations": 9658,
+          "plays": 1633,
+          "probability": 0.16911688580598405
+        }
+      },
+      "status_probabilities": {
+        "available": 0.16911688580598405,
+        "doubtful": 0.16911688580598405,
+        "out": 0.16911688580598405,
+        "probable": 0.16911688580598405,
+        "questionable": 0.16911688580598405
+      }
+    },
+    "selected_model": {
+      "candidate": "three_band_jeffreys",
+      "estimator": "(plays + 0.5) / (observations + 1)",
+      "groups": {
+        "likely": {
+          "observations": 1360,
+          "plays": 1168,
+          "probability": 0.8585598824393829
+        },
+        "uncertain": {
+          "observations": 849,
+          "plays": 459,
+          "probability": 0.5405882352941176
+        },
+        "unlikely": {
+          "observations": 7449,
+          "plays": 6,
+          "probability": 0.00087248322147651
+        }
+      },
+      "status_probabilities": {
+        "available": 0.8585598824393829,
+        "doubtful": 0.00087248322147651,
+        "out": 0.00087248322147651,
+        "probable": 0.8585598824393829,
+        "questionable": 0.5405882352941176
+      }
+    },
+    "training_partitions": [
+      "development",
+      "selection"
+    ]
+  },
+  "governing_protocol": {
+    "condition_9_exists": false,
+    "freeze_id": "injury-status-conversion-v2-20260821T145900Z",
+    "standing": "v3 with scoped acceptance: frozen v2 plus Change A",
+    "v3_change_a": "accepted and binding diagnostic",
+    "v3_change_b": "rejected as an activation gate; display-only"
+  },
+  "held_out_primary": {
+    "calibration": {
+      "binning": "distinct_emitted_probability",
+      "bins": [
+        {
+          "emitted_probability_within_interval": true,
+          "gap": 0.0005441838124154464,
+          "label": "p=0.000872",
+          "observations": 3046,
+          "observed_rate": 0.00032829940906106366,
+          "plays": 1,
+          "predicted_mean": 0.00087248322147651,
+          "wilson_high": 0.0018573767025719667,
+          "wilson_low": 5.795525797948017e-05
+        },
+        {
+          "emitted_probability_within_interval": true,
+          "gap": 0.04805092186128179,
+          "label": "p=0.540588",
+          "observations": 335,
+          "observed_rate": 0.4925373134328358,
+          "plays": 165,
+          "predicted_mean": 0.5405882352941176,
+          "wilson_high": 0.545853821414175,
+          "wilson_low": 0.43939001498824737
+        },
+        {
+          "emitted_probability_within_interval": true,
+          "gap": -0.012638686433604662,
+          "label": "p=0.858560",
+          "observations": 559,
+          "observed_rate": 0.8711985688729875,
+          "plays": 487,
+          "predicted_mean": 0.8585598824393829,
+          "wilson_high": 0.8964549484457373,
+          "wilson_low": 0.8408752419591025
+        }
+      ],
+      "bins_below_population_floor": [],
+      "bins_outside_wilson_interval": [],
+      "brier_score": 0.037644920084708336,
+      "calibration_in_the_large": 0.002713100761360887,
+      "declared_conventions": {
+        "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+        "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+        "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+        "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+        "duplicate_observations": "refused; the same forecast may not be counted twice",
+        "expected_calibration_error": "observation-weighted mean absolute bin gap",
+        "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+        "probability_decimals": "predictions rounded to 12 decimals before grouping",
+        "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+        "wilson_z_95": "1.959963984540054"
+      },
+      "expected_calibration_error": 0.00629940823160707,
+      "log_loss": 0.11637328718678212,
+      "log_loss_clipped_observations": 0,
+      "machinery_version": "calibration-machinery-v1",
+      "maximum_calibration_error": 0.04805092186128179,
+      "observations": 3940,
+      "observed_rate": 0.16573604060913705,
+      "plays": 653,
+      "population_floor": 20,
+      "predicted_mean": 0.16844914137049793,
+      "provenance": "preregistered_v2",
+      "restriction": null
+    },
+    "monotonic_bands": [
+      {
+        "label": "unlikely",
+        "observations": 3046,
+        "observed_rate": 0.00032829940906106366,
+        "predicted_mean": 0.00087248322147651
+      },
+      {
+        "label": "uncertain",
+        "observations": 335,
+        "observed_rate": 0.4925373134328358,
+        "predicted_mean": 0.5405882352941176
+      },
+      {
+        "label": "likely",
+        "observations": 559,
+        "observed_rate": 0.8711985688729875,
+        "predicted_mean": 0.8585598824393829
+      }
+    ],
+    "monotonic_reversals": [],
+    "paired_brier_against_global": {
+      "baseline_brier": 0.13827903556658858,
+      "candidate_beats_baseline": true,
+      "candidate_brier": 0.037644920084708336,
+      "interval_caveat": "resampled by observation id; not valid against within-player or within-game correlation",
+      "interval_high": -0.09238916108929127,
+      "interval_low": -0.10877328091715036,
+      "mean_difference": -0.10063411548188023,
+      "resamples": 5000,
+      "seed": 250119
+    },
+    "per_status": {
+      "available": {
+        "display_only_non_gating": true,
+        "observations": 467,
+        "observed_rate": 0.8565310492505354,
+        "plays": 400,
+        "predicted_probability": 0.8585598824393829,
+        "wilson_high": 0.885419218084177,
+        "wilson_low": 0.8218252136913459
+      },
+      "doubtful": {
+        "display_only_non_gating": true,
+        "observations": 83,
+        "observed_rate": 0.0,
+        "plays": 0,
+        "predicted_probability": 0.00087248322147651,
+        "wilson_high": 0.04423530964197385,
+        "wilson_low": 3.469446951953614e-18
+      },
+      "out": {
+        "display_only_non_gating": true,
+        "observations": 2963,
+        "observed_rate": 0.0003374957813027337,
+        "plays": 1,
+        "predicted_probability": 0.00087248322147651,
+        "wilson_high": 0.0019093362801776755,
+        "wilson_low": 5.957877705496781e-05
+      },
+      "probable": {
+        "display_only_non_gating": true,
+        "observations": 92,
+        "observed_rate": 0.9456521739130435,
+        "plays": 87,
+        "predicted_probability": 0.8585598824393829,
+        "wilson_high": 0.9765649360513676,
+        "wilson_low": 0.8790146952375347
+      },
+      "questionable": {
+        "display_only_non_gating": true,
+        "observations": 335,
+        "observed_rate": 0.4925373134328358,
+        "plays": 165,
+        "predicted_probability": 0.5405882352941176,
+        "wilson_high": 0.545853821414175,
+        "wilson_low": 0.43939001498824737
+      }
+    },
+    "standing": "primary Model-gate evidence"
+  },
+  "inputs": {
+    "adjacent_merge_receipt": {
+      "bytes": 2159,
+      "file": "cohort-merged-2025-26.db.merge-receipt.json",
+      "matches_committed_manifest_receipt": true,
+      "sha256": "87befcf2e73d9fec803328f9a5d7281c098274d4c03a7bbf217bb44ad7be154d"
+    },
+    "committed_inputs": {
+      "admissibility": {
+        "file": "docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json",
+        "sha256_lf_normalized": "77934ffedee17f96c8ea5e9fe02361900188a1e926f1e666062d969592ac46f1"
+      },
+      "cohort_manifest": {
+        "file": "docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json",
+        "sha256_lf_normalized": "474e510f67e892728c8a50db3842d518bd6e5d60c8159832bca22952af800d58"
+      },
+      "implementation": {
+        "file": "backend/src/hoops_gm/availability/injury_status_conversion.py",
+        "sha256_lf_normalized": "f4b16a9909a6e8e0d080da550c1ea3d8cb812132d8a61393df665bf7e643c14c"
+      },
+      "preregistration_v2": {
+        "file": "docs/models/injury-status-conversion-preregistration.md",
+        "sha256_lf_normalized": "4d4bc78ccde223fc0df4039b83c9823ed150ddc0e1fce3c4d714fe95fb6bc2c7"
+      },
+      "preregistration_v3_scoped": {
+        "file": "docs/models/injury-status-conversion-preregistration-v3-PROPOSED.md",
+        "sha256_lf_normalized": "b43294668ca5b33f3f7a34cbf470ad75721817a7bcd78efb1feeefd7a044eb9d"
+      }
+    },
+    "prepared_merged_store": {
+      "bytes": 50941952,
+      "sha256": "5fe6110e8c89b91a22a78563111b982eda003c5fe53990143e57e73949554a04",
+      "store": "cohort-merged-2025-26.db"
+    },
+    "reproducible_command": "python -m hoops_gm.availability.injury_status_conversion --store \"$env:HOOPS_GM_DATA\\cohort-merged-2025-26.db\" --merge-receipt \"$env:HOOPS_GM_DATA\\cohort-merged-2025-26.db.merge-receipt.json\""
+  },
+  "kind": "injury-status-conversion-model-evidence",
+  "model_version": "injury-status-conversion-v2-scoped-a-v1",
+  "selection": {
+    "candidate_order": [
+      "global_jeffreys",
+      "three_band_jeffreys",
+      "five_status_jeffreys"
+    ],
+    "candidates": {
+      "five_status_jeffreys": {
+        "advanced": false,
+        "development_counts_by_status": {
+          "available": 586,
+          "doubtful": 73,
+          "out": 4653,
+          "probable": 228,
+          "questionable": 572
+        },
+        "eligible": true,
+        "fit": {
+          "candidate": "five_status_jeffreys",
+          "estimator": "(plays + 0.5) / (observations + 1)",
+          "groups": {
+            "available": {
+              "observations": 586,
+              "plays": 481,
+              "probability": 0.8202725724020443
+            },
+            "doubtful": {
+              "observations": 73,
+              "plays": 0,
+              "probability": 0.006756756756756757
+            },
+            "out": {
+              "observations": 4653,
+              "plays": 2,
+              "probability": 0.0005371723248818221
+            },
+            "probable": {
+              "observations": 228,
+              "plays": 208,
+              "probability": 0.9104803493449781
+            },
+            "questionable": {
+              "observations": 572,
+              "plays": 297,
+              "probability": 0.5191972076788831
+            }
+          },
+          "status_probabilities": {
+            "available": 0.8202725724020443,
+            "doubtful": 0.006756756756756757,
+            "out": 0.0005371723248818221,
+            "probable": 0.9104803493449781,
+            "questionable": 0.5191972076788831
+          }
+        },
+        "improvement_over_incumbent": -0.00018040910042424474,
+        "selection_brier": 0.03733744866648961
+      },
+      "global_jeffreys": {
+        "advanced": true,
+        "development_counts_by_status": {
+          "available": 586,
+          "doubtful": 73,
+          "out": 4653,
+          "probable": 228,
+          "questionable": 572
+        },
+        "eligible": true,
+        "fit": {
+          "candidate": "global_jeffreys",
+          "estimator": "(plays + 0.5) / (observations + 1)",
+          "groups": {
+            "all_statuses": {
+              "observations": 6112,
+              "plays": 988,
+              "probability": 0.16170456404384098
+            }
+          },
+          "status_probabilities": {
+            "available": 0.16170456404384098,
+            "doubtful": 0.16170456404384098,
+            "out": 0.16170456404384098,
+            "probable": 0.16170456404384098,
+            "questionable": 0.16170456404384098
+          }
+        },
+        "improvement_over_incumbent": null,
+        "selection_brier": 0.1492169256444093
+      },
+      "three_band_jeffreys": {
+        "advanced": true,
+        "development_counts_by_status": {
+          "available": 586,
+          "doubtful": 73,
+          "out": 4653,
+          "probable": 228,
+          "questionable": 572
+        },
+        "eligible": true,
+        "fit": {
+          "candidate": "three_band_jeffreys",
+          "estimator": "(plays + 0.5) / (observations + 1)",
+          "groups": {
+            "likely": {
+              "observations": 814,
+              "plays": 689,
+              "probability": 0.8460122699386503
+            },
+            "uncertain": {
+              "observations": 572,
+              "plays": 297,
+              "probability": 0.5191972076788831
+            },
+            "unlikely": {
+              "observations": 4726,
+              "plays": 2,
+              "probability": 0.0005288766659614978
+            }
+          },
+          "status_probabilities": {
+            "available": 0.8460122699386503,
+            "doubtful": 0.0005288766659614978,
+            "out": 0.0005288766659614978,
+            "probable": 0.8460122699386503,
+            "questionable": 0.5191972076788831
+          }
+        },
+        "improvement_over_incumbent": 0.11205988607834394,
+        "selection_brier": 0.037157039566065364
+      }
+    },
+    "minimum_improvement_to_advance": 0.005,
+    "primary_metric": "selection-partition Brier score",
+    "selected": "three_band_jeffreys"
+  },
+  "sensitivities": {
+    "v2_exclusion_bounds": {
+      "explicit_unknown_outcome": {
+        "by_status": {
+          "available": {
+            "direct_observations": 467,
+            "direct_plays": 400,
+            "play_rate_if_all_uncertain_do_not_play": 0.8565310492505354,
+            "play_rate_if_all_uncertain_play": 0.8565310492505354,
+            "uncertain_observations": 0
+          },
+          "doubtful": {
+            "direct_observations": 83,
+            "direct_plays": 0,
+            "play_rate_if_all_uncertain_do_not_play": 0.0,
+            "play_rate_if_all_uncertain_play": 0.0,
+            "uncertain_observations": 0
+          },
+          "out": {
+            "direct_observations": 2963,
+            "direct_plays": 1,
+            "play_rate_if_all_uncertain_do_not_play": 0.0003374957813027337,
+            "play_rate_if_all_uncertain_play": 0.0003374957813027337,
+            "uncertain_observations": 0
+          },
+          "probable": {
+            "direct_observations": 92,
+            "direct_plays": 87,
+            "play_rate_if_all_uncertain_do_not_play": 0.9456521739130435,
+            "play_rate_if_all_uncertain_play": 0.9456521739130435,
+            "uncertain_observations": 0
+          },
+          "questionable": {
+            "direct_observations": 335,
+            "direct_plays": 165,
+            "play_rate_if_all_uncertain_do_not_play": 0.4925373134328358,
+            "play_rate_if_all_uncertain_play": 0.4925373134328358,
+            "uncertain_observations": 0
+          }
+        },
+        "enters_fit_or_primary_evaluation": false
+      },
+      "missing_participation_row": {
+        "by_status": {
+          "available": {
+            "direct_observations": 467,
+            "direct_plays": 400,
+            "play_rate_if_all_uncertain_do_not_play": 0.8565310492505354,
+            "play_rate_if_all_uncertain_play": 0.8565310492505354,
+            "uncertain_observations": 0
+          },
+          "doubtful": {
+            "direct_observations": 83,
+            "direct_plays": 0,
+            "play_rate_if_all_uncertain_do_not_play": 0.0,
+            "play_rate_if_all_uncertain_play": 0.0,
+            "uncertain_observations": 0
+          },
+          "out": {
+            "direct_observations": 2963,
+            "direct_plays": 1,
+            "play_rate_if_all_uncertain_do_not_play": 0.00033692722371967657,
+            "play_rate_if_all_uncertain_play": 0.0020215633423180594,
+            "uncertain_observations": 5
+          },
+          "probable": {
+            "direct_observations": 92,
+            "direct_plays": 87,
+            "play_rate_if_all_uncertain_do_not_play": 0.9456521739130435,
+            "play_rate_if_all_uncertain_play": 0.9456521739130435,
+            "uncertain_observations": 0
+          },
+          "questionable": {
+            "direct_observations": 335,
+            "direct_plays": 165,
+            "play_rate_if_all_uncertain_do_not_play": 0.4925373134328358,
+            "play_rate_if_all_uncertain_play": 0.4925373134328358,
+            "uncertain_observations": 0
+          }
+        },
+        "enters_fit_or_primary_evaluation": false
+      },
+      "unresolved_identity": {
+        "by_status": {
+          "available": {
+            "direct_observations": 467,
+            "direct_plays": 400,
+            "play_rate_if_all_uncertain_do_not_play": 0.8528784648187633,
+            "play_rate_if_all_uncertain_play": 0.8571428571428571,
+            "uncertain_observations": 2
+          },
+          "doubtful": {
+            "direct_observations": 83,
+            "direct_plays": 0,
+            "play_rate_if_all_uncertain_do_not_play": 0.0,
+            "play_rate_if_all_uncertain_play": 0.011904761904761904,
+            "uncertain_observations": 1
+          },
+          "out": {
+            "direct_observations": 2963,
+            "direct_plays": 1,
+            "play_rate_if_all_uncertain_do_not_play": 0.0003362474781439139,
+            "play_rate_if_all_uncertain_play": 0.004034969737726967,
+            "uncertain_observations": 11
+          },
+          "probable": {
+            "direct_observations": 92,
+            "direct_plays": 87,
+            "play_rate_if_all_uncertain_do_not_play": 0.9456521739130435,
+            "play_rate_if_all_uncertain_play": 0.9456521739130435,
+            "uncertain_observations": 0
+          },
+          "questionable": {
+            "direct_observations": 335,
+            "direct_plays": 165,
+            "play_rate_if_all_uncertain_do_not_play": 0.4925373134328358,
+            "play_rate_if_all_uncertain_play": 0.4925373134328358,
+            "uncertain_observations": 0
+          }
+        },
+        "enters_fit_or_primary_evaluation": false
+      }
+    },
+    "v2_lead_time_bands": {
+      "181-540": {
+        "calibration": {
+          "binning": "distinct_emitted_probability",
+          "bins": [
+            {
+              "emitted_probability_within_interval": true,
+              "gap": 0.00087248322147651,
+              "label": "p=0.000872",
+              "observations": 505,
+              "observed_rate": 0.0,
+              "plays": 0,
+              "predicted_mean": 0.00087248322147651,
+              "wilson_high": 0.007549421836807879,
+              "wilson_low": 0.0
+            },
+            {
+              "emitted_probability_within_interval": true,
+              "gap": 0.08604278074866306,
+              "label": "p=0.540588",
+              "observations": 99,
+              "observed_rate": 0.45454545454545453,
+              "plays": 45,
+              "predicted_mean": 0.5405882352941176,
+              "wilson_high": 0.552493053704647,
+              "wilson_low": 0.3599936019378829
+            },
+            {
+              "emitted_probability_within_interval": true,
+              "gap": -0.0014401175606171268,
+              "label": "p=0.858560",
+              "observations": 50,
+              "observed_rate": 0.86,
+              "plays": 43,
+              "predicted_mean": 0.8585598824393829,
+              "wilson_high": 0.9304916657298371,
+              "wilson_low": 0.7381380628941446
+            }
+          ],
+          "bins_below_population_floor": [],
+          "bins_outside_wilson_interval": [],
+          "brier_score": 0.04785760751342812,
+          "calibration_in_the_large": 0.013588430340875285,
+          "declared_conventions": {
+            "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+            "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+            "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+            "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+            "duplicate_observations": "refused; the same forecast may not be counted twice",
+            "expected_calibration_error": "observation-weighted mean absolute bin gap",
+            "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+            "probability_decimals": "predictions rounded to 12 decimals before grouping",
+            "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+            "wilson_z_95": "1.959963984540054"
+          },
+          "expected_calibration_error": 0.013808631802743327,
+          "log_loss": 0.13818109275374893,
+          "log_loss_clipped_observations": 0,
+          "machinery_version": "calibration-machinery-v1",
+          "maximum_calibration_error": 0.08604278074866306,
+          "observations": 654,
+          "observed_rate": 0.1345565749235474,
+          "plays": 88,
+          "population_floor": 20,
+          "predicted_mean": 0.14814500526442267,
+          "provenance": "preregistered_v2_sensitivity",
+          "restriction": [
+            [
+              "lead_time_band",
+              "181-540"
+            ]
+          ]
+        },
+        "counts_only": false,
+        "gating": false,
+        "minimum_to_report_metrics": 10,
+        "observations": 654
+      },
+      "61-180": {
+        "calibration": {
+          "binning": "distinct_emitted_probability",
+          "bins": [
+            {
+              "emitted_probability_within_interval": true,
+              "gap": 6.01355366674118e-05,
+              "label": "p=0.000872",
+              "observations": 1231,
+              "observed_rate": 0.0008123476848090983,
+              "plays": 1,
+              "predicted_mean": 0.00087248322147651,
+              "wilson_high": 0.00458711973618023,
+              "wilson_low": 0.0001434137092005813
+            },
+            {
+              "emitted_probability_within_interval": true,
+              "gap": 0.013561208267090619,
+              "label": "p=0.540588",
+              "observations": 222,
+              "observed_rate": 0.527027027027027,
+              "plays": 117,
+              "predicted_mean": 0.5405882352941176,
+              "wilson_high": 0.5916839051311404,
+              "wilson_low": 0.4614507144496129
+            },
+            {
+              "emitted_probability_within_interval": true,
+              "gap": -0.022690117560617118,
+              "label": "p=0.858560",
+              "observations": 160,
+              "observed_rate": 0.88125,
+              "plays": 141,
+              "predicted_mean": 0.8585598824393829,
+              "wilson_high": 0.9226451319940766,
+              "wilson_low": 0.8219771441876508
+            }
+          ],
+          "bins_below_population_floor": [],
+          "bins_outside_wilson_interval": [],
+          "brier_score": 0.04538374568223728,
+          "calibration_in_the_large": -0.0003383780091550104,
+          "declared_conventions": {
+            "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+            "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+            "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+            "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+            "duplicate_observations": "refused; the same forecast may not be counted twice",
+            "expected_calibration_error": "observation-weighted mean absolute bin gap",
+            "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+            "probability_decimals": "predictions rounded to 12 decimals before grouping",
+            "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+            "wilson_z_95": "1.959963984540054"
+          },
+          "expected_calibration_error": 0.004163071227917198,
+          "log_loss": 0.1366510243877232,
+          "log_loss_clipped_observations": 0,
+          "machinery_version": "calibration-machinery-v1",
+          "maximum_calibration_error": 0.022690117560617118,
+          "observations": 1613,
+          "observed_rate": 0.1605703657780533,
+          "plays": 259,
+          "population_floor": 20,
+          "predicted_mean": 0.1602319877688983,
+          "provenance": "preregistered_v2_sensitivity",
+          "restriction": [
+            [
+              "lead_time_band",
+              "61-180"
+            ]
+          ]
+        },
+        "counts_only": false,
+        "gating": false,
+        "minimum_to_report_metrics": 10,
+        "observations": 1613
+      },
+      "<=60": {
+        "calibration": {
+          "binning": "distinct_emitted_probability",
+          "bins": [
+            {
+              "emitted_probability_within_interval": true,
+              "gap": 0.00087248322147651,
+              "label": "p=0.000872",
+              "observations": 1310,
+              "observed_rate": 0.0,
+              "plays": 0,
+              "predicted_mean": 0.00087248322147651,
+              "wilson_high": 0.0029238374195789374,
+              "wilson_low": 0.0
+            },
+            {
+              "emitted_probability_within_interval": false,
+              "gap": 0.3263025210084033,
+              "label": "p=0.540588",
+              "observations": 14,
+              "observed_rate": 0.21428571428571427,
+              "plays": 3,
+              "predicted_mean": 0.5405882352941176,
+              "wilson_high": 0.47589230586600295,
+              "wilson_low": 0.07571386712693182
+            },
+            {
+              "emitted_probability_within_interval": true,
+              "gap": -0.009634959967493972,
+              "label": "p=0.858560",
+              "observations": 349,
+              "observed_rate": 0.8681948424068768,
+              "plays": 303,
+              "predicted_mean": 0.8585598824393829,
+              "wilson_high": 0.8997097442623333,
+              "wilson_low": 0.8286627119081346
+            }
+          ],
+          "bins_below_population_floor": [
+            "p=0.540588"
+          ],
+          "bins_outside_wilson_interval": [
+            "p=0.540588"
+          ],
+          "brier_score": 0.0261913496918829,
+          "calibration_in_the_large": 0.0014038178634766807,
+          "declared_conventions": {
+            "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+            "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+            "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+            "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+            "duplicate_observations": "refused; the same forecast may not be counted twice",
+            "expected_calibration_error": "observation-weighted mean absolute bin gap",
+            "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+            "probability_decimals": "predictions rounded to 12 decimals before grouping",
+            "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+            "wilson_z_95": "1.959963984540054"
+          },
+          "expected_calibration_error": 0.005423663683746127,
+          "log_loss": 0.0882977970816475,
+          "log_loss_clipped_observations": 0,
+          "machinery_version": "calibration-machinery-v1",
+          "maximum_calibration_error": 0.3263025210084033,
+          "observations": 1673,
+          "observed_rate": 0.18290496114763896,
+          "plays": 306,
+          "population_floor": 20,
+          "predicted_mean": 0.18430877901111564,
+          "provenance": "preregistered_v2_sensitivity",
+          "restriction": [
+            [
+              "lead_time_band",
+              "<=60"
+            ]
+          ]
+        },
+        "counts_only": false,
+        "gating": false,
+        "minimum_to_report_metrics": 10,
+        "observations": 1673
+      },
+      ">540": {
+        "calibration": null,
+        "counts_only": true,
+        "gating": false,
+        "minimum_to_report_metrics": 10,
+        "observations": 0
+      }
+    },
+    "v3_change_a_report_era": {
+      "enters_v2_section_8": false,
+      "interpretation": "training-era sensitivity, not held-out legacy calibration; the holdout is 100% short-lead",
+      "pooled_result_remains_primary": true,
+      "refits": {
+        "legacy_hourly": {
+          "calibration": {
+            "binning": "distinct_emitted_probability",
+            "bins": [
+              {
+                "emitted_probability_within_interval": true,
+                "gap": 0.0004500318487222489,
+                "label": "p=0.000778",
+                "observations": 3046,
+                "observed_rate": 0.00032829940906106366,
+                "plays": 1,
+                "predicted_mean": 0.0007783312577833125,
+                "wilson_high": 0.0018573767025719667,
+                "wilson_low": 5.795525797948017e-05
+              },
+              {
+                "emitted_probability_within_interval": true,
+                "gap": 0.01075216025137471,
+                "label": "p=0.503289",
+                "observations": 335,
+                "observed_rate": 0.4925373134328358,
+                "plays": 165,
+                "predicted_mean": 0.5032894736842105,
+                "wilson_high": 0.545853821414175,
+                "wilson_low": 0.43939001498824737
+              },
+              {
+                "emitted_probability_within_interval": true,
+                "gap": -0.019901163683366807,
+                "label": "p=0.851297",
+                "observations": 559,
+                "observed_rate": 0.8711985688729875,
+                "plays": 487,
+                "predicted_mean": 0.8512974051896207,
+                "wilson_high": 0.8964549484457373,
+                "wilson_low": 0.8408752419591025
+              }
+            ],
+            "bins_below_population_floor": [],
+            "bins_outside_wilson_interval": [],
+            "brier_score": 0.037491891706657975,
+            "calibration_in_the_large": -0.001561416193802928,
+            "declared_conventions": {
+              "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+              "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+              "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+              "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+              "duplicate_observations": "refused; the same forecast may not be counted twice",
+              "expected_calibration_error": "observation-weighted mean absolute bin gap",
+              "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+              "probability_decimals": "predictions rounded to 12 decimals before grouping",
+              "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+              "wilson_z_95": "1.959963984540054"
+            },
+            "expected_calibration_error": 0.0040856652777717115,
+            "log_loss": 0.11609030489785598,
+            "log_loss_clipped_observations": 0,
+            "machinery_version": "calibration-machinery-v1",
+            "maximum_calibration_error": 0.019901163683366807,
+            "observations": 3940,
+            "observed_rate": 0.16573604060913705,
+            "plays": 653,
+            "population_floor": 20,
+            "predicted_mean": 0.16417462441533412,
+            "provenance": "preregistered_v3_scoped_change_a",
+            "restriction": null
+          },
+          "fit": {
+            "candidate": "three_band_jeffreys",
+            "estimator": "(plays + 0.5) / (observations + 1)",
+            "groups": {
+              "likely": {
+                "observations": 500,
+                "plays": 426,
+                "probability": 0.8512974051896207
+              },
+              "uncertain": {
+                "observations": 455,
+                "plays": 229,
+                "probability": 0.5032894736842105
+              },
+              "unlikely": {
+                "observations": 3211,
+                "plays": 2,
+                "probability": 0.0007783312577833125
+              }
+            },
+            "status_probabilities": {
+              "available": 0.8512974051896207,
+              "doubtful": 0.0007783312577833125,
+              "out": 0.0007783312577833125,
+              "probable": 0.8512974051896207,
+              "questionable": 0.5032894736842105
+            }
+          },
+          "gating": false,
+          "held_out_observations_scored": 3940,
+          "held_out_observations_total": 3940,
+          "same_held_out_date_partition": true,
+          "statuses_reported_as_counts_only": [],
+          "training_counts_by_status": {
+            "available": 332,
+            "doubtful": 53,
+            "out": 3158,
+            "probable": 168,
+            "questionable": 455
+          },
+          "training_partition": "development only"
+        },
+        "short_lead_fifteen_minute": {
+          "calibration": {
+            "binning": "distinct_emitted_probability",
+            "bins": [
+              {
+                "emitted_probability_within_interval": true,
+                "gap": 1.5158943690154808e-06,
+                "label": "p=0.000330",
+                "observations": 3046,
+                "observed_rate": 0.00032829940906106366,
+                "plays": 1,
+                "predicted_mean": 0.00032981530343007914,
+                "wilson_high": 0.0018573767025719667,
+                "wilson_low": 5.795525797948017e-05
+              },
+              {
+                "emitted_probability_within_interval": false,
+                "gap": 0.0879711611434354,
+                "label": "p=0.580508",
+                "observations": 335,
+                "observed_rate": 0.4925373134328358,
+                "plays": 165,
+                "predicted_mean": 0.5805084745762712,
+                "wilson_high": 0.545853821414175,
+                "wilson_low": 0.43939001498824737
+              },
+              {
+                "emitted_probability_within_interval": false,
+                "gap": -0.03469063236505099,
+                "label": "p=0.836508",
+                "observations": 559,
+                "observed_rate": 0.8711985688729875,
+                "plays": 487,
+                "predicted_mean": 0.8365079365079365,
+                "wilson_high": 0.8964549484457373,
+                "wilson_low": 0.8408752419591025
+              }
+            ],
+            "bins_below_population_floor": [],
+            "bins_outside_wilson_interval": [
+              "p=0.580508",
+              "p=0.836508"
+            ],
+            "brier_score": 0.03825446061803558,
+            "calibration_in_the_large": 0.0025591098744252583,
+            "declared_conventions": {
+              "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
+              "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
+              "bootstrap_unit": "one observation id, resampled with replacement; duplicate ids are refused",
+              "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+              "duplicate_observations": "refused; the same forecast may not be counted twice",
+              "expected_calibration_error": "observation-weighted mean absolute bin gap",
+              "log_loss_clip": "predictions clipped into [1e-15, 1 - 1e-15]",
+              "probability_decimals": "predictions rounded to 12 decimals before grouping",
+              "wilson_interval": "score interval, no continuity correction (the narrower, stricter arm)",
+              "wilson_z_95": "1.959963984540054"
+            },
+            "expected_calibration_error": 0.012402796926234107,
+            "log_loss": 0.11770763531478329,
+            "log_loss_clipped_observations": 0,
+            "machinery_version": "calibration-machinery-v1",
+            "maximum_calibration_error": 0.0879711611434354,
+            "observations": 3940,
+            "observed_rate": 0.16573604060913705,
+            "plays": 653,
+            "population_floor": 20,
+            "predicted_mean": 0.1682951504835623,
+            "provenance": "preregistered_v3_scoped_change_a",
+            "restriction": null
+          },
+          "fit": {
+            "candidate": "three_band_jeffreys",
+            "estimator": "(plays + 0.5) / (observations + 1)",
+            "groups": {
+              "likely": {
+                "observations": 314,
+                "plays": 263,
+                "probability": 0.8365079365079365
+              },
+              "uncertain": {
+                "observations": 117,
+                "plays": 68,
+                "probability": 0.5805084745762712
+              },
+              "unlikely": {
+                "observations": 1515,
+                "plays": 0,
+                "probability": 0.00032981530343007914
+              }
+            },
+            "status_probabilities": {
+              "available": 0.8365079365079365,
+              "doubtful": 0.00032981530343007914,
+              "out": 0.00032981530343007914,
+              "probable": 0.8365079365079365,
+              "questionable": 0.5805084745762712
+            }
+          },
+          "gating": false,
+          "held_out_observations_scored": 3940,
+          "held_out_observations_total": 3940,
+          "same_held_out_date_partition": true,
+          "statuses_reported_as_counts_only": [],
+          "training_counts_by_status": {
+            "available": 254,
+            "doubtful": 20,
+            "out": 1495,
+            "probable": 60,
+            "questionable": 117
+          },
+          "training_partition": "development only"
+        }
+      },
+      "standing": "v3 Change A, scoped acceptance 2026-08-29"
+    }
+  },
+  "split": {
+    "denominator": "ordered distinct cohort game dates",
+    "development": [
+      "2025-10-21",
+      "2026-01-13"
+    ],
+    "direct_rows": {
+      "development": 6112,
+      "held_out": 3940,
+      "selection": 3546
+    },
+    "game_dates": {
+      "development": 82,
+      "held_out": 41,
+      "selection": 41
+    },
+    "held_out": [
+      "2026-03-02",
+      "2026-04-12"
+    ],
+    "selection": [
+      "2026-01-14",
+      "2026-03-01"
+    ]
+  }
+}
