@@ -26,11 +26,12 @@ stricter arm was taken and is flagged as such — see `WILSON_CONTINUITY_CORRECT
 
 ## Provenance is mandatory, and that is the point
 
-`docs/models/injury-status-conversion-preregistration.md` (v2) is the bound
-protocol. Its §7 declares a pooled binned calibration table and nothing
-restricted to a subgroup. A restricted table is proposed by
-`injury-status-conversion-preregistration-v3-PROPOSED.md` §4 as condition 9, and
-v3 is `Proposed` — not bound.
+`docs/models/injury-status-conversion-preregistration.md` (v2) is the frozen
+protocol. Its §7 declares a pooled binned calibration table and named
+sensitivities. The project owner accepted v3 Change A only on 2026-08-29:
+report-era refits are binding diagnostics. Change B was rejected as an
+activation gate. Its informative-status restriction is display-only under
+ADR-018, blocks nothing, and there is no condition 9.
 
 So a report cannot be built without saying which of those it is. A *restricted*
 report may never claim `PREREGISTERED_V2`, because v2 pre-registers no such
@@ -212,10 +213,14 @@ class Provenance(Enum):
 
     #: Declared by v2 §7, which is bound. Pooled analyses only.
     PREREGISTERED_V2 = "preregistered_v2"
-    #: Declared by v3 §4 condition 9, which is `Proposed` and not in force. Such
-    #: a figure is computable and reportable, but it does not gate anything
-    #: unless and until the owner binds v3.
-    PROPOSED_V3_NOT_BOUND = "proposed_v3_not_bound"
+    #: A subgroup report pre-declared by frozen v2 §7, such as lead-time bands.
+    PREREGISTERED_V2_SENSITIVITY = "preregistered_v2_sensitivity"
+    #: v3 Change A, owner-accepted with scoped acceptance on 2026-08-29.
+    #: Diagnostic only: it does not enter any v2 §8 activation condition.
+    PREREGISTERED_V3_SCOPED_CHANGE_A = "preregistered_v3_scoped_change_a"
+    #: ADR-018's display requirement for restricted calibration. Change B was
+    #: rejected as an activation gate; this provenance never implies a condition 9.
+    DISPLAY_ONLY_ADR_018 = "display_only_adr_018"
     #: Chosen after the fact by whoever ran it. Correct, and less persuasive,
     #: because a reader cannot tell it from an analysis picked to suit a result.
     POST_HOC_DIAGNOSTIC = "post_hoc_diagnostic"
@@ -336,9 +341,11 @@ class CalibrationReport:
         if self.restriction is not None and self.provenance is Provenance.PREREGISTERED_V2:
             raise ValueError(
                 "a subgroup-restricted report may not claim PREREGISTERED_V2 provenance: "
-                "v2 §7 pre-registers a pooled calibration table only. Restricted calibration "
-                "is proposed by v3 §4 condition 9, which is not bound; label such a report "
-                "PROPOSED_V3_NOT_BOUND or POST_HOC_DIAGNOSTIC."
+                "that provenance names v2's primary pooled table. Use "
+                "PREREGISTERED_V2_SENSITIVITY for a named v2 sensitivity, "
+                "PREREGISTERED_V3_SCOPED_CHANGE_A for the accepted era diagnostic, "
+                "DISPLAY_ONLY_ADR_018 for Change B's non-gating display, or "
+                "POST_HOC_DIAGNOSTIC."
             )
 
     @property
