@@ -2057,7 +2057,7 @@ a:focus-visible {
 .season-band {
   margin: var(--space-4) 0 0;
   padding: var(--space-3) var(--space-4);
-  border-left: 3px solid var(--accent);
+  border: 1px solid var(--border);
   background: var(--bg-raised);
   border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 0.9rem;
@@ -2095,6 +2095,297 @@ a:focus-visible {
 .evidence__tally strong {
   color: var(--accent);
 }
+
+.reliability__overview {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(28rem, 2fr);
+  gap: var(--space-6);
+  align-items: end;
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.reliability__overview h2,
+.reliability__overview p {
+  margin: 0;
+}
+
+.reliability__eyebrow {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reliability__counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(6rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.reliability__counts div {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+.reliability__counts dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.reliability__counts dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.reliability__warning,
+.reliability__limitation {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: 0.86rem;
+}
+
+.reliability__warning {
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+
+.reliability__limitation {
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.reliability__browser {
+  margin-top: var(--space-8);
+}
+
+.reliability__browser-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.reliability__browser-header h2,
+.reliability__browser-header p {
+  margin: 0;
+}
+
+.reliability__browser-header p {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.reliability__controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.reliability__controls label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.reliability__controls input,
+.reliability__controls select {
+  min-width: 13rem;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.reliability__controls input:focus-visible,
+.reliability__controls select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.reliability__result-count {
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.reliability__rows {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.reliability__columns,
+.reliability-card > summary {
+  display: grid;
+  grid-template-columns:
+    minmax(12rem, 1.2fr) minmax(14rem, 1.5fr) minmax(12rem, 1.2fr)
+    minmax(12rem, 1fr);
+  gap: var(--space-3);
+}
+
+.reliability__columns {
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.reliability-card {
+  border-top: 1px solid var(--border);
+}
+
+.reliability-card:first-of-type {
+  border-top: none;
+}
+
+.reliability-card > summary {
+  position: relative;
+  padding: var(--space-3) var(--space-4) var(--space-3) calc(var(--space-4) + 1rem);
+  cursor: pointer;
+  list-style: none;
+}
+
+.reliability-card > summary::before {
+  position: absolute;
+  left: var(--space-3);
+  content: '›';
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  transition: transform 120ms ease;
+}
+
+.reliability-card[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.reliability-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.reliability-card > summary:hover {
+  background: var(--bg-raised);
+}
+
+.reliability-card__player,
+.reliability-card__metric {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+}
+
+.reliability-card__player strong,
+.reliability-card__metric strong {
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.reliability-card__player small,
+.reliability-card__metric small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.reliability-card__detail {
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-4);
+  background: var(--bg-sunken);
+  border-top: 1px solid var(--border);
+}
+
+.reliability-card__detail h3,
+.reliability-card__detail p {
+  margin: 0 0 var(--space-2);
+}
+
+.reliability-card__detail p {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.reliability-card__table {
+  font-size: 0.75rem;
+}
+
+.reliability-card__table th,
+.reliability-card__table td {
+  padding: var(--space-1) var(--space-2);
+}
+
+.reliability-card__table td:nth-child(n + 3) {
+  white-space: nowrap;
+}
+
+.reliability__more {
+  margin-top: var(--space-3);
+}
+
+.reliability__lineage {
+  margin-top: var(--space-8);
+}
+
+.reliability__lineage > summary {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.reliability__lineage .facts {
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 60rem) {
+  .reliability__overview {
+    grid-template-columns: 1fr;
+  }
+
+  .reliability__browser-header,
+  .reliability__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reliability__columns {
+    display: none;
+  }
+
+  .reliability-card > summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 40rem) {
+  .reliability__counts,
+  .reliability-card > summary {
+    grid-template-columns: 1fr;
+  }
+
+  .reliability__counts div {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .reliability__controls input,
+  .reliability__controls select {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 /*
  * The league category table.
  *

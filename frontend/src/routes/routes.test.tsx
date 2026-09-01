@@ -173,29 +173,14 @@ describe('the dashboard shell', () => {
   })
 
   it('navigates to the reliability page from the shell', async () => {
-    // Same reason as the projections case above: `ReliabilityPage.recorded.test.tsx`
-    // renders the page directly, so a working page behind a missing nav item or
-    // a missing route entry would pass every other test in the suite.
-    //
-    // Asserted on the inventory rather than only the heading, because the
-    // inventory is the screen's actual claim and a mounted heading over an
-    // empty body is precisely the "pretty shell" this unit exists to not be.
     mockFetch({
       '/api/v1/drafts': { body: { drafts: [] } },
-      '/api/v1/leagues/1/projections/current': {
+      '/api/v1/reliability/scorecards': {
         status: 409,
         body: {
-          error: 'projections_source_not_imported',
-          detail: 'no basketball_monster projection import exists',
+          error: 'reliability_not_published',
+          detail: 'no current reliability cohort exists',
           request_id: 'req-1',
-        },
-      },
-      '/api/v1/leagues/1/schedule-grid/current': {
-        status: 409,
-        body: {
-          error: 'schedule_not_imported',
-          detail: 'no schedule refresh exists',
-          request_id: 'req-2',
         },
       },
       '/health': { body: HEALTH },
@@ -207,13 +192,12 @@ describe('the dashboard shell', () => {
         name: 'Reliability',
       }),
     )
-
     expect(await screen.findByRole('heading', { name: 'Reliability' })).toBeInTheDocument()
-    // Both cohorts refused, and the screen's own content is still there — the
-    // inventory does not depend on either request.
-    expect(await screen.findByTestId('evidence-inventory')).toBeInTheDocument()
-    expect(screen.getByTestId('evidence-status-p-play')).toHaveAttribute('data-status', 'blocked')
-    expect(screen.getByTestId('season-band-evidence')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Reliability' })).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Reliability evidence has not been published for this store',
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Code reliability_not_published')
   })
 
   it('surfaces a degraded database rather than hiding it', async () => {
