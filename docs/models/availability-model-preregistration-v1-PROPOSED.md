@@ -251,19 +251,20 @@ The report era is also frozen:
 - `short_lead_fifteen_minute`: source date on or after 2025-12-22;
 - `no_report_era`: no eligible report artifact exists.
 
-The frozen injury-status-conversion constants are used unchanged to construct
-the `injury_prior_logit` feature for official-status rows:
+The published injury-status-conversion constants are context only:
 
-| Status | Fixed prior probability |
+| Status | Published conversion probability |
 |---|---:|
 | `out`, `doubtful` | 0.0008725 |
 | `questionable` | 0.5405882 |
 | `probable`, `available` | 0.8585599 |
 
-The pooled constants remain pooled in both report eras. The legacy-only and
-short-lead-only refits in `injury-status-conversion.md` are diagnostic and are
-not substituted. Report era is a required evaluation stratum, not a fitted
-interaction in v1. Non-official strata set `injury_prior_logit = 0`.
+They are **not** model inputs, predictor values, intercept adjustments, labels,
+targets, hyperparameters, or activation thresholds in this protocol because
+their 2025-26 source rows overlap the proposed holdout. The pooled,
+legacy-only, and short-lead-only values in `injury-status-conversion.md` remain
+eligible only for that narrower study and runtime mapping. Report era is a
+required evaluation stratum, not a fitted interaction in availability v1.
 
 ---
 
@@ -301,11 +302,12 @@ reproduce, and its hash is frozen before the split manifest is created. The
 later split manifest references that frozen hash; it does not create the report
 that gates it.
 
-The fixed constants therefore enter with disclosed prior-study exposure, not
-"without leakage." They contain aggregate information from 2025-26 and the
-availability holdout includes overlapping player-games. The independent
-evaluator, one-time release, paired baselines, and exact overlap report bound
-that exposure; they do not erase it.
+The constants contain aggregate information from 2025-26 and the availability
+holdout includes overlapping player-games. Disclosure and the exact overlap
+report do not erase that contamination, so this protocol excludes the constants
+from every candidate and baseline. The overlap report remains binding evidence
+of the prior study's outcome exposure and must accompany any claim that the
+availability holdout was not consumed during fitting.
 
 ---
 
@@ -339,13 +341,11 @@ column and is reported. Binary predictors are not standardized. Categorical
 levels use the literal closed vocabularies in this protocol and lexicographic
 column order. Unknown categories fail before fitting.
 
-For official statuses, the logit of section 4's fixed probability is a numeric
-`injury_prior_logit` predictor and its value is not re-estimated. The logistic
-regression fits its coefficient; this is a fixed input feature, not an
-intercept adjustment. For non-official strata `injury_prior_logit = 0` and the
-registered stratum indicator is fitted.
-`no_report` is the in-season reference level; `draft_morning_no_report` is the
-preseason reference level.
+In-season report stratum is one closed categorical predictor with the literal
+levels in section 4 and `no_report` as its reference level. No numerical
+injury-conversion probability enters. Draft-morning Candidate 1 is
+intercept-only because every row has the registered
+`draft_morning_no_report` stratum.
 
 The exact Python, scikit-learn, NumPy, and BLAS versions, thread count, and
 implementation source hash are written into the implementation manifest.
@@ -367,9 +367,7 @@ Candidates are separate for each mode and advance only in this order.
 
 ### Candidate 1 - report state only
 
-In-season Candidate 1 uses only the fixed official-status
-`injury_prior_logit` feature and the non-official report-stratum indicators in
-section 4.
+In-season Candidate 1 uses only the report-stratum indicators in section 4.
 
 Draft-morning Candidate 1 is intercept-only because every future game is
 `draft_morning_no_report`. It is intentionally equivalent in information to
@@ -379,7 +377,7 @@ beyond it.
 ### Candidate 2 - Candidate 1 plus one direct-history feature
 
 Add one trailing play-rate feature over the player's last **20 classified
-direct opportunities** strictly before the target cutoff. Unknown
+direct opportunities** strictly before the applicable decision cutoff. Unknown
 opportunities do not enter its numerator or denominator.
 
 The smoothing rule is fixed:
@@ -410,10 +408,14 @@ participation outcome.
 
 Add:
 
-- season-to-date minutes strictly before the target;
-- career NBA regular-season minutes strictly before the target season; and
-- recent minutes spike: minutes in the prior 7 calendar days minus one quarter
-  of minutes in the prior 28 calendar days.
+- season-to-date minutes strictly before the applicable decision cutoff;
+- career NBA regular-season minutes strictly before that cutoff; and
+- recent minutes spike: minutes in the 7 calendar days before that cutoff minus
+  one quarter of minutes in the 28 calendar days before that cutoff.
+
+For draft-morning mode the applicable cutoff is the one frozen timestamp in
+section 1 for every future target game. No game, minutes, or participation after
+that timestamp may alter a draft-morning predictor.
 
 Game logs may supply these predictor fields but still may not supply labels.
 Candidate 4 is contingent on section 9's workload veto.
@@ -542,7 +544,12 @@ by `marcel_paired_holdout_players` in section 3:
 
 ```text
 marcel_rate =
-  (3 * play_rate_2024_25 + 2 * play_rate_2023_24 + play_rate_2022_23) / 6
+  0.75 * (
+    (5 * play_rate_2024_25
+     + 4 * play_rate_2023_24
+     + 3 * play_rate_2022_23) / 12
+  )
+  + 0.25 * historical_population_play_rate
 marcel_expected =
   sum(marcel_rate over the player's eligible 2025-26 opportunities)
 ```
@@ -551,6 +558,12 @@ Each historical play rate uses the same independently enumerated opportunity
 population and direct-label rules as the availability model. The model and
 Marcel are compared for the same players, same 2025-26 opportunity keys, and
 same actual direct outcomes.
+
+`historical_population_play_rate` is the pooled direct play rate over those
+same paired players and their eligible 2022-23 through 2024-25 opportunities.
+This reproduces the documented 3/4/5 chronological weighting (5/4/3 from newest
+to oldest) and 25% shrinkage toward the cohort mean while recomputing every
+input on this protocol's eligible cohort. No 2025-26 outcome enters Marcel.
 
 For each player compute absolute season error for the selected model and
 Marcel. Report the paired mean difference
@@ -584,9 +597,10 @@ Any failure is `ACTIVATION_VETOED`. Publish the offline evidence and veto, but
 add no runtime release, persistence, API, UI, expected-games wiring, or
 valuation input.
 
-Candidate 1 remains a comparison baseline even though its frozen
-injury-status prior is independently eligible for its narrower runtime use.
-That prior's eligibility does not activate this broader availability model.
+Candidate 1 remains a comparison baseline. The separate frozen
+injury-status-conversion mapping remains independently eligible for its
+narrower runtime use; it is not part of Candidate 1 and cannot activate this
+broader availability model.
 
 ---
 
@@ -639,16 +653,19 @@ Both secondary checks use the same frozen final-model and comparator
 predictions as the fallback. They resample holdout evaluation rows only and do
 not refit.
 
-Use percentile 95% intervals for paired Brier differences, CITL, ECE,
+Use two-sided percentile 95% intervals for paired Brier differences, CITL, ECE,
 Candidate 4 `holdout_quartile_lift`, paired Marcel error, and seasonal-games
-MAE. Activation uses the least favorable bound across the player, date-block,
-and two-way intervals. The selection-only `quartile_lift` interval remains the
-separate Candidate 4 eligibility diagnostic in section 9.
+MAE. Every endpoint is the linearly interpolated empirical 0.025 or 0.975
+quantile (`numpy.quantile(..., method="linear")`). Activation uses the least
+favorable bound across the player, date-block, and two-way intervals. The
+selection-only `quartile_lift` interval remains the separate Candidate 4
+eligibility diagnostic in section 9.
 
-If the selected primary/fallback interval or either required secondary
-interval cannot be computed as finite numbers, has fewer than 100 effective
-resamples after deterministic failures, or cannot reproduce with its seed, the
-mode is vetoed. Naive row-level intervals are never substituted.
+Every registered resample must produce every applicable finite statistic. Any
+fit failure, empty required evaluation population, non-finite statistic,
+missing resample, or failure to reproduce with the registered seed vetoes the
+mode. Failed resamples are never dropped, retried with a new seed, or replaced.
+Naive row-level intervals are never substituted.
 
 ---
 
@@ -742,7 +759,7 @@ inherits the old calibration claim.
 Every prediction must support:
 
 1. the mode and decision cutoff;
-2. the report stratum, report era, and fixed injury-prior feature;
+2. the report stratum and report era;
 3. the exact 20-opportunity history rows and smoothing base;
 4. calendar and workload predictor values;
 5. standardized logistic coefficients and signed log-odds contributions; and
@@ -825,7 +842,8 @@ This replacement:
   calibration thresholds, and an uncertainty veto;
 - maps every no-status report state and declares report-era handling;
 - discloses the exact known injury-conversion partitions and requires stable-key
-  overlap counts before fitting;
+  overlap counts before fitting, while excluding their contaminated conversion
+  constants from availability candidates and baselines;
 - states that outputs are marginal probabilities, not joint season
   distributions;
 - binds protocol acceptance, implementation, split, and release hashes;
