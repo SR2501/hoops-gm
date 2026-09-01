@@ -79,10 +79,13 @@ probability of play for each scheduled regular-season game. No future injury
 report is imputed. Every future game receives the player's cutoff-correct
 preseason stratum from section 4; `draft_morning_no_report` applies only when no
 eligible preseason artifact exists.
-For each historical season, the evaluation cutoff is 09:00
-`America/New_York` on the calendar day before that season's first scheduled
-regular-season game. The eventual 2026-27 release uses the owner's actual
-draft-morning timestamp, recorded in its input lineage.
+Before historical news manifests are built, the owner registers the intended
+2026-27 draft timestamp and the schedule manifest supplies that season's first
+tip. Their difference in integer minutes is `draft_lead_minutes`. Each
+historical cutoff is exactly `draft_lead_minutes` before that season's first
+scheduled regular-season tip. The 2026-27 release may inherit draft-morning
+calibration only at the registered timestamp; a changed draft time is marked
+`unvalidated_horizon` unless a prospective protocol evaluates that lead.
 
 The two modes are fitted, selected, evaluated, and versioned separately. A
 model passing one mode does not activate the other.
@@ -224,15 +227,38 @@ captured after the historical cutoff are ineligible even when they describe an
 earlier event.
 
 `draft_mode_preseason_news_corpus_complete` is true only when all three
-manifests exist, every included signal has non-null time and identity
-provenance, duplicate active signals are zero after deterministic
-latest-before-cutoff resolution, and `unparsed_share <= 0.05` in every season.
-The holdout manifest exposes artifacts and strata, not participation outcomes.
-In-season mode does not depend on this additional predicate.
+manifests exist and all of the following hold in every season:
+
+1. the frozen source registry contains exactly these required source classes:
+   the NBA league transaction/suspension source, one official training-camp or
+   roster-availability source for each of 30 teams, and the Fantrax player-note
+   surface;
+2. one raw-byte capture is scheduled for every source unit on each calendar day
+   from 14 days before the cutoff through the cutoff, inclusive;
+3. `capture_coverage = successful_scheduled_captures /
+   expected_scheduled_captures >= 0.95` both overall and within each source
+   class, and every source unit's final pre-cutoff capture succeeds;
+4. every at-risk player-game has either a canonical active signal or an
+   explicit `draft_morning_no_report` marker linked to the searched capture
+   hashes, so `player_game_coverage = classified_player_games /
+   enumerated_at_risk_player_games == 1.0`;
+5. every included signal has non-null source time, capture time, player id, and
+   target-game provenance, and duplicate active signals are zero after
+   deterministic latest-before-cutoff resolution; and
+6. `unparsed_share = unparsed_relevant_artifacts /
+   relevant_artifacts <= 0.05`. When `relevant_artifacts == 0`,
+   `unparsed_share` is defined as zero only if conditions 1 through 5 pass;
+   otherwise corpus completeness is false.
+
+A failed fetch, absent source unit, or player-game without an explicit searched
+no-signal marker is missing coverage, not `draft_morning_no_report`. The holdout
+manifest exposes artifacts and strata, not participation outcomes. In-season
+mode does not depend on this additional predicate.
 
 Before a 2026-27 draft-morning runtime release, the same adapter must freeze a
-current-season manifest under the accepted parsing and cutoff rules. That
-manifest's source and content hashes enter the release lineage.
+current-season manifest that passes the same six conditions under the accepted
+parsing and cutoff rules. That manifest's source and content hashes enter the
+release lineage.
 
 ### Numeric proceed predicate
 
@@ -249,22 +275,30 @@ PROCEED_COMMON =
   AND each_fit_partition_direct_rows >= 5000
   AND each_fit_partition_distinct_players >= 100
   AND each_fit_partition_distinct_game_dates >= 100
-  AND development_plus_selection_direct_rows_per_official_status >= 100
-  AND holdout_direct_rows_per_official_status >= 30
   AND marcel_paired_holdout_players >= 100
   AND injury_conversion_overlap_report_complete
   AND all_required_provenance_fields_non_null
 
-PROCEED_IN_SEASON = PROCEED_COMMON
+PROCEED_IN_SEASON =
+  PROCEED_COMMON
+  AND development_direct_rows_per_inseason_stratum >= 100
+  AND selection_direct_rows_per_inseason_stratum >= 30
+  AND holdout_direct_rows_per_inseason_stratum >= 30
 
 PROCEED_DRAFT_MORNING =
   PROCEED_COMMON
   AND draft_mode_preseason_news_corpus_complete
+  AND development_direct_rows_per_draft_stratum >= 100
+  AND selection_direct_rows_per_draft_stratum >= 30
+  AND holdout_direct_rows_per_draft_stratum >= 30
 ```
 
 `each_fit_partition` means 2023-24, 2024-25, and 2025-26 after applying the
-same population and direct-label rules. The five official statuses are `out`,
-`doubtful`, `questionable`, `probable`, and `available`.
+same population and direct-label rules. The per-stratum floors apply separately
+to every literal fitted level for the mode in section 4, including reference,
+no-report, unparsed, and preseason levels. A level with zero rows fails; it is
+not silently removed from the vocabulary. These counts are
+`direct_label_available` totals and do not reveal held-out play/non-play values.
 
 `marcel_paired_holdout_players` counts only holdout players with zero unknown
 opportunities in the holdout and direct opportunity histories in each of the
@@ -595,6 +629,31 @@ All metrics are reported overall and by mode, report stratum, report era,
 pre-/post-All-Star break, and pre-/post-trade-deadline. Strata below 30 direct
 holdout rows report counts only.
 
+### ADR-018 restricted calibration artifact
+
+For each mode, preregister one additional display-only holdout slice containing
+exactly rows whose official in-season status is `questionable`, `probable`, or
+`doubtful`. Report:
+
+- `restricted_n` and separate counts for all three statuses;
+- restricted CITL using section 10's definition; and
+- a calibration table with one row per distinct emitted float64 probability,
+  giving predicted mean, observed play rate, count, plays, and the two-sided
+  Wilson 95% interval with `z = 1.959963984540054`.
+
+Rows are grouped by exact float64 equality after prediction; no adaptive binning
+or rounding is introduced. If any of the three status counts is below 30, the
+artifact publishes the counts and `grade_status=refused_below_floor`, not a
+calibration grade. Otherwise `grade_status=available`. This restricted CITL and
+table never gate selection or activation. They are frozen in the evaluation
+artifact with model version, mode, cohort hash, and `restricted_n`; every
+displayed `p(play)`-derived quantity references that artifact so ADR-018 does
+not require a post-hoc holdout analysis.
+
+For draft-morning evaluation, this slice uses the official status observed at
+the registered 60-minute in-season cutoff solely as an evaluation stratum. That
+future status never enters a draft-morning predictor or selection decision.
+
 ---
 
 ## 11. Marcel comparison on the identical eligible cohort
@@ -715,7 +774,9 @@ For each primary resample, Marcel's three player history rates and
 rows with the same player multiplicities. `marcel_expected_i`, selected
 expected games, and actual games are then recomputed over that resample's
 holdout opportunity multiset. The paired-cohort eligibility rule itself remains
-frozen from the original manifest.
+frozen from the original manifest. Each player draw is one outer MAE unit:
+drawing the same player twice creates two equal-length player-season units in
+the outer mean, not one season with every opportunity doubled.
 
 The **only fallback** is a 5,000-resample evaluation-only player-cluster
 bootstrap of the already frozen selected, Candidate 1, constant, and when
@@ -724,6 +785,7 @@ feasibility rule rejects the full refit. It omits fitting uncertainty, and the
 model card must say so. The fallback also freezes each paired player's original
 historical Marcel rate and the original pooled shrinkage target; it recomputes
 expected and actual games over each resampled holdout opportunity multiset.
+Repeated player draws remain separate outer MAE units under the same rule.
 
 ### Required secondary dependence checks
 
@@ -736,11 +798,15 @@ Regardless of primary or fallback, also compute:
 Both secondary checks use the same frozen final-model and comparator
 predictions as the fallback. They resample holdout evaluation rows only and do
 not refit. They also freeze each paired player's original historical Marcel
-rate and pooled shrinkage target. Date-block multiplicities or two-way
-pigeonhole weights are applied to each player's holdout opportunities before
-recomputing selected expected games, Marcel expected games, and actual games.
-Each replicate's MAEs and paired difference use paired-cohort players with at
-least one positive-weight holdout opportunity in that replicate.
+rate and pooled shrinkage target. Date-block multiplicities are applied inside
+each player's holdout totals before recomputing selected expected games, Marcel
+expected games, and actual games. For the two-way bootstrap, date weights alone
+enter those within-player totals; player weights apply only to the outer
+weighted means of per-player absolute errors and paired differences. They never
+lengthen a player's season. Row-level metrics such as Brier, CITL, and ECE use
+the product of player and date weights. Each replicate's seasonal metrics use
+paired-cohort players with at least one positive-date-weight holdout opportunity
+and positive outer player weight.
 
 Use two-sided percentile 95% intervals for paired Brier differences, CITL, ECE,
 Candidate 4 `holdout_quartile_lift`, `selected_seasonal_games_mae`,
@@ -790,6 +856,7 @@ schema commitment:
   "marginal_p_play": 0.72,
   "model_version": "availability-v1-<release-hash>",
   "population_version": "<opportunity-report-hash>",
+  "restricted_calibration_artifact": "<adr-018-artifact-hash>",
   "report_stratum": "not_on_report",
   "report_era": "short_lead_fifteen_minute",
   "features": {
