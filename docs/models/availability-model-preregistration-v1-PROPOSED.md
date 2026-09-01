@@ -19,11 +19,13 @@ The following events must occur in order:
    of direct observations.
 3. `participation-opportunity-coverage` completes its separate exhaustive
    player-game classification and provenance report.
-4. The numeric pre-fit gates in section 3 are evaluated without reading an
+4. The custodian freezes the pre-split injury-conversion overlap report in
+   section 5.
+5. The numeric pre-fit gates in section 3 are evaluated without reading an
    availability outcome value.
-5. If and only if every gate passes, the implementation and split manifests are
+6. If and only if every gate passes, the implementation and split manifests are
    frozen, development and selection outcomes are released, and fitting begins.
-6. The holdout is released once to an independent evaluator after final
+7. The holdout is released once to an independent evaluator after final
    training is frozen.
 
 Steps 2 and 3 are separate binding fit vetoes. The first owns only direct
@@ -198,6 +200,7 @@ PROCEED =
   AND development_plus_selection_direct_rows_per_official_status >= 100
   AND holdout_direct_rows_per_official_status >= 30
   AND marcel_paired_holdout_players >= 100
+  AND injury_conversion_overlap_report_complete
   AND all_required_provenance_fields_non_null
 ```
 
@@ -219,9 +222,10 @@ predicate is v2.
 If `PROCEED` is true, the custodian writes a split manifest containing every
 eligible stable `(player_id, game_id)` key, partition, mode, label-availability
 flag, report stratum, report era, and provenance digest. The manifest publishes
-counts and exclusions by partition and hashes its canonical sorted contents.
-The model worker receives development and selection labels only. The holdout
-label package remains sealed.
+counts and exclusions by partition, incorporates the already-frozen
+injury-conversion overlap-report hash from section 5, and hashes its canonical
+sorted contents. The model worker receives development and selection labels
+only. The holdout label package remains sealed.
 
 ---
 
@@ -247,10 +251,10 @@ The report era is also frozen:
 - `short_lead_fifteen_minute`: source date on or after 2025-12-22;
 - `no_report_era`: no eligible report artifact exists.
 
-The frozen injury-status-conversion constants are used unchanged as an offset
-for official-status rows:
+The frozen injury-status-conversion constants are used unchanged to construct
+the `injury_prior_logit` feature for official-status rows:
 
-| Status | Fixed offset probability |
+| Status | Fixed prior probability |
 |---|---:|
 | `out`, `doubtful` | 0.0008725 |
 | `questionable` | 0.5405882 |
@@ -259,7 +263,7 @@ for official-status rows:
 The pooled constants remain pooled in both report eras. The legacy-only and
 short-lead-only refits in `injury-status-conversion.md` are diagnostic and are
 not substituted. Report era is a required evaluation stratum, not a fitted
-interaction in v1. Non-official strata receive no injury-status offset.
+interaction in v1. Non-official strata set `injury_prior_logit = 0`.
 
 ---
 
@@ -279,8 +283,8 @@ The consumed 2025-26 injury-conversion partitions are:
 
 The proposed availability holdout spans all three date partitions. The exact
 stable-key overlap is not currently published and may not be guessed from
-these counts. Before `PROCEED` can be true, the custodian must add to the split
-manifest, for each injury-conversion partition:
+these counts. Before `PROCEED` can be true, the custodian must publish and hash
+a separate **pre-split overlap report**, for each injury-conversion partition:
 
 - exact overlapping `(player_id, game_id)` count;
 - exact overlap digest over the sorted stable keys;
@@ -290,6 +294,12 @@ manifest, for each injury-conversion partition:
 
 This overlap census uses membership and provenance only; it does not release an
 availability outcome to the model worker.
+
+`injury_conversion_overlap_report_complete` is true only when this report
+contains all four fields above for all three partitions, its stable-key digests
+reproduce, and its hash is frozen before the split manifest is created. The
+later split manifest references that frozen hash; it does not create the report
+that gates it.
 
 The fixed constants therefore enter with disclosed prior-study exposure, not
 "without leakage." They contain aggregate information from 2025-26 and the
@@ -332,8 +342,8 @@ column order. Unknown categories fail before fitting.
 For official statuses, the logit of section 4's fixed probability is a numeric
 `injury_prior_logit` predictor and its value is not re-estimated. The logistic
 regression fits its coefficient; this is a fixed input feature, not an
-unsupported estimator offset. For non-official strata
-`injury_prior_logit = 0` and the registered stratum indicator is fitted.
+intercept adjustment. For non-official strata `injury_prior_logit = 0` and the
+registered stratum indicator is fitted.
 `no_report` is the in-season reference level; `draft_morning_no_report` is the
 preseason reference level.
 
@@ -349,7 +359,7 @@ Candidates are separate for each mode and advance only in this order.
 
 ### Reference baselines - not candidates
 
-1. **Refitted constant:** the Jeffreys-smoothed development play rate,
+1. **Refitted constant:** the Jeffreys-smoothed training play rate,
    `(plays + 0.5) / (direct_rows + 1)`, refitted on development plus selection
    after structure selection.
 2. **Marcel seasonal reference:** section 11. It is season-level context, not a
@@ -435,10 +445,11 @@ at either boundary advances only when both conditions pass; any other tie keeps
 the simpler candidate. Candidate 4 must first clear section 9.
 
 Stop at the first candidate that fails. Later candidates are not considered.
-Refit the selected structure on development plus selection with unchanged
-configuration and preprocessing rules. If the selected structure is Candidate
-1, the contextual availability engine cannot activate because section 12
-requires held-out superiority over Candidate 1.
+Refit the selected structure, Candidate 1, and the constant baseline on the
+same development-plus-selection rows with unchanged configuration and
+preprocessing rules before any holdout prediction. If the selected structure
+is Candidate 1, the contextual availability engine cannot activate because
+section 12 requires held-out superiority over Candidate 1.
 
 No holdout result participates in selection.
 
@@ -469,8 +480,18 @@ Candidate 4 is vetoed if **either**:
 
 There is no "unless explained by other features" exception. Crossing either
 numeric boundary excludes Candidate 4 regardless of Brier improvement. Report
-the coefficients, quartile counts, `quartile_lift`, and a player-cluster
-bootstrap interval for the lift.
+the coefficients, quartile counts, and `quartile_lift`.
+
+The selection-stage interval for `quartile_lift` uses 2,000
+evaluation-only player-cluster bootstrap resamples with seed `250146`.
+Recompute the quartiles and lift in every resample. Any non-finite resample,
+failure to produce all 2,000 resamples, or failure to reproduce with the seed
+vetoes Candidate 4.
+
+If Candidate 4 reaches final evaluation, also report
+`holdout_quartile_lift`, defined by the same formula on the holdout using the
+final development-plus-selection refits of Candidates 3 and 4. Holdout
+quartiles use the same deterministic ordering and remainder rule.
 
 Passing this diagnostic does not remove survivor selection. The model card must
 still state that workload is observed only among players healthy enough to
@@ -589,14 +610,19 @@ manifest before holdout release.
 ### Primary and one fallback
 
 If feasible, the primary interval uses 1,000 full-pipeline player-cluster
-bootstrap resamples, seed `250142`. Each resample draws holdout players with
-replacement, retains all their rows, refits the frozen structure on the
-correspondingly resampled development-plus-selection players, and evaluates.
+bootstrap resamples, seed `250142`. Each resample draws from the union of
+distinct players appearing in any partition and carries each sampled player's
+multiplicity through every partition where that player appears. It refits the
+selected structure, Candidate 1, and the constant baseline on the same
+resampled development-plus-selection rows, then evaluates only the resampled
+holdout rows. When Candidate 4 is selected, Candidate 3 is refit on those same
+rows for the holdout workload diagnostic.
 
 The **only fallback** is a 5,000-resample evaluation-only player-cluster
-bootstrap of the already frozen final model, seed `250143`. It is used only
-when the pre-unblind feasibility rule rejects the full refit. It omits fitting
-uncertainty, and the model card must say so.
+bootstrap of the already frozen selected, Candidate 1, constant, and when
+needed Candidate 3 models, seed `250143`. It is used only when the pre-unblind
+feasibility rule rejects the full refit. It omits fitting uncertainty, and the
+model card must say so.
 
 ### Required secondary dependence checks
 
@@ -606,10 +632,15 @@ Regardless of primary or fallback, also compute:
 2. a 2,000-resample two-way player x game-date pigeonhole bootstrap, seed
    `250145`.
 
+Both secondary checks use the same frozen final-model and comparator
+predictions as the fallback. They resample holdout evaluation rows only and do
+not refit.
+
 Use percentile 95% intervals for paired Brier differences, CITL, ECE,
-Candidate 4 `quartile_lift`, paired Marcel error, and seasonal-games MAE.
-Activation uses the least favorable bound across the player, date-block, and
-two-way intervals.
+Candidate 4 `holdout_quartile_lift`, paired Marcel error, and seasonal-games
+MAE. Activation uses the least favorable bound across the player, date-block,
+and two-way intervals. The selection-only `quartile_lift` interval remains the
+separate Candidate 4 eligibility diagnostic in section 9.
 
 If the selected primary/fallback interval or either required secondary
 interval cannot be computed as finite numbers, has fewer than 100 effective

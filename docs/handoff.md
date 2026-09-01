@@ -32552,29 +32552,13 @@ implementation, split, dependency, and evidence hashes.
 
 **Could not verify:** Earlier-season direct observations and exhaustive
 opportunity provenance remain absent, so the fit remains deterministically
-vetoed and no statistical result can be verified. Hosted exact-head CI and the
-fresh independent cumulative review had not run when this entry was written.
-The owner accept/decline decision remains open.
+vetoed and no statistical result can be verified. Independent review of the
+first frozen repair head found six release blockers; those corrections are in
+the replacement but its fresh cumulative review and hosted exact-head CI had
+not run when this entry was written. The owner accept/decline decision remains
+open.
 
-**Next:** Publish one frozen replacement head to the existing PR branch with
-an explicit lease against `bc6006c`, wait for hosted checks, then commission a
-fresh independent cumulative quant review of that exact head. Do not merge or
-self-approve.
-
----
-
-## 2026-08-31 - data-engineer - Correction: the ADR-007 amendment and projection-strategy.md still assigned the split-away denominator to participation-ledger-population
-
-**Corrected**, following a third independent cumulative review of frozen head `e7d8eae2a925a1fe2efd575578d743fa19cfe3d8` (architect-ruled) that found one remaining Medium boundary-propagation defect: two living documents still described `participation-ledger-population` as responsible for the opportunity denominator or for gap-explicitness, after the prior round's split moved that duty entirely to `participation-opportunity-coverage`.
-
-**1. `docs/decisions/ADR-007-availability-in-spine.md`'s new 2026-08-31 amendment.** Its "What remains genuinely open" paragraph still said `participation-ledger-population` was reopened partly "because it names three games with no participation rows at all as gaps that must be explicit rather than absent." Since that amendment is this branch's own new, still-`Proposed`, unmerged text and not pre-existing ADR content, it was **edited in place** rather than corrected by a further append — confirmed by `git diff` against the merge-base that the entire amendment remains a pure addition after the pre-existing content, with nothing before it touched. The paragraph now states the reopening rests on the multi-season requirement alone, and that explicit ternary classification belongs solely to `participation-opportunity-coverage`.
-
-**2. `docs/models/projection-strategy.md`.** Its "Non-appearance reasons" bullet said `PlayerGameLogs` cannot supply the opportunity denominator and that this "is precisely why `participation-ledger-population` is the binding constraint" — assigning the denominator itself to the wrong item, the same misattribution the ADR-007 paragraph made. Corrected to state the two-stage boundary: `participation-ledger-population` supplies multi-season **direct** observations only, never a manufactured absence or `unknown` row; `participation-opportunity-coverage` alone classifies every at-risk player-game as confirmed-observed/confirmed-absent/unknown, and needs independent roster/opportunity evidence the ledger item's ingest mechanism cannot produce. Its priority-list item 5 ("spend the remaining weeks unblocking `participation-ledger-population`") was similarly amended to name both items rather than implying the single one covers the whole denominator question. This is a factual cross-module contract correction directed by architect, not a model result, and does not touch ADR-002's production/availability separation or any other conclusion in this research document.
-
-**Repository-wide sweep performed before this push.** Grepped the full repository for `participation-ledger-population`, `participation-opportunity-coverage`, and gap-explicit/denominator-ownership phrasing. Six files reference the two item names: `docs/backlog.md`, `docs/governance/risks.md`, `docs/adapters/participation-ledger-store.md`, `docs/decisions/ADR-007-availability-in-spine.md`, `docs/models/projection-strategy.md`, and `docs/handoff.md` (append-only, not edited). The first three were already internally consistent as of the prior round's independent review; the two corrected here were the residual contradictions. `docs/governance/gates.md`'s one "denominator" hit is an unrelated schedule-string context and needed no change. No other living document was found assigning the opportunity classification duty to `participation-ledger-population` or vice versa.
-
-**Now true:** `docs/backlog.md` recounts to the same **69 done, 0 blocked, 122 pending, 191 total** — no item's status changed this round, only two living documents' prose. `scripts/backlog_graph.py` confirms zero defects and the unchanged header.
-
-**Could not verify:** Whether every one of the ~30 unrelated "denominator" hits across the repository (injury-report cohort documents, schedule adapters, ADR-013, ADR-015) is free of an analogous misattribution — this sweep specifically checked files naming `participation-ledger-population` or `participation-opportunity-coverage` by slug, not every document using the word "denominator" in an unrelated sense, since a full read of all ~19 files that word appears in was out of proportion to the two specific findings this round was scoped to.
-
-**Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
+**Next:** Freeze the corrected replacement head and obtain a fresh independent
+cumulative quant review. If clean, publish that exact head to the existing PR
+branch with an explicit lease against `bc6006c` and wait for hosted checks. Do
+not merge or self-approve.
