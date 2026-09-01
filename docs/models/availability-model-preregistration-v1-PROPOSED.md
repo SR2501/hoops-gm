@@ -21,8 +21,9 @@ The following events must occur in order:
    player-game classification and provenance report.
 4. The custodian freezes the pre-split injury-conversion overlap report in
    section 5.
-5. The numeric pre-fit gates in section 3 are evaluated without reading an
-   availability outcome value.
+5. The custodian evaluates the numeric pre-fit gates in section 3 without
+   releasing an availability outcome value or keyed holdout class to the model
+   worker.
 6. If and only if every gate passes, the implementation and split manifests are
    frozen, development and selection outcomes are released, and fitting begins.
 7. The holdout is released once to an independent evaluator after final
@@ -178,9 +179,28 @@ same seasons. It must:
 1. enumerate every player-game opportunity from independent roster evidence;
 2. assign exactly one of the three classes in section 2;
 3. report zero duplicate and zero unclassified opportunities;
-4. report the class counts and `unknown_share` overall, by season, by mode, by
-   report stratum, and by report era; and
+4. record the class counts and `unknown_share` overall, by season, by mode, by
+   report stratum, and by report era, then publish them under the staged
+   visibility rules below; and
 5. bind every row to the provenance fields in section 2.
+
+The custodian owns two artifacts behind that report:
+
+1. a public coverage envelope containing provenance hashes, total opportunity
+   counts, combined `direct_label_available` counts
+   (`confirmed_observed + confirmed_absent`), unknown counts, strata, exclusions,
+   and the `PROCEED` verdict; and
+2. a sealed per-opportunity classification package containing each stable key's
+   exact three-way class and any outcome value.
+
+Before holdout release, the public envelope may expose only combined
+`direct_label_available` and `unknown` counts for 2025-26, never separate
+`confirmed_observed` and `confirmed_absent` counts or keyed classes. The full
+three-way counts required above are recorded inside the sealed package and are
+published with the final evaluation. Development and selection packages may be
+unsealed after `PROCEED`; the holdout package and its decryption/access
+credential remain with the independent evaluator. Opportunity-coverage still
+owns every classification; sealing changes visibility, not ownership.
 
 ### Numeric proceed predicate
 
@@ -524,9 +544,9 @@ bin's predicted mean and observed rate.
 
 Observed rates in finite samples are **not required to be monotonically
 non-decreasing**. The reliability table reports every adjacent inversion and
-its intervals; a noisy observed inversion is not itself proof that predicted
-probabilities are unordered. The old exact-monotonicity activation wording is
-withdrawn.
+the two bin rates and counts; a noisy observed inversion is not itself proof
+that predicted probabilities are unordered. No inversion statistic or interval
+gates activation. The old exact-monotonicity activation wording is withdrawn.
 
 All metrics are reported overall and by mode, report stratum, report era,
 pre-/post-All-Star break, and pre-/post-trade-deadline. Strata below 30 direct
@@ -565,12 +585,24 @@ This reproduces the documented 3/4/5 chronological weighting (5/4/3 from newest
 to oldest) and 25% shrinkage toward the cohort mean while recomputing every
 input on this protocol's eligible cohort. No 2025-26 outcome enters Marcel.
 
-For each player compute absolute season error for the selected model and
-Marcel. Report the paired mean difference
-`selected_absolute_error - marcel_absolute_error` with a player-cluster
-interval. Activation requires its upper 95% endpoint below zero in each mode.
-Also publish player count, opportunity count, exclusions, and the exact cohort
-digest. No commercial games projection enters.
+For each player `i` define:
+
+```text
+actual_games_i = sum(direct played outcomes over paired holdout opportunities)
+selected_absolute_error_i = abs(sum(selected marginal probabilities) - actual_games_i)
+marcel_absolute_error_i = abs(marcel_expected_i - actual_games_i)
+
+selected_seasonal_games_mae = mean(selected_absolute_error_i)
+marcel_seasonal_games_mae = mean(marcel_absolute_error_i)
+paired_marcel_difference =
+  mean(selected_absolute_error_i - marcel_absolute_error_i)
+```
+
+Report both MAEs and `paired_marcel_difference` on that one cohort with their
+player-cluster intervals. Only the paired difference gates activation: its
+upper 95% endpoint must be below zero in each mode. Also publish player count,
+opportunity count, exclusions, and the exact cohort digest. No commercial games
+projection enters.
 
 ---
 
@@ -654,10 +686,12 @@ predictions as the fallback. They resample holdout evaluation rows only and do
 not refit.
 
 Use two-sided percentile 95% intervals for paired Brier differences, CITL, ECE,
-Candidate 4 `holdout_quartile_lift`, paired Marcel error, and seasonal-games
-MAE. Every endpoint is the linearly interpolated empirical 0.025 or 0.975
-quantile (`numpy.quantile(..., method="linear")`). Activation uses the least
-favorable bound across the player, date-block, and two-way intervals. The
+Candidate 4 `holdout_quartile_lift`, `selected_seasonal_games_mae`,
+`marcel_seasonal_games_mae`, and `paired_marcel_difference`. Every endpoint is
+the linearly interpolated empirical 0.025 or 0.975 quantile
+(`numpy.quantile(..., method="linear")`). Activation uses the least favorable
+bound across the player, date-block, and two-way intervals. Only the paired
+Marcel difference, not either standalone MAE, gates section 12. The
 selection-only `quartile_lift` interval remains the separate Candidate 4
 eligibility diagnostic in section 9.
 

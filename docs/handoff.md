@@ -32554,11 +32554,11 @@ implementation, split, dependency, and evidence hashes.
 opportunity provenance remain absent, so the fit remains deterministically
 vetoed and no statistical result can be verified. Reviews of successive frozen
 heads found six initial blockers, one residual Candidate 4 interval ambiguity,
-and then draft-cutoff lookahead, holdout-contaminated conversion constants, a
-changed Marcel method, and permissive bootstrap failures. All eleven corrections
-are in the replacement, whose fresh cumulative review and hosted exact-head CI
-had not run when this entry was written. The owner accept/decline decision
-remains open.
+four further model-design and uncertainty blockers, then a holdout-class
+visibility contradiction and undefined seasonal-MAE/inversion intervals. All
+thirteen corrections are in the replacement, whose fresh cumulative review and
+hosted exact-head CI had not run when this entry was written. The owner
+accept/decline decision remains open.
 
 **Next:** Freeze the corrected replacement head and obtain a fresh independent
 cumulative quant review. If clean, publish that exact head to the existing PR
