@@ -32624,3 +32624,116 @@ limit rather than a silent fallback.
 
 **Next:** Review frozen PR head before merge. This lane does not merge or
 self-approve.
+---
+
+## 2026-08-31 - quant - Availability model preregistration v1
+
+**Changed:** Created
+`docs/models/availability-model-preregistration-v1-PROPOSED.md` as a
+documentation-only pre-fit protocol for the per-game availability model. The
+original draft proposed a three-season split with a within-2025-26 fallback,
+treated the published MAE 14.32 as its direct release threshold, combined
+history and calendar in one candidate step, and described the frozen
+injury-conversion input as entering "without leakage." Those statements did
+not survive reconciliation with the later opportunity-coverage work and are
+repaired in the unmerged protocol rather than preserved as current claims.
+
+**Now true:** The protocol emits no probability and consumes no holdout. It
+requires 2023-24 development, 2024-25 selection, and 2025-26 holdout seasons,
+plus 2022-23 historical support for its same-cohort Marcel comparison.
+`participation-ledger-population` and
+`participation-opportunity-coverage` are independent binding fit vetoes. The
+first supplies multi-season direct observations only; the second alone
+enumerates exhaustive player-game opportunities and classifies play, explicit
+non-play, and unknown. The current terminal state is
+`FIT_VETOED_PREREQUISITES`: merged evidence contains zero protocol-eligible
+direct rows for 2023-24 and 2024-25, so no split fallback is permitted.
+
+The repaired protocol separately defines draft-morning and in-season modes;
+maps `not_on_report`, `not_yet_submitted`, `unparsed`, `no_report`, and
+`draft_morning_no_report`; fixes one logistic-regression family and
+configuration; orders report state, one smoothed 20-opportunity history
+feature, calendar, then contingent workload; registers a five-opportunity
+pseudocount; gives workload a numeric veto; requires deterministic equal-count
+ECE bins, fixed calibration thresholds, paired held-out Brier superiority,
+same-cohort Marcel error intervals, and player/date/two-way uncertainty; and
+retains a distinct rerunnable backtest harness even if model and evidence ship
+atomically. Game logs may audit completeness and supply predictor-side
+workload, but never provide fitting labels.
+
+**Could not verify:** The pending multi-season direct-ledger census and
+opportunity report do not exist, so their numeric proceed predicate, exact
+injury-conversion stable-key overlap, split hashes, and all candidate,
+calibration, bootstrap, and Marcel results are intentionally unknown. The
+owner has not accepted or declined the protocol. No claim is made that the
+Model gate passes.
+
+**Next:** Freeze the repaired PR head and obtain a fresh independent cumulative
+quant review. If that review is clean, the owner must accept or decline the
+exact protocol commit. Acceptance still cannot start fitting until both data
+vetoes clear.
+
+---
+
+## 2026-09-01 - quant - Repair PR #141 against the opportunity-coverage boundary
+
+**Changed:** Rebased the old PR #141 documentation commit from `bc6006c` onto
+merged main `48b309f` and rebuilt the proposed protocol around the boundary
+established by merged PR #142. The current main `docs/handoff.md` was retained
+as the complete byte prefix; this repaired 2026-08-31 suffix and the present
+entry were appended with LF line endings. The old suffix's raw ESC byte in
+`expected-games` is removed. No merged-main history, backlog item, adapter,
+runtime code, fitted estimator, outcome store, commercial games value,
+holdout, or `p(play)` was touched.
+
+**Now true:** The protocol cannot silently degrade to a 2025-26 within-season
+experiment, cannot infer G-League or suspension exclusions from silence, and
+cannot represent independently calibrated per-game marginals as a joint
+season distribution. The prior 14.32 MAE is labelled different-study context;
+the replacement comparison is paired on one reproduced cohort. Injury
+conversion's known 2025-26 partitions are disclosed, while exact key overlap
+is a pre-fit manifest requirement rather than a false independence claim.
+Every future freeze binds the exact protocol and acceptance commits plus
+implementation, split, dependency, and evidence hashes.
+
+**Could not verify:** Earlier-season direct observations and exhaustive
+opportunity provenance remain absent, so the fit remains deterministically
+vetoed and no statistical result can be verified. Successive exact-head reviews
+found and drove repairs for split, estimator, comparator, bootstrap, holdout,
+workload, calibration, Marcel, and handoff defects. The latest review reduced
+the remaining blocker to draft Candidate 4's vacuous pre-opening
+season-to-date diagnostic; the replacement now uses career minutes as the sole
+draft workload feature and diagnostic axis. Its fresh cumulative review and
+hosted exact-head CI had not run when this entry was written. The owner
+accept/decline decision remains open.
+
+**Next:** Freeze the corrected replacement head and obtain a fresh independent
+cumulative quant review. If clean, publish that exact head to the existing PR
+branch with an explicit lease against `bc6006c` and wait for hosted checks. Do
+not merge or self-approve.
+
+---
+
+## 2026-09-01 - quant - Pin availability preprocessing arithmetic
+
+**Changed:** Closed the remaining independent-review minor in the Proposed
+availability protocol without changing its scope, thresholds, status, or fit
+vetoes. Section 6 now computes the development 1st/99th percentile endpoints
+with float64 `numpy.quantile(..., method="linear")` and explicitly clips to
+those endpoints. Candidate 2 now defines `development_mode_base_rate` as the
+Jeffreys-smoothed eligible development play rate for that mode, including the
+exact numerator and denominator.
+
+**Now true:** Winsorization and the five-opportunity history pseudocount have no
+implementation-selected percentile interpolation or raw-versus-smoothed base
+rate. The protocol remains documentation-only and Proposed.
+
+**Could not verify:** The multi-season direct ledger, exhaustive opportunity
+coverage, preseason-news manifests, overlap report, split, fitting, calibration,
+and sealed holdout evaluation still do not exist. No model result or Model-gate
+pass can be verified. Fresh exact-head cumulative quant review and hosted CI had
+not run when this entry was written; owner acceptance remains open.
+
+**Next:** Freeze one replacement head, obtain fresh independent cumulative quant
+review, publish it to existing PR #141 without force, and wait for exact-head CI.
+Do not merge or self-approve.
