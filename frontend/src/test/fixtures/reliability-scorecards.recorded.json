@@ -1,0 +1,409 @@
+{
+  "season": "2025-26",
+  "season_type": "regular",
+  "lineage": {
+    "season": "2025-26",
+    "season_type": "regular",
+    "window_start": "2026-01-05",
+    "as_of_date": "2026-01-08",
+    "schedule_version": "5315442acef5e950",
+    "schedule_refreshed_at": "2026-01-09T00:00:00Z",
+    "source_version": "8f3ad8713466d634",
+    "derivation_version": "f4ce099a5e84e0f8",
+    "computed_at": "2026-09-01T21:10:01.313861Z"
+  },
+  "counts": {
+    "scorecards": 2,
+    "scheduled_team_games": 6,
+    "schedule_context_team_games": 6,
+    "final_games": 3,
+    "player_game_logs": 4,
+    "participation_rows": 2
+  },
+  "scorecards": [
+    {
+      "player_id": 1,
+      "player_name": "Iron Man",
+      "availability": {
+        "overall": {
+          "direct_play": 3,
+          "direct_non_play": 0,
+          "explicit_unknown": 0,
+          "observed_opportunities": 3,
+          "observed_play_rate": 1.0,
+          "observed_non_play_rate": 0.0,
+          "coverage_status": "incomplete_r35",
+          "opportunity_coverage": null
+        },
+        "monthly_trend": [
+          {
+            "month": "2026-01-01",
+            "evidence": {
+              "direct_play": 3,
+              "direct_non_play": 0,
+              "explicit_unknown": 0,
+              "observed_opportunities": 3,
+              "observed_play_rate": 1.0,
+              "observed_non_play_rate": 0.0,
+              "coverage_status": "incomplete_r35",
+              "opportunity_coverage": null
+            }
+          }
+        ],
+        "back_to_back": {
+          "direct_play": 1,
+          "direct_non_play": 0,
+          "explicit_unknown": 0,
+          "observed_opportunities": 1,
+          "observed_play_rate": 1.0,
+          "observed_non_play_rate": 0.0,
+          "coverage_status": "incomplete_r35",
+          "opportunity_coverage": null
+        }
+      },
+      "production": {
+        "played_games": 3,
+        "minutes": {
+          "distribution_minutes": {
+            "observed_games": 3,
+            "lower_percentile_probability": 0.2,
+            "upper_percentile_probability": 0.8,
+            "mean": 32.0,
+            "sample_standard_deviation": 2.0,
+            "lower_percentile": 30.8,
+            "upper_percentile": 33.2
+          },
+          "coefficient_of_variation": 0.0625
+        },
+        "categories": [
+          {
+            "category": "fg3m",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 2.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 2.0,
+              "upper_percentile": 2.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "pts",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 20.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 20.0,
+              "upper_percentile": 20.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "reb",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 5.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 5.0,
+              "upper_percentile": 5.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "ast",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 4.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 4.0,
+              "upper_percentile": 4.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "stl",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 1.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 1.0,
+              "upper_percentile": 1.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "blk",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 1.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 1.0,
+              "upper_percentile": 1.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "to",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 2.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 2.0,
+              "upper_percentile": 2.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "fg_pct",
+            "unit": "volume_weighted_impact",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 0.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 0.0,
+              "upper_percentile": 0.0
+            },
+            "ratio_baseline": {
+              "made": 20,
+              "attempted": 40,
+              "rate": 0.5
+            }
+          },
+          {
+            "category": "ft_pct",
+            "unit": "volume_weighted_impact",
+            "distribution": {
+              "observed_games": 3,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 0.0,
+              "sample_standard_deviation": 0.0,
+              "lower_percentile": 0.0,
+              "upper_percentile": 0.0
+            },
+            "ratio_baseline": {
+              "made": 16,
+              "attempted": 20,
+              "rate": 0.8
+            }
+          }
+        ]
+      }
+    },
+    {
+      "player_id": 2,
+      "player_name": "Glass Cannon",
+      "availability": {
+        "overall": {
+          "direct_play": 1,
+          "direct_non_play": 2,
+          "explicit_unknown": 0,
+          "observed_opportunities": 3,
+          "observed_play_rate": 0.3333333333333333,
+          "observed_non_play_rate": 0.6666666666666666,
+          "coverage_status": "incomplete_r35",
+          "opportunity_coverage": null
+        },
+        "monthly_trend": [
+          {
+            "month": "2026-01-01",
+            "evidence": {
+              "direct_play": 1,
+              "direct_non_play": 2,
+              "explicit_unknown": 0,
+              "observed_opportunities": 3,
+              "observed_play_rate": 0.3333333333333333,
+              "observed_non_play_rate": 0.6666666666666666,
+              "coverage_status": "incomplete_r35",
+              "opportunity_coverage": null
+            }
+          }
+        ],
+        "back_to_back": {
+          "direct_play": 0,
+          "direct_non_play": 1,
+          "explicit_unknown": 0,
+          "observed_opportunities": 1,
+          "observed_play_rate": 0.0,
+          "observed_non_play_rate": 1.0,
+          "coverage_status": "incomplete_r35",
+          "opportunity_coverage": null
+        }
+      },
+      "production": {
+        "played_games": 1,
+        "minutes": {
+          "distribution_minutes": {
+            "observed_games": 1,
+            "lower_percentile_probability": 0.2,
+            "upper_percentile_probability": 0.8,
+            "mean": 35.0,
+            "sample_standard_deviation": null,
+            "lower_percentile": 35.0,
+            "upper_percentile": 35.0
+          },
+          "coefficient_of_variation": null
+        },
+        "categories": [
+          {
+            "category": "fg3m",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 2.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 2.0,
+              "upper_percentile": 2.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "pts",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 20.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 20.0,
+              "upper_percentile": 20.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "reb",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 5.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 5.0,
+              "upper_percentile": 5.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "ast",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 4.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 4.0,
+              "upper_percentile": 4.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "stl",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 1.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 1.0,
+              "upper_percentile": 1.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "blk",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 1.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 1.0,
+              "upper_percentile": 1.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "to",
+            "unit": "count",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 2.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 2.0,
+              "upper_percentile": 2.0
+            },
+            "ratio_baseline": null
+          },
+          {
+            "category": "fg_pct",
+            "unit": "volume_weighted_impact",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 0.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 0.0,
+              "upper_percentile": 0.0
+            },
+            "ratio_baseline": {
+              "made": 20,
+              "attempted": 40,
+              "rate": 0.5
+            }
+          },
+          {
+            "category": "ft_pct",
+            "unit": "volume_weighted_impact",
+            "distribution": {
+              "observed_games": 1,
+              "lower_percentile_probability": 0.2,
+              "upper_percentile_probability": 0.8,
+              "mean": 0.0,
+              "sample_standard_deviation": null,
+              "lower_percentile": 0.0,
+              "upper_percentile": 0.0
+            },
+            "ratio_baseline": {
+              "made": 16,
+              "attempted": 20,
+              "rate": 0.8
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

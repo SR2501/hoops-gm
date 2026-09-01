@@ -32478,6 +32478,84 @@ documentation-only unit and has not yet been independently re-reviewed.
 **Could not verify:** Whether every one of the ~30 unrelated "denominator" hits across the repository (injury-report cohort documents, schedule adapters, ADR-013, ADR-015) is free of an analogous misattribution — this sweep specifically checked files naming `participation-ledger-population` or `participation-opportunity-coverage` by slug, not every document using the word "denominator" in an unrelated sense, since a full read of all ~19 files that word appears in was out of proportion to the two specific findings this round was scoped to.
 
 **Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
+
+---
+
+## 2026-09-01 - frontend - Reliability evidence browser delivered; backlog item remains pending
+
+**Changed:** Replaced the stale `/reliability` placeholder with a read-only
+consumer of `GET /api/v1/reliability/scorecards`. The frontend now strictly
+decodes the complete response, rejects inconsistent rates, denominators,
+lineage, category units, ratio baselines, duplicate player ids, and any
+coverage claim other than the backend's explicit `incomplete_r35` /
+`opportunity_coverage=null` contract. The page loads once, refreshes only on
+operator action, indexes the loaded cohort client-side, and mounts 50 collapsed
+scorecards at a time rather than 596 expanded cards. Search and evidence
+filters cover player name/id, direct non-play evidence, no direct B2B evidence,
+and unavailable names.
+
+Each collapsed row keeps direct availability observations, the B2B subset, and
+played-game production in separate columns. Expansion exposes monthly
+play/non-play/explicit-unknown counts and direct-only rates, then played-game
+minutes and category distributions. FG and FT are labelled as volume-weighted
+impact in `made - cohort rate * attempts` units with their aggregate
+makes/attempts baselines; they are never displayed as raw percentage
+consistency. Missing names, zero B2B opportunity, explicit unknowns, incomplete
+coverage, unavailable/unpublished cohorts, stale lineage, and the backend's
+recorded 409 refusal all have explicit states. No grade, rank, projected games,
+`p(play)`, durability score, or inferred absence was added.
+
+Recorded success and refusal fixtures exercise the production FastAPI route,
+not a hand-written response shape. Focused tests cover direct non-play evidence,
+zero B2B evidence, nullable player names, ratio-category units, incomplete
+coverage, progressive disclosure, no polling, and refusal-specific copy.
+Frontend lint, TypeScript checking, the production build, and the full Vitest
+suite pass with 380 tests.
+
+An independent code review found three defects before the head was frozen. The
+initial effect could issue two expensive requests under the application's React
+StrictMode wrapper; the decoder admitted wrong or missing category/unit pairs;
+and explicit-unknown-only B2B rows were both hidden in the summary and included
+by the "no B2B evidence" filter. The request is now deferred one microtask so
+StrictMode cancels its discarded effect before I/O starts, with an integration
+test asserting one fetch. Category decoding now requires the exact seven
+counting categories plus FG/FT volume-impact categories and their prescribed
+units/baselines. B2B summaries show all three evidence counts, and the empty-B2B
+filter now means no play, non-play, or explicit-unknown rows.
+
+**Now true:** The prepared ignored cohort at
+`C:\Users\steverones\hoops-gm\reliability_ui_demo_20250901.db` returns 200 with
+season `2025-26`, 596 scorecards, 1,230 final games, 26,651 game logs, 43,037
+participation rows, and a 3,119,989-byte body. That exact captured body was
+first replayed for visual inspection, then loaded directly from the prepared
+SQLite service after the StrictMode fix. The backend log contains one scorecard
+request for that direct browser load, returning 200 in 4,153.85 ms. The browser
+mounted 50 scorecards initially, showed the incomplete-opportunity warning and
+manual refresh, and expanding A.J. Lawson showed seven monthly rows plus
+played-game category distributions including the volume-weighted FG/FT impact
+units and cohort baselines. The source database at
+`C:\Users\steverones\hoops-gm-data\hoops_gm.db` was not opened or mutated.
+
+The page also states the acceptance limit rather than hiding it: this endpoint
+contains neither fantasy-roster identity nor a defined composite reliability
+number, so a roster-level fragility summary cannot be produced without
+inventing membership and math. Monthly observations are shown as observations;
+no slope or trend direction is fitted. For that reason `reliability-ui` remains
+pending in `docs/backlog.md`, whose marker and recounted header are unchanged.
+
+**Could not verify:** Native Postgres was not available. The current joined
+demo's unpublished-cohort 409 was covered by its recorded production-route
+fixture and browser test, not re-published or worked around. No claim is made
+about 2026-27 evidence, roster fragility, full player-game opportunity coverage,
+or availability prediction. The first visual attempt did reproduce SQLite
+`database is locked` under duplicate StrictMode requests; the final direct
+browser load and one-request backend trace verify that specific defect is
+closed, not that SQLite can safely serve genuinely concurrent reliability
+computations.
+
+**Next:** Keep `reliability-ui` pending until an approved source supplies
+fantasy-roster membership and an explicitly defined, gated roster-level
+fragility contract. Do not derive either from projections or schedule proxies.
 ---
 
 ## 2026-08-31 - quant - Availability model preregistration v1

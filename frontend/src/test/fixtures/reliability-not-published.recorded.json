@@ -1,0 +1,5 @@
+{
+  "error": "reliability_not_published",
+  "detail": "season '2025-26' has no current schedule:nba-schedule cohort; publish reliability evidence for this store before reading it (python -m hoops_gm.dev.publish_reliability_evidence)",
+  "request_id": "recorded-reliability-not-published"
+}
