@@ -503,16 +503,18 @@ participation outcome.
 
 ### Candidate 4 - Candidate 3 plus workload context
 
-Add:
+In-season mode adds:
 
 - season-to-date minutes strictly before the applicable decision cutoff;
 - career NBA regular-season minutes strictly before that cutoff; and
 - recent minutes spike: minutes in the 7 calendar days before that cutoff minus
   one quarter of minutes in the 28 calendar days before that cutoff.
 
-For draft-morning mode the applicable cutoff is the one frozen timestamp in
-section 1 for every future target game. No game, minutes, or participation after
-that timestamp may alter a draft-morning predictor.
+Draft-morning mode adds career NBA regular-season minutes before its frozen
+cutoff and no other workload field. Season-to-date and recent regular-season
+minutes are structurally zero before opening night, so including them or using
+them to form diagnostic groups would be vacuous. No game, minutes, or
+participation after the draft cutoff may alter a draft-morning predictor.
 
 Game logs may supply these predictor fields but still may not supply labels.
 Candidate 4 is contingent on section 9's workload veto.
@@ -564,13 +566,16 @@ partition:
 
 ```text
 quartile_lift =
-  mean(p4 - p3 for top season_to_date_minutes quartile)
-  - mean(p4 - p3 for bottom season_to_date_minutes quartile)
+  mean(p4 - p3 for top diagnostic_workload_axis quartile)
+  - mean(p4 - p3 for bottom diagnostic_workload_axis quartile)
 ```
 
+`diagnostic_workload_axis` is season-to-date minutes for in-season mode and
+career NBA regular-season minutes at the draft cutoff for draft-morning mode.
 Quartiles are deterministic equal-count groups after sorting by
-`(season_to_date_minutes, game_id, player_id)`; remainder rows are assigned to
-the lowest-numbered quartiles.
+`(diagnostic_workload_axis, game_id, player_id)`; remainder rows are assigned to
+the lowest-numbered quartiles. A mode with fewer than four distinct axis values
+vetoes Candidate 4 rather than constructing ID-driven groups.
 
 Candidate 4 is vetoed if **either**:
 

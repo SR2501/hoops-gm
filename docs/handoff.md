@@ -32554,12 +32554,12 @@ implementation, split, dependency, and evidence hashes.
 opportunity provenance remain absent, so the fit remains deterministically
 vetoed and no statistical result can be verified. Successive exact-head reviews
 found and drove repairs for split, estimator, comparator, bootstrap, holdout,
-workload, calibration, Marcel, and handoff defects. The latest review additionally
-found vacuous preseason coverage, missing fitted-stratum floors, a deployment
-horizon mismatch, incorrect two-way season weighting, and an omitted ADR-018
-restricted artifact. Those corrections are in the replacement, whose fresh
-cumulative review and hosted exact-head CI had not run when this entry was
-written. The owner accept/decline decision remains open.
+workload, calibration, Marcel, and handoff defects. The latest review reduced
+the remaining blocker to draft Candidate 4's vacuous pre-opening
+season-to-date diagnostic; the replacement now uses career minutes as the sole
+draft workload feature and diagnostic axis. Its fresh cumulative review and
+hosted exact-head CI had not run when this entry was written. The owner
+accept/decline decision remains open.
 
 **Next:** Freeze the corrected replacement head and obtain a fresh independent
 cumulative quant review. If clean, publish that exact head to the existing PR
