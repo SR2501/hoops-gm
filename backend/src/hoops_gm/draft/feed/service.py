@@ -141,6 +141,36 @@ _CONTACT_SCAN_LIMIT = 50
 BOARD_SCAN_LIMIT = 8
 BOARD_DIMENSIONS_REGRESSED: Final = "board_dimensions_regressed"
 
+# These refusals describe the current append-only log, not the captured row.
+# A later void or correction can make the unchanged observation valid.
+_RETRYABLE_APPLY_CONFLICTS: Final[frozenset[str]] = frozenset(
+    {
+        "draft_board_full",
+        "draft_closed",
+        "draft_lot_player_mismatch",
+        "draft_player_already_taken",
+        "draft_roster_full",
+        "draft_sale_below_recorded_bid",
+    }
+)
+_SkipDisposition = Literal["pending", "retryable", "permanent"]
+
+
+def _skip_disposition(reason: str | None) -> _SkipDisposition:
+    """Classify a stored row without changing its provenance or identity."""
+    if reason is None:
+        return "pending"
+    code, _, _detail = reason.partition(":")
+    if code in _RETRYABLE_APPLY_CONFLICTS:
+        return "retryable"
+    return "permanent"
+
+
+def _is_application_candidate(row: DraftFeedObservation) -> bool:
+    return (
+        row.applied_event_sequence is None and _skip_disposition(row.skipped_reason) != "permanent"
+    )
+
 
 class DraftPickSource(Protocol):
     """The narrow slice of the official client this package needs.
@@ -1586,24 +1616,25 @@ def apply_observations(
     **Budget is deliberately not in that list any more.** It used to be, and it
     was the worst rule to have here: ``Draft.auction_budget`` is one scalar for
     the whole draft, so a seat with a larger real bank raised
-    ``draft_budget_exceeded``, and line 1295 below filed that into
-    ``skipped_reason`` — which nothing in this package ever clears, and which
-    ``pending`` above filters on. So the row was burned permanently: re-ingesting
-    the same capture deduped against the burned row instead of retrying it, and
-    the pick was gone from the board with no way back short of typing it by
-    hand. See ``hoops_gm.draft.state``, "Why spending past the budget is not a
-    refusal", and
+    ``draft_budget_exceeded``, and this function filed that into
+    ``skipped_reason``. Re-ingesting the same capture deduped against the burned
+    row instead of retrying it, and the pick was gone from the board with no way
+    back short of typing it by hand. See ``hoops_gm.draft.state``, "Why spending
+    past the budget is not a refusal", and
     ``test_a_sale_past_the_assumed_budget_is_applied_rather_than_burned``.
+
+    Apply-time state conflicts are reconsidered on every call. The allowlist is
+    intentionally exact: a void can make ``draft_roster_full`` or
+    ``draft_player_already_taken`` false without changing the captured row;
+    malformed recognition, missing fields, and dedupe outcomes cannot. Existing
+    burned rows participate immediately, so recovery does not require a new
+    artifact key or a second recovery endpoint.
     """
     stamp = now or datetime.now(UTC)
     state = draft_service.load_state(session, draft)
 
     observations = load_observations(session, draft)
-    pending = [
-        row
-        for row in observations
-        if row.applied_event_sequence is None and row.skipped_reason is None
-    ]
+    pending = [row for row in observations if _is_application_candidate(row)]
     # Identity history. A row that was skipped as a duplicate still carries the
     # sequence it corroborated, so it is evidence about which id landed under
     # which name -- see :func:`_identity_conflicts`.
@@ -1611,8 +1642,8 @@ def apply_observations(
     pending.sort(key=_apply_order)
 
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
-    # fact about *this* run. A sticky value would recreate, in a second field,
-    # the exact defect that removing it from ``skipped_reason`` fixed.
+    # fact about *this* run. Unlike the exact retryable skip-code allowlist, a
+    # blocked row is never excluded from the next application queue.
     #
     # This clear used to carry a comment insisting it had to sit *above* the
     # closed-draft return. It does not, and a review proved it by moving it
@@ -1655,10 +1686,11 @@ def apply_observations(
 
         key = normalize_key(admitted.player_label)
         if key in contradicted:
-            # Not ``skipped_reason``: nothing in this package ever clears that,
-            # so a contradiction would burn every row for this player
-            # permanently, and the owner resolving it by typing the pick
-            # himself would still never see them leave the backlog.
+            # Not ``skipped_reason``: contradictions are not append-time state
+            # validation errors in the retryable allowlist. Storing one there
+            # would burn every row for this player permanently, and the owner
+            # resolving it by typing the pick himself would still never see
+            # them leave the backlog.
             # ``blocked_reason`` is recomputed every run, so this states the
             # position now and stops stating it when it stops being true.
             row.blocked_reason = contradicted[key]
@@ -1714,16 +1746,9 @@ def apply_observations(
                 # later, which is the worst possible time.
                 #
                 # ``skipped_reason`` is deliberately *not* set on this branch.
-                # Nothing in this package ever clears it, so setting it would
-                # exclude the row from ``pending`` permanently: the owner types
-                # the pick this one was waiting behind, re-runs, and the
-                # observation that triggered the halt is silently gone — not
-                # applied, not pending, with ``pending_count == 0`` telling the
-                # screen there is nothing outstanding. Halting is supposed to
-                # be the recoverable choice; burning the row is what made it a
-                # skip with extra steps. A republishing bridge would usually
-                # heal it under a new key, but the official source republishes
-                # byte-identically and would not.
+                # Turn-order halts use the existing blocked contract rather
+                # than the recovery allowlist: the owner types the missing
+                # earlier pick, re-runs, and this exact row remains pending.
                 halted = error.code
                 row.blocked_reason = error.code
                 break
@@ -1732,6 +1757,10 @@ def apply_observations(
 
         row.applied_event_sequence = state.last_sequence
         row.applied_at = stamp
+        if _skip_disposition(row.skipped_reason) == "retryable":
+            # Clear only the reversible refusal this successful append disproved.
+            # Permanent recognition and dedupe reasons never enter this branch.
+            row.skipped_reason = None
         # Re-derived from the board rather than assembled from ``row``, so that
         # what ``held`` says and what the board says cannot differ. Building a
         # ``_Recorded`` here from the values we happened to pass in would be a
@@ -1781,6 +1810,9 @@ class FeedStatus:
     #: live board polls ``GET``. "Stuck" and "queued" look identical on a screen
     #: and mean opposite things at 7:14pm.
     blocked: tuple[str, ...]
+    #: Apply-time state conflicts retained for automatic reconsideration on the
+    #: next local apply. Kept separate from permanent ``skipped`` reasons.
+    retryable: tuple[tuple[str, int], ...]
     skipped: tuple[tuple[str, int], ...]
     last_sequence: int
     #: Board slots an earlier reading filled and the newest one does not.
@@ -2206,15 +2238,19 @@ def feed_status(
             for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
         )
 
+    retryable: dict[str, int] = {}
     skipped: dict[str, int] = {}
     for row in rows:
-        if row.skipped_reason:
-            _tally(skipped, row.skipped_reason.split(":")[0])
+        disposition = _skip_disposition(row.skipped_reason)
+        if disposition == "retryable":
+            assert row.skipped_reason is not None
+            _tally(retryable, row.skipped_reason.partition(":")[0])
+        elif disposition == "permanent":
+            assert row.skipped_reason is not None
+            _tally(skipped, row.skipped_reason.partition(":")[0])
 
     applied = sum(1 for row in rows if row.applied_event_sequence is not None)
-    pending = sum(
-        1 for row in rows if row.applied_event_sequence is None and row.skipped_reason is None
-    )
+    pending = sum(1 for row in rows if _is_application_candidate(row))
     state = draft_service.load_state(session, draft)
     # ``draft_closed`` is a claim about the draft's *current* status, so it is
     # filtered against the status rather than trusted as a stamp. The stamp is
@@ -2248,6 +2284,7 @@ def feed_status(
         applied_count=applied,
         pending_count=pending,
         blocked=blocked,
+        retryable=tuple(sorted(retryable.items())),
         skipped=tuple(sorted(skipped.items())),
         last_sequence=state.last_sequence,
         board_regressions=board_regressions(board_readings),

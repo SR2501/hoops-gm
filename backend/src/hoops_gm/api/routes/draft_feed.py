@@ -276,6 +276,9 @@ class FeedStatusResponse(BaseModel):
     #: stopped applying is indistinguishable here from one with an item waiting
     #: for the next run.
     blocked: list[str]
+    #: Apply-time state conflicts that remain pending and will be retried on the
+    #: next local apply. These are not permanent recognition or dedupe skips.
+    retryable: dict[str, int]
     skipped: dict[str, int]
     #: The draft log's version token, the same one ``GET /drafts/{id}``
     #: publishes, so a screen can tell whether the board it holds is the board
@@ -550,6 +553,7 @@ def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
         applied_count=status.applied_count,
         pending_count=status.pending_count,
         blocked=list(status.blocked),
+        retryable=dict(status.retryable),
         skipped=dict(status.skipped),
         last_sequence=status.last_sequence,
         board_regressions=[
