@@ -48,8 +48,18 @@ before Sunday 18 October 2026.
    from public box scores by a monkey. *This has since been done*:
    [`consensus-reproducibility.md`](consensus-reproducibility.md).
 5. **Spend the remaining weeks unblocking `participation-ledger-population`,**
-   which is where the unpredictable variance actually lives and is currently the
-   binding constraint on the entire spine.
+   which is where the unpredictable variance actually lives and is a binding
+   constraint on the entire spine. **Corrected 2026-08-31, factual cross-module
+   contract correction directed by architect, not a model result and no change
+   to ADR-002's production/availability separation:** this is necessary but not
+   sufficient. `participation-ledger-population` supplies multi-season **direct**
+   observations only; the player-game opportunity denominator itself — whether
+   an at-risk player-game is confirmed-observed, confirmed-absent, or unknown —
+   is a separate, later-sequenced item, `participation-opportunity-coverage`,
+   which depends on the completed multi-season ledger and additionally needs
+   independent roster/opportunity evidence the ledger item's own ingest cannot
+   produce. See §"Non-appearance reasons" below for the boundary stated
+   precisely.
 
 ### Where the production/availability seam falls — an ADR-002 clarification
 
@@ -523,8 +533,20 @@ blending contract already does this; anything new must too.
   exclusively — only 50 of 254,512 rows carry zero minutes. Games played here
   means *games with a log row*; the denominator — games the player's team
   scheduled while he was rostered and available — is not knowable from this
-  source. This is precisely why `participation-ledger-population` is the binding
-  constraint, and why `AVAILABLE_FLAG` cannot substitute: its non-1 values have a
+  source. **Corrected 2026-08-31, factual cross-module contract correction
+  directed by architect: this is a two-stage boundary, not a single binding
+  constraint.** `participation-ledger-population`'s job is the first stage
+  only — a multi-season cohort of **direct** `player_participation`
+  observations (played, DNP, inactive, etc.), never a manufactured absence or
+  `unknown` row for a player the source is silent about. It cannot, by its own
+  ingest mechanism, supply the denominator this bullet describes: knowing
+  whether a silent player-game reflects a confirmed absence, an unresolved
+  roster question, or a capture gap requires independent roster/opportunity
+  evidence the box-score and inactive-list parsers do not have access to. That
+  second stage — classifying every at-risk player-game as confirmed-observed,
+  confirmed-absent, or unknown — is `participation-opportunity-coverage`'s job
+  alone. `AVAILABLE_FLAG` cannot substitute for either stage: its non-1 values
+  have a
   median 23.4 minutes and **0 of 2,736 such rows are zero-minute**, so it is not
   an appearance flag and does not mark absences.
 - **Trades, coaching changes, undisclosed injuries, front-office intent, minutes
