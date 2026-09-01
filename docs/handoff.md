@@ -32643,3 +32643,29 @@ accept/decline decision remains open.
 cumulative quant review. If clean, publish that exact head to the existing PR
 branch with an explicit lease against `bc6006c` and wait for hosted checks. Do
 not merge or self-approve.
+
+---
+
+## 2026-09-01 - quant - Pin availability preprocessing arithmetic
+
+**Changed:** Closed the remaining independent-review minor in the Proposed
+availability protocol without changing its scope, thresholds, status, or fit
+vetoes. Section 6 now computes the development 1st/99th percentile endpoints
+with float64 `numpy.quantile(..., method="linear")` and explicitly clips to
+those endpoints. Candidate 2 now defines `development_mode_base_rate` as the
+Jeffreys-smoothed eligible development play rate for that mode, including the
+exact numerator and denominator.
+
+**Now true:** Winsorization and the five-opportunity history pseudocount have no
+implementation-selected percentile interpolation or raw-versus-smoothed base
+rate. The protocol remains documentation-only and Proposed.
+
+**Could not verify:** The multi-season direct ledger, exhaustive opportunity
+coverage, preseason-news manifests, overlap report, split, fitting, calibration,
+and sealed holdout evaluation still do not exist. No model result or Model-gate
+pass can be verified. Fresh exact-head cumulative quant review and hosted CI had
+not run when this entry was written; owner acceptance remains open.
+
+**Next:** Freeze one replacement head, obtain fresh independent cumulative quant
+review, publish it to existing PR #141 without force, and wait for exact-head CI.
+Do not merge or self-approve.

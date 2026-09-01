@@ -434,11 +434,14 @@ converge to the configured tolerance is a fit veto, not permission to change
 the solver or tolerance.
 
 Continuous predictors are winsorized to the development partition's 1st and
-99th percentiles, then standardized with the development mean and population
-standard deviation. A zero-standard-deviation predictor becomes the all-zero
-column and is reported. Binary predictors are not standardized. Categorical
-levels use the literal closed vocabularies in this protocol and lexicographic
-column order. Unknown categories fail before fitting.
+99th percentiles computed in float64 with
+`numpy.quantile(values, [0.01, 0.99], method="linear")`, then standardized with
+the development mean and population standard deviation. Values below or above
+the two returned endpoints are clipped to the endpoint. A
+zero-standard-deviation predictor becomes the all-zero column and is reported.
+Binary predictors are not standardized. Categorical levels use the literal
+closed vocabularies in this protocol and lexicographic column order. Unknown
+categories fail before fitting.
 
 Each mode uses one closed categorical report-stratum predictor with its literal
 levels in section 4. `no_report` is the in-season reference level and
@@ -480,13 +483,19 @@ opportunities do not enter its numerator or denominator.
 The smoothing rule is fixed:
 
 ```text
+development_mode_base_rate =
+  (development_mode_plays + 0.5)
+  / (development_mode_direct_opportunities + 1)
+
 trailing_play_rate_20 =
   (trailing_plays + 5 * development_mode_base_rate)
   / (trailing_direct_opportunities + 5)
 ```
 
-The pseudocount is exactly five equivalent opportunities. With no direct
-history the feature equals the development mode's base rate. No 10-game,
+`development_mode_base_rate` is the Jeffreys-smoothed play rate over all
+eligible direct development rows for that mode; it is not the raw empirical
+rate. The history pseudocount is exactly five equivalent opportunities. With no
+direct history the feature equals that smoothed mode base rate. No 10-game,
 40-game, exponentially weighted, or adaptively chosen alternative is tested.
 
 ### Candidate 3 - Candidate 2 plus calendar context
