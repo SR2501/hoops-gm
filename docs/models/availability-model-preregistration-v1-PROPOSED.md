@@ -1,669 +1,807 @@
-# Availability model — preregistration v1
+# Availability model - preregistration v1
 
-**Status: Proposed.** Written by `quant`; only the project owner accepts.
+**Status: Proposed.** Written by `quant`; only the project owner may accept it.
 **Author:** quant
-**Date:** 2026-08-31, pre-fit, pre-unblind
+**Original draft:** 2026-08-31
+**Replacement draft:** 2026-09-01, pre-fit and pre-release of any availability
+holdout
 
-This document is a protocol. It is not a model card, does not claim the Model
-gate, and emits no `p(play)`. The model card that eventually reports a result
-is `availability-model.md`, which does not exist yet.
+This is a protocol, not a model card. It fits no estimator, evaluates no
+outcome, emits no `p(play)`, and claims no Model gate. A future result belongs
+in `docs/models/availability-model.md`.
 
-**Owner binding required before fit:**
+## 0. Binding order and current terminal state
 
-1. Accept or reject this protocol.
-2. Decide whether the `participation-ledger-population` evidence (once provided by
-   the data-engineer session) is sufficient to define the at-risk population.
-   Without that decision, the fit is blocked.
+The following events must occur in order:
 
----
+1. The owner accepts or declines the exact Git commit containing this protocol.
+2. `participation-ledger-population` completes its pending multi-season census
+   of direct observations.
+3. `participation-opportunity-coverage` completes its separate exhaustive
+   player-game classification and provenance report.
+4. The numeric pre-fit gates in section 3 are evaluated without reading an
+   availability outcome value.
+5. If and only if every gate passes, the implementation and split manifests are
+   frozen, development and selection outcomes are released, and fitting begins.
+6. The holdout is released once to an independent evaluator after final
+   training is frozen.
 
-## 1. What this model predicts
+Steps 2 and 3 are separate binding fit vetoes. The first owns only direct
+`player_participation` observations. The second, and only the second, owns
+enumerating every at-risk opportunity and classifying it as
+`confirmed_observed`, `confirmed_absent`, or `unknown`.
 
-**Prediction unit:** One player × one scheduled regular-season team game.
+**Current deterministic verdict: `FIT_VETOED_PREREQUISITES`.** The merged
+repository records protocol-eligible direct observations for 2025-26 only.
+There are currently zero protocol-eligible direct observations for 2023-24 and
+2024-25. No estimator may be fit, no split may be substituted, and no
+within-2025-26 fallback exists. A different split requires a separately
+reviewed v2 committed before any newly proposed holdout is released.
 
-**Output:** A probability `p(play)` — the probability that the player appears in
-the box score for that game. The output is a probability distribution expressed
-as a point estimate with a stated calibration interval, never an unsupported
-point certainty.
-
-**At-risk population:** All player-games where the player is on a team's active
-roster for the game date, excluding two-way players currently in the G-League
-and players on suspension. The denominator is the set of games the player
-*could have* played; absence from this set is not evidence of non-play.
-
-**Population identification problem — unresolved.** The at-risk population
-requires authoritative historical roster intervals: "player X was on team Y's
-roster from date A to date B." The merged data currently lacks both:
-
-- Authoritative roster transaction history (signings, trades, waivers with
-  effective dates); and
-- Proof that every game returned a complete participation payload (the R35
-  gap: a full absence produces no row in any endpoint).
-
-`reliability-metrics.md` already records this: *"Opportunity coverage cannot be
-calculated because the merged data lacks both authoritative historical roster
-intervals and proof that every game returned a complete participation payload."*
-
-**Evidence required to unblock:** The data-engineer session is re-deriving
-this. The fit is blocked until one of:
-
-(a) Authoritative roster intervals are available and validated, making the
-    denominator identifiable. The evidence is a coverage report showing that
-    for each team-game in the fitting window, the set of rostered players is
-    known, and the participation outcome for each is either directly observed
-    or explicitly marked as missing coverage.
-
-(b) A principled alternative denominator is defined that does not require roster
-    intervals — for example, restricting the at-risk population to players with
-    at least one observation in a trailing window, which makes the estimate
-    conditional on recent appearance. That conditioning must be stated in the
-    model card and makes the model unsuitable for players newly acquired by
-    trade, which must be disclosed.
-
-**Until one of (a) or (b) is resolved and accepted by the owner, this protocol
-blocks the fit.** Manufacturing a denominator from silence is the error R35
-exists to prevent.
+The owner decision at this stage is therefore only whether to bind this
+protocol. Acceptance does not override either data veto.
 
 ---
 
-## 2. Outcome mapping under R35
+## 1. Questions, modes, and estimands
 
-A `played` participation row or a game-log row is direct evidence of play.
-`did_not_play`, `did_not_dress`, `not_with_team`, and `inactive` are direct
-evidence of non-play. `unknown` and missing rows are **excluded, not counted
-as non-play**. The model is fitted only on directly observed outcomes.
+### Prediction unit
 
-Every fitted observation must trace to a `player_participation` row with a
-non-null `outcome` and a valid `game_id` anchored to a resolved `nba_games`
-row. Missing participation rows for rostered players are coverage gaps; they
-reduce effective sample size but do not create false non-play labels.
+One player x one scheduled NBA regular-season team game for which
+`participation-opportunity-coverage` establishes that the player was at risk of
+playing.
 
-The exclusion count and its breakdown by reason are reported in the model card.
+### In-season mode
+
+At a fixed decision timestamp before tip-off, estimate the calibrated marginal
+probability that the player records a direct `played` outcome in that game.
+Historical evaluation fixes that timestamp at exactly 60 minutes before the
+scheduled tip-off. Production predictions use their actual decision timestamp
+and may not claim the historical calibration context if made earlier than the
+evaluated 60-minute horizon. Only information available at the applicable
+timestamp may enter.
+
+### Preseason / draft-morning mode
+
+At the frozen draft-morning timestamp, estimate the calibrated marginal
+probability of play for each scheduled regular-season game. No future injury
+report is imputed. Every future game receives the distinct
+`draft_morning_no_report` stratum until an in-season prediction is made.
+For each historical season, the evaluation cutoff is 09:00
+`America/New_York` on the calendar day before that season's first scheduled
+regular-season game. The eventual 2026-27 release uses the owner's actual
+draft-morning timestamp, recorded in its input lineage.
+
+The two modes are fitted, selected, evaluated, and versioned separately. A
+model passing one mode does not activate the other.
+
+### What the probability means
+
+The output is a calibrated **marginal Bernoulli probability in the eligible
+population**, with population and calibration context attached. It is not a
+joint distribution of a player's season. Summing game-level probabilities
+produces expected games over that set of opportunities and nothing more.
+
+No season-games variance, percentile, or interval may be constructed by
+treating game-level marginals as independent. A games-played interval requires
+a separately preregistered dependence model.
 
 ---
 
-## 3. Temporal split and holdout integrity
+## 2. At-risk population, labels, and source boundaries
 
-**Split:** Three-season chronological split over 2023-24, 2024-25, and 2025-26
-regular seasons.
+### Opportunity population
 
-| Partition | Season | Purpose |
+An opportunity exists only where independent roster/opportunity evidence says
+the player was eligible for the team game. No G-League-assignment, two-way, or
+suspension exclusion is inferred from participation silence or free-text DNP
+reason. Such exclusions are allowed only when a separately sourced, dated
+record establishes the player's ineligibility for that game.
+
+`participation-opportunity-coverage` must classify every enumerated opportunity:
+
+- `confirmed_observed`: a direct `played` outcome exists;
+- `confirmed_absent`: an explicit direct non-play outcome exists; or
+- `unknown`: opportunity evidence exists but the direct outcome is missing or
+  cannot be reconciled.
+
+The classification owner must publish the source, endpoint or artifact,
+capture timestamp, stable player id, stable game id, team id, and the exact
+evidence row or absence that supports every classification.
+
+### Fitting labels
+
+The only fitting labels are direct `player_participation` outcomes:
+
+- positive: `played`;
+- negative: `did_not_play`, `did_not_dress`, `not_with_team`, `inactive`;
+- excluded from fitting: `unknown`, a missing row, unresolved player identity,
+  unresolved game identity, or conflicting direct outcomes.
+
+Game logs may audit that a `played` row is complete and may supply
+predictor-side workload fields. They **never create, repair, or override a
+fitting label**. A game-log appearance without a direct participation outcome
+is a coverage discrepancy and remains `unknown` for this protocol.
+
+### Remaining population selection
+
+Even after the coverage gate passes, the estimand remains conditional on:
+
+1. independent evidence that the player was at risk for the game;
+2. a directly observed participation outcome;
+3. stable player, game, and team identity;
+4. survival into whichever history requirement a candidate uses; and
+5. the historical NBA reporting and roster regimes represented by the eligible
+   seasons.
+
+This is not an all-NBA-player estimand. Rookies, newly signed players, traded
+players around uncertain effective dates, and long absences are likely to be
+selected differently. The model card must reproduce and disclose those
+differences rather than generalize past them.
+
+---
+
+## 3. Pre-fit census, split, and terminal eligibility gates
+
+### Required seasons
+
+The candidate split is fixed:
+
+| Role | Season | Use |
 |---|---|---|
-| Development | 2023-24 | Feature engineering, candidate exploration |
-| Selection | 2024-25 | Model selection, hyperparameter tuning |
-| Holdout | 2025-26 | Final evaluation, reported once, never revisited |
-
-The holdout is the 2025-26 season. It is **not** the same partition used for
-injury-status-conversion's holdout (the last 41 game-dates of 2025-26). The two
-models use different temporal grains — injury conversion splits within a season
-by game-date; this model splits across seasons. There is no silent optimization
-of this holdout from having seen injury-conversion results, because:
-
-1. The injury-conversion model's emitted probabilities are three constants
-   (0.0008725, 0.5405882, 0.8585599) per status band — they carry no
-   player-specific or game-specific information from the 2025-26 holdout.
-2. The availability model consumes these as a conditional feature input (§5),
-   not as a label or target. Seeing that `questionable` converts at ~54% on
-   the 2025-26 holdout tells us the prior's calibration, not the individual
-   outcomes the availability model must predict.
-
-**If the development season (2023-24) lacks sufficient participation data** due
-to the population problem in §1, the split degrades to:
-
-| Partition | Season | Purpose |
-|---|---|---|
-| Development + Selection | 2024-25 | Combined fitting and selection |
-| Holdout | 2025-26 | Final evaluation |
-
-This is weaker and must be disclosed. The two-partition fallback may not use any
-cross-validation result to select among candidates and then also report that CV
-result as the primary evidence — the holdout is the only evaluation.
-
----
-
-## 4. Candidate ordering and simplest baseline
-
-Candidates are considered in **strict complexity order** and advanced only when
-the more complex model demonstrates a **pre-registered improvement** over its
-simpler predecessor on the selection partition.
-
-### Candidate 0: Seasonal-games average (the MAE 14.32 baseline)
-
-A Marcel-style weighted average of prior-season games played, converted to a
-per-game rate by dividing by team scheduled games. This is the model that any
-contextual alternative must beat (ADR-007 amendment, 2026-08-22). It produces a
-single season-level expected-games figure, not a per-game `p(play)`.
-
-**Measured:** MAE 14.32 games on held-out seasons for players with three prior
-seasons (n=500), versus 15.77 for last-season-only and 15.90 for the constant
-league mean.
-
-This candidate is a calibration reference, not a per-game probability model. If
-no candidate below beats it when aggregated to season totals, **the engine
-should be simplified accordingly** (ADR-007).
-
-### Candidate 1: Status-only prior (the baseline per-game model)
-
-For each game, the player's most recent pre-game injury-report status determines
-`p(play)` via the frozen injury-status-conversion estimates. Players with no
-report status receive a population base rate from their seasonal-games average.
-
-This is the simplest per-game probability model and the true baseline for
-calibration comparison. It uses no history, no schedule, and no player features
-beyond report status.
-
-### Candidate 2: Status + direct-history + calendar
-
-Extends Candidate 1 with:
-
-- **Direct participation history:** Observed play rate over the player's last N
-  games (where N is a pre-registered window, proposed: 10, 20, 40), excluding
-  missing observations. This is a trailing empirical frequency, not a modelled
-  trend.
-- **Calendar features:** Back-to-back indicator, days of rest since last game,
-  games in the trailing 7 days (density), road/home indicator.
-
-These features are purely observational and do not carry the selection-bias
-risk described in §6. They describe the game's context, not the player's
-workload history.
-
-### Candidate 3: Status + history + calendar + age/tenure
-
-Extends Candidate 2 with:
-
-- **Age** at game date.
-- **Career NBA seasons** (tenure).
-
-These are background risk factors that do not depend on game participation. Age
-and tenure are known for every player regardless of whether they have appeared.
-
-### Candidate 4 (contingent, may be excluded): Workload features
-
-Extends Candidate 3 with:
-
-- **Season minutes total** (trailing, this season only).
-- **Career cumulative minutes.**
-- **Recent minutes spike** (deviation from personal trailing average).
-
-**These features are subject to the healthy-worker survivor effect described in
-ADR-007's amendment.** See §6 for the identification strategy. **Candidate 4 is
-advanced only if §6's diagnostic passes and the owner accepts the stated
-limitation.** If the diagnostic fails or the owner declines, Candidate 4 is
-excluded and the protocol proceeds with Candidate 3 as the ceiling.
-
-### Advancement criterion
-
-A candidate advances over its predecessor if it achieves:
-
-- A reduction in selection-partition **Brier score** of at least 0.005; **and**
-- No degradation in selection-partition **calibration-in-the-large (CITL)**
-  beyond ±0.02 absolute.
-
-The threshold 0.005 matches the injury-status-conversion protocol. If no
-candidate beyond Candidate 1 advances, Candidate 1 is the selected model.
-
----
-
-## 5. How the frozen injury-status conversion enters without leakage
-
-The injury-status-conversion model emits three probabilities for three status
-bands. These enter as a **conditional prior feature**, not as a fitted
-parameter:
-
-1. For each player-game with a pre-game injury report, the report's status maps
-   to the frozen conversion probability: `out`/`doubtful` → 0.0008725,
-   `questionable` → 0.5405882, `probable`/`available` → 0.8585599.
-
-2. This probability enters the availability model as a **fixed input feature**.
-   It is never re-estimated from the availability model's own training data.
-
-3. The conversion probabilities are constants derived from a separate fitting
-   procedure on a separate (partially overlapping) cohort. They are not updated,
-   blended, or shrunk toward the availability model's observations.
-
-**Leakage analysis:** The injury-conversion model was fitted on 2025-26
-development+selection (first 123 game-dates). Its estimates are aggregate rates
-that carry no individual player-game outcome information. The availability
-model's 2025-26 holdout partition will contain individual player-games that
-contributed to those aggregates, but the conversion probability is the same
-constant for every `questionable` game regardless of outcome — it cannot
-overfit to individual holdout rows.
-
-The residual concern is that the conversion model's calibration was measured
-on the same 2025-26 season that serves as the availability holdout. This means
-we know the conversion prior is well-calibrated for 2025-26 specifically.
-**This is disclosed but not disqualifying** — the prior's calibration is a
-property of the reporting environment, not a player-specific or game-specific
-information leak.
-
----
-
-## 6. Identification strategy and the healthy-worker survivor effect
-
-### The problem
-
-ADR-007's amendment documents `arXiv:2603.26935` and our own reproduction:
-total minutes → next GP has r = +0.521, showing that conditioning on game
-participation induces collider bias. A model fitted on game-log workload
-features without an identification strategy will learn that workload is
-protective, and will be confidently, invisibly wrong.
-
-### The strategy
-
-**This model does not claim causal estimates and does not attempt to recover
-the causal effect of workload on availability.** The identification strategy is
-**explicit conditioning with stated limitations**, not causal inference:
-
-1. **Candidates 1–3 do not use workload features.** Status, participation
-   history, calendar, age, and tenure are not collider-affected by the
-   selection mechanism. A player's age does not change because he played.
-   Calendar features (B2B, rest days) are properties of the schedule, not of
-   participation.
-
-2. **Participation history (Candidate 2+) is a trailing empirical rate, not a
-   workload measure.** It describes *whether* the player appeared, not *how much*
-   he played when he did. It is affected by selection in a different way: a
-   player must have appeared to have a non-zero history. This is disclosed as a
-   conditioning limitation: the model's estimate for a player with zero recent
-   observations is driven entirely by the status prior and population base rate.
-
-3. **Candidate 4's workload features are explicitly flagged.** If Candidate 4
-   is considered, the model card must report:
-   - The sign of the workload coefficient (if positive after controlling for
-     other features, the survivor effect is likely dominant);
-   - A diagnostic comparison: Candidate 3's predictions versus Candidate 4's
-     on the selection partition, stratified by workload quartile. If Candidate
-     4 shows higher `p(play)` for higher-workload players in a way that is not
-     explained by other features, the survivor effect is likely leaking in;
-   - **The model card must state:** "Workload-derived features carry a
-     selection-induced sign risk. The estimate is conditional on having appeared.
-     It should not be read causally."
-
-4. **The population estimate is conditional on the denominator in §1.** Under
-   option (b), it is explicitly conditional on recent appearance. The model does
-   not estimate availability for players who have never been observed.
-
-### What this strategy cannot do
-
-It cannot separate "heavy minutes are protective" (survivor effect) from
-"durable players earn heavy minutes" (true positive association) from "heavy
-minutes cause injury" (true negative association). The honest position is that
-on observational game-log data, with no treatment model and no IPW, these are
-confounded and will remain so. The model's estimate is *predictive* — "given
-what we observe, what do we expect?" — not *causal*.
-
-**The paper's remedy (marginal structural model with IPTW) requires a treatment
-model over the full at-risk population, which we do not have** (same
-denominator problem as §1). The honest expectation before draft day is that we
-can detect this bias but not correct it.
-
----
-
-## 7. Schedule-density and direct-history features — allowed list
-
-Features are partitioned into three classes based on their relationship to
-participation selection:
-
-### Class A: Not selection-affected (allowed in all candidates)
-
-- Game-date calendar features: day of week, month, back-to-back indicator,
-  games in trailing 7/14 days, days of rest, home/away
-- Player demographics: age, career seasons
-- Injury-report status (frozen conversion probability)
-
-### Class B: Selection-conditioned (allowed with disclosure)
-
-- Trailing observed play rate (last 10/20/40 games) — conditioned on having
-  at least one observation in the window. Players with zero observations
-  receive the population base rate. This conditioning is disclosed.
-
-### Class C: Survivor-affected (Candidate 4 only, with §6 diagnostics)
-
-- Season total minutes, career total minutes, recent minutes deviation.
-  These features mechanically encode the survivor effect: players who play
-  more have, by definition, been healthy enough to play.
-
-No feature outside this list may be added without a protocol amendment (v2).
-
----
-
-## 8. Explicit treatment of ADR-007's healthy-worker/collider warning
-
-This section exists because ADR-007's amendment requires the model to "state
-its identification strategy before it fits anything."
-
-**Statement:** This model's predictions are conditional on:
-
-1. The player being in the at-risk population (§1's denominator);
-2. The player having a recent participation observation (for Class B features);
-3. The frozen injury-conversion prior being calibrated for the current reporting
-   environment.
-
-The model does not claim that its features cause availability or that its
-coefficients have a causal interpretation. The workload-is-protective paradox
-(r = +0.521 for total minutes → next GP) is acknowledged as present in our data
-and is addressed by feature-class separation rather than by a causal model.
-
-**A model that uses only Class A and B features is not the paradox**, because it
-does not condition on a collider between latent fitness and participation.
-Calendar features are assigned by the schedule, not by health. Trailing play
-rate is a direct observation of the outcome variable's own history, which
-creates serial correlation but not collider bias. Age and tenure are
-pre-treatment covariates.
-
-**Candidate 4 introduces the collider.** Season minutes is a post-treatment
-variable that is simultaneously caused by latent fitness and causes future
-availability. The diagnostic in §6.3 is the check; the limitation in §6.3's
-bullet is the disclosure.
-
----
-
-## 9. Model-gate metrics and activation/veto conditions
-
-Calibration is the primary evidence. Accuracy (AUC, accuracy) is secondary.
-
-### Primary metrics (reported for every candidate)
-
-| Metric | Purpose |
-|---|---|
-| Brier score | Proper scoring rule; decomposes into calibration + resolution |
-| CITL | Calibration-in-the-large: mean(predicted) − observed rate |
-| ECE | Expected calibration error across decile bins |
-| Maximum calibration error | Worst single-bin deviation |
-| Reliability diagram | Visual calibration across probability deciles |
-
-### Activation conditions (must all pass for the selected model to activate)
-
-1. **Calibration-in-the-large:** |CITL| ≤ 0.05 on the held-out season.
-2. **Expected calibration error:** ECE ≤ 0.05 on the held-out season.
-3. **No probability-decile reversal:** Within each decile, the observed rate
-   must be monotonically non-decreasing across probability bins.
-4. **Seasonal-games MAE:** When aggregated to per-player season totals
-   (sum of `p(play)` over scheduled games), MAE must be < 14.32 games
-   (the Marcel baseline from ADR-007). If it does not beat this, the engine
-   should be simplified (ADR-007's flip condition is engaged).
-5. **Minimum held-out observations:** At least 1,000 directly observed
-   player-games in the holdout partition.
-6. **Coverage disclosure:** The fraction of holdout player-games excluded
-   due to missing observations must be reported. If exclusions exceed 20%
-   of the at-risk population, the model card must flag the result as
-   "limited-coverage" and the owner must decide whether to activate.
-
-### Veto conditions (any one blocks activation)
-
-- The MAE 14.32 comparison (condition 4) fails.
-- The identification diagnostic for Candidate 4 (§6.3) shows the survivor
-  effect is dominant and no simpler candidate is selected.
-- The owner declines to accept the population definition (§1).
-
----
-
-## 10. Uncertainty and repeated-measures structure
-
-Player-games are not independent. The same player contributes dozens of
-observations, and games on the same date share league-wide conditions.
-
-### Bootstrap specification
-
-The primary confidence interval uses a **cluster bootstrap resampling players**
-(not player-games). Each resample draws N players with replacement (where N is
-the number of distinct players in the partition), takes all of each drawn
-player's games, refits the model, and re-evaluates on the held-out season.
-
-**Number of resamples:** 1,000 (pre-registered).
-
-**Reported intervals:** 95% percentile intervals for Brier score, CITL, ECE,
-and seasonal-games MAE.
-
-If the cluster bootstrap is computationally infeasible (fitting the model 1,000
-times), the fallback is a **player-clustered standard error** using the
-delta method or sandwich estimator, with the limitation disclosed.
-
-### If the model cannot account for repeated measures
-
-If neither a cluster bootstrap nor a clustered standard error is feasible, the
-model card must:
-
-1. Report the naive (unclustered) interval with an explicit warning that it
-   understates uncertainty;
-2. Report the effective sample size (number of distinct players, not
-   player-games);
-3. Widen the activation conditions: |CITL| ≤ 0.03 and ECE ≤ 0.03 (tighter
-   thresholds to compensate for understated uncertainty).
-
----
-
-## 11. Probability-distribution output
-
-The model emits a **point probability with a calibration context**, not a bare
-number:
-
+| Historical support | 2022-23 | Three-prior-season Marcel support only |
+| Development | 2023-24 | Fit candidate structures |
+| Selection | 2024-25 | Advance candidates and freeze one structure |
+| Holdout | 2025-26 | One final evaluation by the independent evaluator |
+
+There is no two-season or within-season fallback.
+
+### Required direct-ledger census
+
+Before any split is materialized, `participation-ledger-population` must publish
+one committed census for each of 2022-23 through 2025-26. Each census names the
+store path, schema revision, ingest implementation commit, source artifacts,
+source fingerprints, stable-id reconciliation counts, direct outcome counts,
+unknown counts, distinct players, distinct game dates, and missing NBA games.
+
+The census is evidence about rows that exist. It must not manufacture an
+absence or `unknown` row for a silent player-game.
+
+### Required opportunity report
+
+After the multi-season ledger is complete,
+`participation-opportunity-coverage` must publish one committed report over the
+same seasons. It must:
+
+1. enumerate every player-game opportunity from independent roster evidence;
+2. assign exactly one of the three classes in section 2;
+3. report zero duplicate and zero unclassified opportunities;
+4. report the class counts and `unknown_share` overall, by season, by mode, by
+   report stratum, and by report era; and
+5. bind every row to the provenance fields in section 2.
+
+### Numeric proceed predicate
+
+The following boolean is evaluated before a split file or outcome package is
+released:
+
+```text
+PROCEED =
+  all_four_direct_censuses_present
+  AND duplicate_opportunities == 0
+  AND unclassified_opportunities == 0
+  AND unknown_share_overall <= 0.05
+  AND max(unknown_share_by_season) <= 0.05
+  AND each_fit_partition_direct_rows >= 5000
+  AND each_fit_partition_distinct_players >= 100
+  AND each_fit_partition_distinct_game_dates >= 100
+  AND development_plus_selection_direct_rows_per_official_status >= 100
+  AND holdout_direct_rows_per_official_status >= 30
+  AND marcel_paired_holdout_players >= 100
+  AND all_required_provenance_fields_non_null
 ```
+
+`each_fit_partition` means 2023-24, 2024-25, and 2025-26 after applying the
+same population and direct-label rules. The five official statuses are `out`,
+`doubtful`, `questionable`, `probable`, and `available`.
+
+`marcel_paired_holdout_players` counts only holdout players with zero unknown
+opportunities in the holdout and direct opportunity histories in each of the
+three immediately prior seasons needed by the Marcel reference.
+
+If any term is false, the result is `FIT_VETOED_DATA`. No candidate is fit, no
+outcome is released, and no threshold is relaxed. The report may recommend
+collecting more evidence, but it may not change this predicate. A changed
+predicate is v2.
+
+### Split artifact
+
+If `PROCEED` is true, the custodian writes a split manifest containing every
+eligible stable `(player_id, game_id)` key, partition, mode, label-availability
+flag, report stratum, report era, and provenance digest. The manifest publishes
+counts and exclusions by partition and hashes its canonical sorted contents.
+The model worker receives development and selection labels only. The holdout
+label package remains sealed.
+
+---
+
+## 4. Injury-report mapping and report regimes
+
+At each prediction cutoff, assign exactly one report stratum:
+
+| Stratum | Definition |
+|---|---|
+| `out`, `doubtful`, `questionable`, `probable`, `available` | Latest canonical official player status strictly before the cutoff |
+| `not_on_report` | The team submitted a parseable report for the game and the at-risk player is not listed |
+| `not_yet_submitted` | The latest eligible artifact explicitly marks the team `NOT YET SUBMITTED` |
+| `unparsed` | An artifact was fetched for the team-game but its relevant block, status, or identity could not be parsed canonically |
+| `no_report` | No eligible report artifact exists before an in-season cutoff |
+| `draft_morning_no_report` | The target game is still in the future at the registered draft-morning cutoff |
+
+These strata are never collapsed into `available`, `questionable`, or non-play.
+Every exclusion and outcome count is reported by stratum.
+
+The report era is also frozen:
+
+- `legacy_hourly`: source date before 2025-12-22;
+- `short_lead_fifteen_minute`: source date on or after 2025-12-22;
+- `no_report_era`: no eligible report artifact exists.
+
+The frozen injury-status-conversion constants are used unchanged as an offset
+for official-status rows:
+
+| Status | Fixed offset probability |
+|---|---:|
+| `out`, `doubtful` | 0.0008725 |
+| `questionable` | 0.5405882 |
+| `probable`, `available` | 0.8585599 |
+
+The pooled constants remain pooled in both report eras. The legacy-only and
+short-lead-only refits in `injury-status-conversion.md` are diagnostic and are
+not substituted. Report era is a required evaluation stratum, not a fitted
+interaction in v1. Non-official strata receive no injury-status offset.
+
+---
+
+## 5. Known overlap with injury-status conversion
+
+This availability holdout is not cleanly independent of the earlier
+injury-status-conversion study. The repository already publishes its aggregate
+results and the author has read its model card.
+
+The consumed 2025-26 injury-conversion partitions are:
+
+| Partition | Dates | Direct rows |
+|---|---|---:|
+| Development | 2025-10-21 through 2026-01-13 | 6,112 |
+| Selection | 2026-01-14 through 2026-03-01 | 3,546 |
+| Holdout | 2026-03-02 through 2026-04-12 | 3,940 |
+
+The proposed availability holdout spans all three date partitions. The exact
+stable-key overlap is not currently published and may not be guessed from
+these counts. Before `PROCEED` can be true, the custodian must add to the split
+manifest, for each injury-conversion partition:
+
+- exact overlapping `(player_id, game_id)` count;
+- exact overlap digest over the sorted stable keys;
+- availability report-stratum and exclusion counts for those keys; and
+- whether each overlapping key was used in injury-conversion fitting,
+  selection, or evaluation.
+
+This overlap census uses membership and provenance only; it does not release an
+availability outcome to the model worker.
+
+The fixed constants therefore enter with disclosed prior-study exposure, not
+"without leakage." They contain aggregate information from 2025-26 and the
+availability holdout includes overlapping player-games. The independent
+evaluator, one-time release, paired baselines, and exact overlap report bound
+that exposure; they do not erase it.
+
+---
+
+## 6. Estimator family and deterministic implementation
+
+Both modes use one estimator family:
+`sklearn.linear_model.LogisticRegression`.
+
+The fixed configuration is:
+
+```text
+penalty="l2"
+C=1.0
+solver="lbfgs"
+fit_intercept=True
+class_weight=None
+max_iter=5000
+tol=1e-10
+warm_start=False
+random_state=250141
+```
+
+There is no regularization grid and no alternate estimator. A failure to
+converge to the configured tolerance is a fit veto, not permission to change
+the solver or tolerance.
+
+Continuous predictors are winsorized to the development partition's 1st and
+99th percentiles, then standardized with the development mean and population
+standard deviation. A zero-standard-deviation predictor becomes the all-zero
+column and is reported. Binary predictors are not standardized. Categorical
+levels use the literal closed vocabularies in this protocol and lexicographic
+column order. Unknown categories fail before fitting.
+
+For official statuses, the logit of section 4's fixed probability is a numeric
+`injury_prior_logit` predictor and its value is not re-estimated. The logistic
+regression fits its coefficient; this is a fixed input feature, not an
+unsupported estimator offset. For non-official strata
+`injury_prior_logit = 0` and the registered stratum indicator is fitted.
+`no_report` is the in-season reference level; `draft_morning_no_report` is the
+preseason reference level.
+
+The exact Python, scikit-learn, NumPy, and BLAS versions, thread count, and
+implementation source hash are written into the implementation manifest.
+Thread count is fixed to one for fitting and reproduction.
+
+---
+
+## 7. Candidate ladder
+
+Candidates are separate for each mode and advance only in this order.
+
+### Reference baselines - not candidates
+
+1. **Refitted constant:** the Jeffreys-smoothed development play rate,
+   `(plays + 0.5) / (direct_rows + 1)`, refitted on development plus selection
+   after structure selection.
+2. **Marcel seasonal reference:** section 11. It is season-level context, not a
+   per-game candidate.
+
+### Candidate 1 - report state only
+
+In-season Candidate 1 uses only the fixed official-status
+`injury_prior_logit` feature and the non-official report-stratum indicators in
+section 4.
+
+Draft-morning Candidate 1 is intercept-only because every future game is
+`draft_morning_no_report`. It is intentionally equivalent in information to
+the refitted constant baseline; a contextual draft-morning model must advance
+beyond it.
+
+### Candidate 2 - Candidate 1 plus one direct-history feature
+
+Add one trailing play-rate feature over the player's last **20 classified
+direct opportunities** strictly before the target cutoff. Unknown
+opportunities do not enter its numerator or denominator.
+
+The smoothing rule is fixed:
+
+```text
+trailing_play_rate_20 =
+  (trailing_plays + 5 * development_mode_base_rate)
+  / (trailing_direct_opportunities + 5)
+```
+
+The pseudocount is exactly five equivalent opportunities. With no direct
+history the feature equals the development mode's base rate. No 10-game,
+40-game, exponentially weighted, or adaptively chosen alternative is tested.
+
+### Candidate 3 - Candidate 2 plus calendar context
+
+Add these schedule-derived fields only:
+
+- `second_night_back_to_back`;
+- `days_rest`, capped to `[0, 7]`;
+- team games including the target in trailing 4, 5, and 6 calendar days; and
+- `home_game`.
+
+All are calculated from the published team schedule without using the player's
+participation outcome.
+
+### Candidate 4 - Candidate 3 plus workload context
+
+Add:
+
+- season-to-date minutes strictly before the target;
+- career NBA regular-season minutes strictly before the target season; and
+- recent minutes spike: minutes in the prior 7 calendar days minus one quarter
+  of minutes in the prior 28 calendar days.
+
+Game logs may supply these predictor fields but still may not supply labels.
+Candidate 4 is contingent on section 9's workload veto.
+
+### Deliberate v1 omissions from the plan
+
+V1 does not fit age, tenure, road-trip length, time zones, body-part recurrence,
+injury-history embeddings, playoff position, elimination probability, tanking
+posture, contract situation, coaching intent, or learned player-specific B2B
+effects. The current repository does not establish complete, time-correct
+provenance for all of them, and adding them would break the ordered test of
+history before calendar before workload. They require a prospective v2 rather
+than opportunistic inclusion.
+
+---
+
+## 8. Selection and deterministic tie-breaking
+
+Fit every eligible candidate on development and score it on selection.
+
+A candidate advances over its immediate predecessor only when:
+
+1. predecessor Brier minus candidate Brier is at least `0.0050000000`; and
+2. absolute candidate CITL is no more than `0.0100000000` worse than absolute
+   predecessor CITL.
+
+Scores are computed in IEEE-754 float64 and compared without rounding. Equality
+at either boundary advances only when both conditions pass; any other tie keeps
+the simpler candidate. Candidate 4 must first clear section 9.
+
+Stop at the first candidate that fails. Later candidates are not considered.
+Refit the selected structure on development plus selection with unchanged
+configuration and preprocessing rules. If the selected structure is Candidate
+1, the contextual availability engine cannot activate because section 12
+requires held-out superiority over Candidate 1.
+
+No holdout result participates in selection.
+
+---
+
+## 9. Candidate 4 workload diagnostic and veto
+
+Workload features are observational and population-selected. This protocol
+does not claim a causal workload effect.
+
+Before Candidate 4 can be scored for advancement, compute on the selection
+partition:
+
+```text
+quartile_lift =
+  mean(p4 - p3 for top season_to_date_minutes quartile)
+  - mean(p4 - p3 for bottom season_to_date_minutes quartile)
+```
+
+Quartiles are deterministic equal-count groups after sorting by
+`(season_to_date_minutes, game_id, player_id)`; remainder rows are assigned to
+the lowest-numbered quartiles.
+
+Candidate 4 is vetoed if **either**:
+
+- `quartile_lift > 0.0200000000`; or
+- any standardized workload coefficient is `> 0.1000000000` log-odds.
+
+There is no "unless explained by other features" exception. Crossing either
+numeric boundary excludes Candidate 4 regardless of Brier improvement. Report
+the coefficients, quartile counts, `quartile_lift`, and a player-cluster
+bootstrap interval for the lift.
+
+Passing this diagnostic does not remove survivor selection. The model card must
+still state that workload is observed only among players healthy enough to
+accumulate it and must report the remaining selection described in section 2.
+
+---
+
+## 10. Calibration metrics and deterministic bins
+
+For every candidate and baseline, report:
+
+- Brier score;
+- CITL, defined as `mean(predicted) - mean(observed)`;
+- ECE;
+- maximum calibration error;
+- clipped log loss, with clip `[1e-6, 1 - 1e-6]`; and
+- a reliability table.
+
+ECE uses ten deterministic equal-count bins. Sort rows by
+`(predicted_probability, game_id, player_id)`. If `n = 10q + r`, bins `1..r`
+receive `q + 1` rows and the remaining bins receive `q` rows. Tied predictions
+may therefore span adjacent bins, but the stable-id tie-break makes the result
+reproducible. ECE is the count-weighted mean absolute difference between each
+bin's predicted mean and observed rate.
+
+Observed rates in finite samples are **not required to be monotonically
+non-decreasing**. The reliability table reports every adjacent inversion and
+its intervals; a noisy observed inversion is not itself proof that predicted
+probabilities are unordered. The old exact-monotonicity activation wording is
+withdrawn.
+
+All metrics are reported overall and by mode, report stratum, report era,
+pre-/post-All-Star break, and pre-/post-trade-deadline. Strata below 30 direct
+holdout rows report counts only.
+
+---
+
+## 11. Marcel comparison on the identical eligible cohort
+
+The previously published `14.32` MAE came from a different study, cohort, and
+outcome construction. It is context only and is not an activation threshold.
+
+For this protocol, recompute Marcel on the exact holdout player cohort counted
+by `marcel_paired_holdout_players` in section 3:
+
+```text
+marcel_rate =
+  (3 * play_rate_2024_25 + 2 * play_rate_2023_24 + play_rate_2022_23) / 6
+marcel_expected =
+  sum(marcel_rate over the player's eligible 2025-26 opportunities)
+```
+
+Each historical play rate uses the same independently enumerated opportunity
+population and direct-label rules as the availability model. The model and
+Marcel are compared for the same players, same 2025-26 opportunity keys, and
+same actual direct outcomes.
+
+For each player compute absolute season error for the selected model and
+Marcel. Report the paired mean difference
+`selected_absolute_error - marcel_absolute_error` with a player-cluster
+interval. Activation requires its upper 95% endpoint below zero in each mode.
+Also publish player count, opportunity count, exclusions, and the exact cohort
+digest. No commercial games projection enters.
+
+---
+
+## 12. Held-out activation and vetoes
+
+The independent evaluator runs the frozen final models on the sealed 2025-26
+holdout once. A mode activates only if every condition passes:
+
+1. the selected structure is Candidate 2, 3, or 4;
+2. the upper 95% endpoint for paired held-out Brier
+   `(selected - Candidate 1)` is below `0`;
+3. the upper 95% endpoint for paired held-out Brier
+   `(selected - refitted constant)` is below `0`;
+4. point `abs(CITL) <= 0.0500000000` and the complete required 95% CITL interval
+   lies within `[-0.0500000000, +0.0500000000]`;
+5. point `ECE <= 0.0500000000` and every required 95% ECE interval has upper
+   endpoint `<= 0.0500000000`;
+6. the paired Marcel error interval in section 11 has upper endpoint below `0`;
+7. every census, opportunity, split, implementation, overlap, and exclusion
+   count and hash reproduces exactly; and
+8. section 13 produces every required finite uncertainty interval.
+
+Any failure is `ACTIVATION_VETOED`. Publish the offline evidence and veto, but
+add no runtime release, persistence, API, UI, expected-games wiring, or
+valuation input.
+
+Candidate 1 remains a comparison baseline even though its frozen
+injury-status prior is independently eligible for its narrower runtime use.
+That prior's eligibility does not activate this broader availability model.
+
+---
+
+## 13. Repeated measures, feasibility budget, and uncertainty
+
+Players repeat across games and game dates share league conditions.
+
+### Pre-unblind feasibility test
+
+Before holdout release, run 25 full-pipeline player-cluster resamples using
+development and selection only, seed `250141`. Record wall time, peak resident
+memory, convergence failures, and platform. Extrapolate wall time linearly to
+1,000 resamples.
+
+The full-refit primary is feasible only if:
+
+- projected wall time is at most 4 hours;
+- peak resident memory is at most 16 GiB; and
+- all 25 pilot fits converge.
+
+This feasibility verdict and its raw timings are frozen in the implementation
+manifest before holdout release.
+
+### Primary and one fallback
+
+If feasible, the primary interval uses 1,000 full-pipeline player-cluster
+bootstrap resamples, seed `250142`. Each resample draws holdout players with
+replacement, retains all their rows, refits the frozen structure on the
+correspondingly resampled development-plus-selection players, and evaluates.
+
+The **only fallback** is a 5,000-resample evaluation-only player-cluster
+bootstrap of the already frozen final model, seed `250143`. It is used only
+when the pre-unblind feasibility rule rejects the full refit. It omits fitting
+uncertainty, and the model card must say so.
+
+### Required secondary dependence checks
+
+Regardless of primary or fallback, also compute:
+
+1. a 5,000-resample evaluation-only game-date block bootstrap, seed `250144`;
+2. a 2,000-resample two-way player x game-date pigeonhole bootstrap, seed
+   `250145`.
+
+Use percentile 95% intervals for paired Brier differences, CITL, ECE,
+Candidate 4 `quartile_lift`, paired Marcel error, and seasonal-games MAE.
+Activation uses the least favorable bound across the player, date-block, and
+two-way intervals.
+
+If the selected primary/fallback interval or either required secondary
+interval cannot be computed as finite numbers, has fewer than 100 effective
+resamples after deterministic failures, or cannot reproduce with its seed, the
+mode is vetoed. Naive row-level intervals are never substituted.
+
+---
+
+## 14. Cohort, exclusion, and report reproduction
+
+The evaluator must reproduce, before reporting a score:
+
+- direct and opportunity census hashes;
+- split-manifest hash and exact stable keys;
+- implementation source and dependency-lock hashes;
+- every included row count by season, partition, mode, report stratum, and era;
+- every exclusion count by reason and the corresponding stable-key digest;
+- the injury-conversion overlap counts and digests in section 5;
+- preprocessing parameters and feature-column order; and
+- Candidate 4 diagnostic inputs when applicable.
+
+Any mismatch vetoes evaluation. It is not rounded away or reconciled manually.
+
+---
+
+## 15. Output shape and calibration context
+
+The following JSON is **illustrative only**. It is not an API, persistence, or
+schema commitment:
+
+```json
 {
   "player_id": 12345,
   "game_id": 67890,
-  "p_play": 0.72,
-  "model_version": "availability-v1-<hash>",
-  "injury_status_prior": 0.8585599,
+  "mode": "in_season",
+  "marginal_p_play": 0.72,
+  "model_version": "availability-v1-<release-hash>",
+  "population_version": "<opportunity-report-hash>",
+  "report_stratum": "not_on_report",
+  "report_era": "short_lead_fifteen_minute",
   "features": {
     "trailing_play_rate_20": 0.85,
-    "b2b": false,
-    "days_rest": 2,
-    "age": 28
+    "second_night_back_to_back": false,
+    "days_rest": 2
   },
-  "calibration": {
-    "decile_bin": 7,
+  "calibration_context": {
+    "eligible_population": "direct-outcome holdout",
+    "equal_count_bin": 7,
     "bin_observed_rate": 0.74,
     "bin_n": 342,
-    "citl": 0.003,
+    "model_citl": 0.003,
     "model_ece": 0.021
   }
 }
 ```
 
-Every stored `p(play)` records its model version, input features (for "why this
-number?"), and the calibration context of the bin it falls in. The calibration
-display follows ADR-018: rendered adjacent, blocking nothing, toggleable.
+Every stored probability must retain the exact population, split, model,
+inputs, cutoff, report stratum, and calibration release that produced it.
+ADR-018 governs display: calibration context is adjacent, toggleable, and
+non-blocking. Model activation remains governed by this protocol; the display
+badge does not override an activation veto.
 
 ---
 
-## 12. Model version and input lineage
+## 16. Freeze identity, implementation lineage, and release identity
 
-Every emitted `p(play)` records:
+The accepted protocol is identified by:
 
-- **Model version hash:** SHA-256 of the serialized model parameters.
-- **Input versions:** Injury-conversion freeze id, participation-ledger
-  coverage fingerprint, schedule version.
-- **Feature vector:** The exact features used for this prediction, enabling
-  "why this number?" at any point.
+- the exact Git commit containing this file; and
+- the later owner-acceptance commit naming that protocol commit.
 
-A stored prediction whose input versions no longer match current data is
-marked stale and must be recomputed.
+A chat statement, PR approval without an exact commit, or mutable branch name
+does not bind the protocol.
 
----
+Before development labels are released, the implementation manifest must bind:
 
-## 13. Driver evidence for explainability
+- protocol commit and owner-acceptance commit;
+- direct-census and opportunity-report SHA-256 values;
+- canonical split-manifest SHA-256;
+- feature/configuration manifest SHA-256;
+- implementation source-tree SHA-256;
+- dependency-lock SHA-256;
+- development and selection package identities; and
+- all RNG seeds in this protocol.
 
-The model card and every stored prediction must support answering "why is
-this player projected for 61 games?" by reporting:
-
-1. The player's base rate (seasonal average or population mean).
-2. The contribution of each feature class: status prior, recent history,
-   calendar, demographics, (workload if Candidate 4).
-3. For tree-based models: feature importances or SHAP values.
-4. For linear models: coefficients with standard errors.
-
-The driver evidence is what makes "the tool said 61 games" into "the tool said
-61 games because he sat 3 of his last 5 B2Bs, has a recent play rate of 0.78,
-and was listed questionable."
+Before holdout release, add the final-training artifact SHA-256 and independent
+evaluator identity. The runtime release hash covers the accepted protocol,
+implementation manifest, final fitted parameters, calibration evidence, and
+all input identities. A change to any component creates a new release; it never
+inherits the old calibration claim.
 
 ---
 
-## 14. Owner-confirmed ceiling
+## 17. Explainability
 
-From `docs/what-draft-day-looks-like.md`, owner-confirmed 2026-08-29:
+Every prediction must support:
 
-> *"At the end of the day, fifty games of an elite player is worth more than
-> seventy or eighty games of a role player."*
+1. the mode and decision cutoff;
+2. the report stratum, report era, and fixed injury-prior feature;
+3. the exact 20-opportunity history rows and smoothing base;
+4. calendar and workload predictor values;
+5. standardized logistic coefficients and signed log-odds contributions; and
+6. the population and calibration bin in which the prediction was evaluated.
 
-**Availability adjusts a comparison between comparable players. It does not
-overturn a talent gap.** Any recommendation that downgrades an elite player
-below a durable role player has almost certainly over-weighted availability.
-
-This is a constraint on the downstream expected-games fusion and valuation,
-not on the availability model itself. The model estimates `p(play)` honestly;
-the ceiling operates at the point where `p(play)` enters dollar values.
+This is association evidence, not a causal explanation.
 
 ---
 
-## 15. Shutdown-window and 2026-27 transfer limitations
+## 18. Backtest sequencing and durable harness
 
-### Shutdown window
+`availability-model` and `availability-backtest` may be released in one atomic
+PR so no runtime model exists without held-out evidence. Atomic release does
+not erase the backlog boundary.
 
-The 2025-26 holdout includes games after the trade deadline and into the
-shutdown window where eliminated teams rest veterans. The model must report
-calibration separately for:
+The implementation must retain a distinct, rerunnable
+`availability-backtest` harness with:
 
-- Pre-All-Star-break games;
-- Post-trade-deadline games;
-- Games where the team's playoff probability was below 10% (if available).
+- its own command entry point;
+- synthetic contract tests that do not use the sealed holdout;
+- explicit inputs for the frozen manifests and release;
+- deterministic seeds and machine-readable output; and
+- a refusal to run a second final evaluation for the same freeze id.
 
-These are reporting stratifications, not fitted interactions. They exist to
-detect whether the model's calibration degrades in the window where shutdown
-behaviour dominates.
-
-### 2026-27 transfer limitations
-
-**This model is fitted on 2023-24 through 2025-26 data and applied to 2026-27
-predictions.** The fundamental limitation is that the 2026-27 league
-environment (rule changes, load-management policies, new CBA provisions) is
-not in the training data.
-
-Specific limitations:
-
-- **Roster turnover:** A player traded to a new team has no participation
-  history on that team. The model falls back to status + base rate.
-- **Rookie availability:** First-year players have no prior-season history.
-  They receive the population base rate, which is disclosed as a weak prior.
-- **Regime shifts:** If the NBA materially changes its load-management or
-  rest-day policies, the model's calibration may degrade. The in-season
-  calibration monitoring (§9's metrics computed on early-season games) is the
-  detection mechanism.
+The fit PR may mark both backlog items done only if the harness, evidence,
+model card, and eligible runtime release land together. If activation is
+vetoed, `availability-backtest` may be complete while `availability-model`
+remains pending or is explicitly recorded as rejected; the backlog must not
+call a vetoed runtime model done.
 
 ---
 
-## 16. What the model cannot see
+## 19. Draft-day ceiling and downstream boundary
 
-Stated plainly, because the Model gate requires it:
+The owner-confirmed rule in `docs/what-draft-day-looks-like.md` remains:
+availability adjusts comparisons among comparable players and must not overturn
+a large talent gap. That is a downstream expected-games and valuation policy,
+not a reason to alter this model's probability.
 
-- **Undisclosed injuries.** A player who is hurt but not on the report.
-- **Front-office intent.** Whether a team plans to tank, rest a player for
-  the playoffs, or manage minutes down the stretch.
-- **Coaching decisions.** Rotation changes, matchup-based DNPs, and
-  "coach's decision" rest that appears as a minor ailment on the report.
-- **Trades and roster moves.** Until a trade happens, the model cannot
-  price in the possibility. After a trade, the player's history with the
-  new team starts from zero.
-- **Personal matters.** Family emergencies, bereavement, mental health.
-- **Post-report setbacks.** A player listed `available` at 5pm who
-  re-aggravates in warmups.
-- **Production conditional on playing.** This model predicts *whether*
-  a player plays, not *how well*. ADR-002's separation is absolute.
-- **Public-report truthfulness.** "Rest" is routinely laundered as a
-  minor ailment. The injury-conversion prior inherits this limitation.
-- **The causal effect of workload on injury.** Per §6 and ADR-007.
+ADR-002 remains absolute. This model predicts play only. It consumes no
+production projection, rank, AAV, dollar value, recommendation, or commercial
+games assumption. `expected-games` is the only later seam that may combine
+availability and per-game production.
 
 ---
 
-## 17. Comparison to the MAE 14.32 baseline
+## 20. Transfer and shutdown limitations
 
-The seasonal-games MAE comparison required by ADR-007 and §9 condition 4:
+Report held-out calibration separately before and after the All-Star break and
+trade deadline. Do not fit a playoff-probability or tanking interaction in v1.
+The 2025-26 holdout includes the shutdown regime and is not interchangeable
+with draft-morning 2026-27 use.
 
-1. For each player in the holdout season with at least one observation:
-   `expected_games = sum(p(play))` over that player's scheduled team games.
-2. `actual_games = count(played outcomes)` for that player in the holdout.
-3. `MAE = mean(|expected_games - actual_games|)` across all eligible players.
-
-The Marcel baseline uses `(3 × GP_{t-1} + 2 × GP_{t-2} + GP_{t-3}) / 6`
-scaled to the current season's 82-game schedule.
-
-**No commercial games-played assumption is used anywhere in this comparison.**
-The Marcel weights are fixed (3/2/1), the GP figures come from our own
-historical game-log counts, and the 82-game scale factor is the published
-league schedule length. The model remains structurally independent of any
-commercial source's games projection.
+Neither mode can see future trades, coaching changes, undisclosed injuries,
+personal matters, warm-up setbacks, future roster eligibility, front-office
+intent, a new collective-bargaining regime, or 2026-27 reporting drift.
+Preseason mode cannot see future injury reports by construction. In-season mode
+cannot turn `not_yet_submitted`, `unparsed`, or `no_report` into medical
+evidence.
 
 ---
 
-## 18. Resolving the availability-backtest sequencing problem
+## 21. What this replacement changed
 
-The backlog has `availability-backtest` depending on `availability-model`, and
-the Model gate requires held-out calibration before merging. This creates a
-sequencing paradox: the model cannot merge without a backtest, and the backtest
-depends on the model.
+This replacement:
 
-### Resolution: Atomic completion unit
+- removes the invented within-2025-26 fallback;
+- makes both prerequisite backlog items binding fit vetoes and preserves their
+  ownership split;
+- makes game logs audit/features only, never fitting labels;
+- binds one estimator family and exact configuration;
+- separates draft-morning and in-season modes;
+- orders one history window before calendar and workload candidates;
+- registers the trailing-rate pseudocount;
+- replaces MAE 14.32 as a threshold with a paired, same-cohort Marcel study;
+- requires held-out Brier superiority over Candidate 1 and a refitted constant;
+- defines deterministic equal-count ECE bins and corrects monotonic wording;
+- gives Candidate 4 numeric diagnostics with no self-neutralizing exception;
+- pre-registers a compute budget, one fallback, two dependence checks, fixed
+  calibration thresholds, and an uncertainty veto;
+- maps every no-status report state and declares report-era handling;
+- discloses the exact known injury-conversion partitions and requires stable-key
+  overlap counts before fitting;
+- states that outputs are marginal probabilities, not joint season
+  distributions;
+- binds protocol acceptance, implementation, split, and release hashes;
+- preserves a distinct rerunnable backtest harness; and
+- records the deliberate v1 omissions from the broader plan.
 
-`availability-model` and `availability-backtest` are **one atomic PR**. The
-model is fitted, the backtest is run, the model card is written, and the
-evidence is committed in a single unit. There is no state where the model
-exists without its backtest.
+## 22. Owner decision
 
-### Precise backlog treatment
-
-No backlog change is made in this PR. When the fit PR is prepared:
-
-- `availability-model` moves to `done` with the evidence and model card.
-- `availability-backtest` moves to `done` in the same commit, because the
-  backtest is embedded in the model's evaluation procedure.
-- `expected-games` remains `pending` with its existing dependencies.
-
-This is the same pattern as `injury-status-conversion`, which committed its
-model card, evidence, and evaluation in one unit.
-
----
-
-## 19. What this protocol recommends
-
-**Favor Candidate 2 (status + history + calendar) as the likely v1.**
-
-Reasoning:
-
-1. Candidate 1 (status-only) is a strong baseline but cannot express "this
-   player has been sitting out of B2Bs all season" or "this player just returned
-   from a 10-game absence and has played 3 of his last 4."
-
-2. Candidate 2 adds the most informative features without touching the
-   survivor-effect minefield. Back-to-back sit patterns, rest days, and recent
-   play rate are the three most actionable availability predictors a fantasy
-   manager uses intuitively.
-
-3. Candidates 3 and 4 add progressively more complexity with diminishing and
-   potentially misleading returns. Age effects are real but small within a
-   single season. Workload effects are real but confounded.
-
-**If Candidate 2 does not beat Candidate 1 on the selection partition, ship
-Candidate 1.** A well-calibrated status-only prior with a population base rate
-is already more useful than a flat seasonal average, because it updates on
-game day as injury reports arrive.
-
-**If Candidate 1 does not beat the MAE 14.32 baseline when aggregated to season
-totals, recommend simplifying the engine to a seasonal-average model per
-ADR-007.** Document why and propose the simpler architecture.
-
----
-
-## 20. What this protocol does not do
-
-- **No fitting.** No parameter is estimated.
-- **No unblinding.** No held-out outcome is inspected.
-- **No runtime code.** No `p(play)` is emitted, stored, or served.
-- **No consumer wiring.** `expected-games`, valuation, UI, and the overlay
-  do not learn about this model.
-- **No commercial games-assumption dependency.** The MAE 14.32 baseline
-  and the Marcel weights use only historical game-log counts and the
-  published 82-game schedule.
-
-The population-identification blocker in §1 is the binding constraint. Until
-the data-engineer session resolves it and the owner accepts the resolution,
-this document is the complete deliverable for `availability-model`.
+The owner must choose **accept** or **decline** for the exact protocol commit.
+If accepted, the current result remains `FIT_VETOED_PREREQUISITES` until both
+pending data tasks and every numeric pre-fit gate pass. If declined, no fit
+occurs and a replacement protocol must be proposed without reading a new
+holdout.

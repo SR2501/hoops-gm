@@ -32478,3 +32478,103 @@ documentation-only unit and has not yet been independently re-reviewed.
 **Could not verify:** Whether every one of the ~30 unrelated "denominator" hits across the repository (injury-report cohort documents, schedule adapters, ADR-013, ADR-015) is free of an analogous misattribution — this sweep specifically checked files naming `participation-ledger-population` or `participation-opportunity-coverage` by slug, not every document using the word "denominator" in an unrelated sense, since a full read of all ~19 files that word appears in was out of proportion to the two specific findings this round was scoped to.
 
 **Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
+---
+
+## 2026-08-31 - quant - Availability model preregistration v1
+
+**Changed:** Created
+`docs/models/availability-model-preregistration-v1-PROPOSED.md` as a
+documentation-only pre-fit protocol for the per-game availability model. The
+original draft proposed a three-season split with a within-2025-26 fallback,
+treated the published MAE 14.32 as its direct release threshold, combined
+history and calendar in one candidate step, and described the frozen
+injury-conversion input as entering "without leakage." Those statements did
+not survive reconciliation with the later opportunity-coverage work and are
+repaired in the unmerged protocol rather than preserved as current claims.
+
+**Now true:** The protocol emits no probability and consumes no holdout. It
+requires 2023-24 development, 2024-25 selection, and 2025-26 holdout seasons,
+plus 2022-23 historical support for its same-cohort Marcel comparison.
+`participation-ledger-population` and
+`participation-opportunity-coverage` are independent binding fit vetoes. The
+first supplies multi-season direct observations only; the second alone
+enumerates exhaustive player-game opportunities and classifies play, explicit
+non-play, and unknown. The current terminal state is
+`FIT_VETOED_PREREQUISITES`: merged evidence contains zero protocol-eligible
+direct rows for 2023-24 and 2024-25, so no split fallback is permitted.
+
+The repaired protocol separately defines draft-morning and in-season modes;
+maps `not_on_report`, `not_yet_submitted`, `unparsed`, `no_report`, and
+`draft_morning_no_report`; fixes one logistic-regression family and
+configuration; orders report state, one smoothed 20-opportunity history
+feature, calendar, then contingent workload; registers a five-opportunity
+pseudocount; gives workload a numeric veto; requires deterministic equal-count
+ECE bins, fixed calibration thresholds, paired held-out Brier superiority,
+same-cohort Marcel error intervals, and player/date/two-way uncertainty; and
+retains a distinct rerunnable backtest harness even if model and evidence ship
+atomically. Game logs may audit completeness and supply predictor-side
+workload, but never provide fitting labels.
+
+**Could not verify:** The pending multi-season direct-ledger census and
+opportunity report do not exist, so their numeric proceed predicate, exact
+injury-conversion stable-key overlap, split hashes, and all candidate,
+calibration, bootstrap, and Marcel results are intentionally unknown. The
+owner has not accepted or declined the protocol. No claim is made that the
+Model gate passes.
+
+**Next:** Freeze the repaired PR head and obtain a fresh independent cumulative
+quant review. If that review is clean, the owner must accept or decline the
+exact protocol commit. Acceptance still cannot start fitting until both data
+vetoes clear.
+
+---
+
+## 2026-09-01 - quant - Repair PR #141 against the opportunity-coverage boundary
+
+**Changed:** Rebased the old PR #141 documentation commit from `bc6006c` onto
+merged main `48b309f` and rebuilt the proposed protocol around the boundary
+established by merged PR #142. The current main `docs/handoff.md` was retained
+as the complete byte prefix; this repaired 2026-08-31 suffix and the present
+entry were appended with LF line endings. The old suffix's raw ESC byte in
+`expected-games` is removed. No merged-main history, backlog item, adapter,
+runtime code, fitted estimator, outcome store, commercial games value,
+holdout, or `p(play)` was touched.
+
+**Now true:** The protocol cannot silently degrade to a 2025-26 within-season
+experiment, cannot infer G-League or suspension exclusions from silence, and
+cannot represent independently calibrated per-game marginals as a joint
+season distribution. The prior 14.32 MAE is labelled different-study context;
+the replacement comparison is paired on one reproduced cohort. Injury
+conversion's known 2025-26 partitions are disclosed, while exact key overlap
+is a pre-fit manifest requirement rather than a false independence claim.
+Every future freeze binds the exact protocol and acceptance commits plus
+implementation, split, dependency, and evidence hashes.
+
+**Could not verify:** Earlier-season direct observations and exhaustive
+opportunity provenance remain absent, so the fit remains deterministically
+vetoed and no statistical result can be verified. Hosted exact-head CI and the
+fresh independent cumulative review had not run when this entry was written.
+The owner accept/decline decision remains open.
+
+**Next:** Publish one frozen replacement head to the existing PR branch with
+an explicit lease against `bc6006c`, wait for hosted checks, then commission a
+fresh independent cumulative quant review of that exact head. Do not merge or
+self-approve.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: the ADR-007 amendment and projection-strategy.md still assigned the split-away denominator to participation-ledger-population
+
+**Corrected**, following a third independent cumulative review of frozen head `e7d8eae2a925a1fe2efd575578d743fa19cfe3d8` (architect-ruled) that found one remaining Medium boundary-propagation defect: two living documents still described `participation-ledger-population` as responsible for the opportunity denominator or for gap-explicitness, after the prior round's split moved that duty entirely to `participation-opportunity-coverage`.
+
+**1. `docs/decisions/ADR-007-availability-in-spine.md`'s new 2026-08-31 amendment.** Its "What remains genuinely open" paragraph still said `participation-ledger-population` was reopened partly "because it names three games with no participation rows at all as gaps that must be explicit rather than absent." Since that amendment is this branch's own new, still-`Proposed`, unmerged text and not pre-existing ADR content, it was **edited in place** rather than corrected by a further append — confirmed by `git diff` against the merge-base that the entire amendment remains a pure addition after the pre-existing content, with nothing before it touched. The paragraph now states the reopening rests on the multi-season requirement alone, and that explicit ternary classification belongs solely to `participation-opportunity-coverage`.
+
+**2. `docs/models/projection-strategy.md`.** Its "Non-appearance reasons" bullet said `PlayerGameLogs` cannot supply the opportunity denominator and that this "is precisely why `participation-ledger-population` is the binding constraint" — assigning the denominator itself to the wrong item, the same misattribution the ADR-007 paragraph made. Corrected to state the two-stage boundary: `participation-ledger-population` supplies multi-season **direct** observations only, never a manufactured absence or `unknown` row; `participation-opportunity-coverage` alone classifies every at-risk player-game as confirmed-observed/confirmed-absent/unknown, and needs independent roster/opportunity evidence the ledger item's ingest mechanism cannot produce. Its priority-list item 5 ("spend the remaining weeks unblocking `participation-ledger-population`") was similarly amended to name both items rather than implying the single one covers the whole denominator question. This is a factual cross-module contract correction directed by architect, not a model result, and does not touch ADR-002's production/availability separation or any other conclusion in this research document.
+
+**Repository-wide sweep performed before this push.** Grepped the full repository for `participation-ledger-population`, `participation-opportunity-coverage`, and gap-explicit/denominator-ownership phrasing. Six files reference the two item names: `docs/backlog.md`, `docs/governance/risks.md`, `docs/adapters/participation-ledger-store.md`, `docs/decisions/ADR-007-availability-in-spine.md`, `docs/models/projection-strategy.md`, and `docs/handoff.md` (append-only, not edited). The first three were already internally consistent as of the prior round's independent review; the two corrected here were the residual contradictions. `docs/governance/gates.md`'s one "denominator" hit is an unrelated schedule-string context and needed no change. No other living document was found assigning the opportunity classification duty to `participation-ledger-population` or vice versa.
+
+**Now true:** `docs/backlog.md` recounts to the same **69 done, 0 blocked, 122 pending, 191 total** — no item's status changed this round, only two living documents' prose. `scripts/backlog_graph.py` confirms zero defects and the unchanged header.
+
+**Could not verify:** Whether every one of the ~30 unrelated "denominator" hits across the repository (injury-report cohort documents, schedule adapters, ADR-013, ADR-015) is free of an analogous misattribution — this sweep specifically checked files naming `participation-ledger-population` or `participation-opportunity-coverage` by slug, not every document using the word "denominator" in an unrelated sense, since a full read of all ~19 files that word appears in was out of proportion to the two specific findings this round was scoped to.
+
+**Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
