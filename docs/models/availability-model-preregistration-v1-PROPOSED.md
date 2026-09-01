@@ -19,14 +19,16 @@ The following events must occur in order:
    of direct observations.
 3. `participation-opportunity-coverage` completes its separate exhaustive
    player-game classification and provenance report.
-4. The custodian freezes the pre-split injury-conversion overlap report in
+4. For draft-morning mode, `preseason-news-ingest` completes historical
+   cutoff-correct preseason news, suspension, and player-note manifests.
+5. The custodian freezes the pre-split injury-conversion overlap report in
    section 5.
-5. The custodian evaluates the numeric pre-fit gates in section 3 without
+6. The custodian evaluates the numeric pre-fit gates in section 3 without
    releasing an availability outcome value or keyed holdout class to the model
    worker.
-6. If and only if every gate passes, the implementation and split manifests are
+7. If and only if every gate passes, the implementation and split manifests are
    frozen, development and selection outcomes are released, and fitting begins.
-7. The holdout is released once to an independent evaluator after final
+8. The holdout is released once to an independent evaluator after final
    training is frozen.
 
 Steps 2 and 3 are separate binding fit vetoes. The first owns only direct
@@ -40,6 +42,11 @@ There are currently zero protocol-eligible direct observations for 2023-24 and
 2024-25. No estimator may be fit, no split may be substituted, and no
 within-2025-26 fallback exists. A different split requires a separately
 reviewed v2 committed before any newly proposed holdout is released.
+
+Draft-morning mode also remains vetoed until the pending
+`preseason-news-ingest` backlog item supplies the historical cutoff manifests
+defined in section 3. That additional veto does not weaken or replace either
+participation-data veto.
 
 The owner decision at this stage is therefore only whether to bind this
 protocol. Acceptance does not override either data veto.
@@ -60,16 +67,18 @@ At a fixed decision timestamp before tip-off, estimate the calibrated marginal
 probability that the player records a direct `played` outcome in that game.
 Historical evaluation fixes that timestamp at exactly 60 minutes before the
 scheduled tip-off. Production predictions use their actual decision timestamp
-and may not claim the historical calibration context if made earlier than the
-evaluated 60-minute horizon. Only information available at the applicable
-timestamp may enter.
+and may claim this protocol's in-season calibration context only at that same
+60-minute horizon. Any earlier or later prediction is marked
+`unvalidated_horizon` and cannot inherit the activation evidence. Only
+information available at the applicable timestamp may enter.
 
 ### Preseason / draft-morning mode
 
 At the frozen draft-morning timestamp, estimate the calibrated marginal
 probability of play for each scheduled regular-season game. No future injury
-report is imputed. Every future game receives the distinct
-`draft_morning_no_report` stratum until an in-season prediction is made.
+report is imputed. Every future game receives the player's cutoff-correct
+preseason stratum from section 4; `draft_morning_no_report` applies only when no
+eligible preseason artifact exists.
 For each historical season, the evaluation cutoff is 09:00
 `America/New_York` on the calendar day before that season's first scheduled
 regular-season game. The eventual 2026-27 release uses the owner's actual
@@ -189,7 +198,7 @@ The custodian owns two artifacts behind that report:
 1. a public coverage envelope containing provenance hashes, total opportunity
    counts, combined `direct_label_available` counts
    (`confirmed_observed + confirmed_absent`), unknown counts, strata, exclusions,
-   and the `PROCEED` verdict; and
+   and both `PROCEED_*` verdicts; and
 2. a sealed per-opportunity classification package containing each stable key's
    exact three-way class and any outcome value.
 
@@ -197,10 +206,33 @@ Before holdout release, the public envelope may expose only combined
 `direct_label_available` and `unknown` counts for 2025-26, never separate
 `confirmed_observed` and `confirmed_absent` counts or keyed classes. The full
 three-way counts required above are recorded inside the sealed package and are
-published with the final evaluation. Development and selection packages may be
-unsealed after `PROCEED`; the holdout package and its decryption/access
-credential remain with the independent evaluator. Opportunity-coverage still
-owns every classification; sealing changes visibility, not ownership.
+published with the final evaluation. Development and selection packages for a
+mode may be unsealed after its applicable `PROCEED_*`; the holdout package and
+its decryption/access credential remain with the independent evaluator.
+Opportunity-coverage still owns every classification; sealing changes
+visibility, not ownership.
+
+### Required draft-morning news manifests
+
+Draft-morning mode additionally requires `preseason-news-ingest` to commit one
+cutoff-correct manifest for each of 2023-24 through 2025-26. Each manifest
+freezes the eligible raw artifacts available by section 1's historical cutoff,
+source and capture timestamps, source fingerprints, stable player identities,
+target game identities, the section 4 preseason stratum, unparsed counts,
+duplicate-resolution provenance, and a canonical sorted-content hash. Artifacts
+captured after the historical cutoff are ineligible even when they describe an
+earlier event.
+
+`draft_mode_preseason_news_corpus_complete` is true only when all three
+manifests exist, every included signal has non-null time and identity
+provenance, duplicate active signals are zero after deterministic
+latest-before-cutoff resolution, and `unparsed_share <= 0.05` in every season.
+The holdout manifest exposes artifacts and strata, not participation outcomes.
+In-season mode does not depend on this additional predicate.
+
+Before a 2026-27 draft-morning runtime release, the same adapter must freeze a
+current-season manifest under the accepted parsing and cutoff rules. That
+manifest's source and content hashes enter the release lineage.
 
 ### Numeric proceed predicate
 
@@ -208,7 +240,7 @@ The following boolean is evaluated before a split file or outcome package is
 released:
 
 ```text
-PROCEED =
+PROCEED_COMMON =
   all_four_direct_censuses_present
   AND duplicate_opportunities == 0
   AND unclassified_opportunities == 0
@@ -222,6 +254,12 @@ PROCEED =
   AND marcel_paired_holdout_players >= 100
   AND injury_conversion_overlap_report_complete
   AND all_required_provenance_fields_non_null
+
+PROCEED_IN_SEASON = PROCEED_COMMON
+
+PROCEED_DRAFT_MORNING =
+  PROCEED_COMMON
+  AND draft_mode_preseason_news_corpus_complete
 ```
 
 `each_fit_partition` means 2023-24, 2024-25, and 2025-26 after applying the
@@ -232,20 +270,20 @@ same population and direct-label rules. The five official statuses are `out`,
 opportunities in the holdout and direct opportunity histories in each of the
 three immediately prior seasons needed by the Marcel reference.
 
-If any term is false, the result is `FIT_VETOED_DATA`. No candidate is fit, no
-outcome is released, and no threshold is relaxed. The report may recommend
-collecting more evidence, but it may not change this predicate. A changed
-predicate is v2.
+If a mode's applicable predicate is false, that mode's result is
+`FIT_VETOED_DATA`. No candidate for that mode is fit, no outcome is released,
+and no threshold is relaxed. The report may recommend collecting more evidence,
+but it may not change this predicate. A changed predicate is v2.
 
 ### Split artifact
 
-If `PROCEED` is true, the custodian writes a split manifest containing every
-eligible stable `(player_id, game_id)` key, partition, mode, label-availability
-flag, report stratum, report era, and provenance digest. The manifest publishes
-counts and exclusions by partition, incorporates the already-frozen
-injury-conversion overlap-report hash from section 5, and hashes its canonical
-sorted contents. The model worker receives development and selection labels
-only. The holdout label package remains sealed.
+If a mode's `PROCEED_*` is true, the custodian writes a split manifest
+containing every eligible stable `(player_id, game_id)` key, partition, mode,
+label-availability flag, report stratum, report era, and provenance digest. The
+manifest publishes counts and exclusions by partition, incorporates the
+already-frozen injury-conversion overlap-report hash from section 5, and hashes
+its canonical sorted contents. The model worker receives development and
+selection labels only. The holdout label package remains sealed.
 
 ---
 
@@ -260,7 +298,12 @@ At each prediction cutoff, assign exactly one report stratum:
 | `not_yet_submitted` | The latest eligible artifact explicitly marks the team `NOT YET SUBMITTED` |
 | `unparsed` | An artifact was fetched for the team-game but its relevant block, status, or identity could not be parsed canonically |
 | `no_report` | No eligible report artifact exists before an in-season cutoff |
-| `draft_morning_no_report` | The target game is still in the future at the registered draft-morning cutoff |
+| `preseason_explicit_out` | Latest eligible preseason artifact explicitly says the player is expected to miss the target game or a date range covering it |
+| `preseason_limited_or_injured` | Latest eligible preseason artifact reports injury, rehabilitation, or limited participation without an explicit out statement |
+| `preseason_suspension` | Independently sourced suspension covers the target game |
+| `preseason_explicit_available` | Latest eligible preseason artifact explicitly says the player is cleared or fully participating |
+| `preseason_unparsed` | A relevant preseason artifact exists but cannot be mapped canonically |
+| `draft_morning_no_report` | No eligible preseason artifact exists by the registered draft-morning cutoff |
 
 These strata are never collapsed into `available`, `questionable`, or non-play.
 Every exclusion and outcome count is reported by stratum.
@@ -269,6 +312,7 @@ The report era is also frozen:
 
 - `legacy_hourly`: source date before 2025-12-22;
 - `short_lead_fifteen_minute`: source date on or after 2025-12-22;
+- `preseason_news`: an eligible preseason artifact supplies the draft stratum;
 - `no_report_era`: no eligible report artifact exists.
 
 The published injury-status-conversion constants are context only:
@@ -304,8 +348,9 @@ The consumed 2025-26 injury-conversion partitions are:
 
 The proposed availability holdout spans all three date partitions. The exact
 stable-key overlap is not currently published and may not be guessed from
-these counts. Before `PROCEED` can be true, the custodian must publish and hash
-a separate **pre-split overlap report**, for each injury-conversion partition:
+these counts. Before either `PROCEED_*` can be true, the custodian must publish
+and hash a separate **pre-split overlap report**, for each injury-conversion
+partition:
 
 - exact overlapping `(player_id, game_id)` count;
 - exact overlap digest over the sorted stable keys;
@@ -361,11 +406,10 @@ column and is reported. Binary predictors are not standardized. Categorical
 levels use the literal closed vocabularies in this protocol and lexicographic
 column order. Unknown categories fail before fitting.
 
-In-season report stratum is one closed categorical predictor with the literal
-levels in section 4 and `no_report` as its reference level. No numerical
-injury-conversion probability enters. Draft-morning Candidate 1 is
-intercept-only because every row has the registered
-`draft_morning_no_report` stratum.
+Each mode uses one closed categorical report-stratum predictor with its literal
+levels in section 4. `no_report` is the in-season reference level and
+`draft_morning_no_report` is the draft-morning reference level. No numerical
+injury-conversion probability enters.
 
 The exact Python, scikit-learn, NumPy, and BLAS versions, thread count, and
 implementation source hash are written into the implementation manifest.
@@ -389,10 +433,9 @@ Candidates are separate for each mode and advance only in this order.
 
 In-season Candidate 1 uses only the report-stratum indicators in section 4.
 
-Draft-morning Candidate 1 is intercept-only because every future game is
-`draft_morning_no_report`. It is intentionally equivalent in information to
-the refitted constant baseline; a contextual draft-morning model must advance
-beyond it.
+Draft-morning Candidate 1 uses only the preseason-stratum indicators in section
+4. The pending news corpus is a binding fit veto because silently assigning
+known injuries or suspensions to `draft_morning_no_report` is prohibited.
 
 ### Candidate 2 - Candidate 1 plus one direct-history feature
 
@@ -660,18 +703,27 @@ manifest before holdout release.
 
 If feasible, the primary interval uses 1,000 full-pipeline player-cluster
 bootstrap resamples, seed `250142`. Each resample draws from the union of
-distinct players appearing in any partition and carries each sampled player's
-multiplicity through every partition where that player appears. It refits the
-selected structure, Candidate 1, and the constant baseline on the same
-resampled development-plus-selection rows, then evaluates only the resampled
-holdout rows. When Candidate 4 is selected, Candidate 3 is refit on those same
-rows for the holdout workload diagnostic.
+distinct players appearing in historical support, development, selection, or
+holdout and carries each sampled player's multiplicity through every role where
+that player appears. It refits the selected structure, Candidate 1, and the
+constant baseline on the same resampled development-plus-selection rows, then
+evaluates only the resampled holdout rows. When Candidate 4 is selected,
+Candidate 3 is refit on those same rows for the holdout workload diagnostic.
+
+For each primary resample, Marcel's three player history rates and
+`historical_population_play_rate` are recomputed from the resampled historical
+rows with the same player multiplicities. `marcel_expected_i`, selected
+expected games, and actual games are then recomputed over that resample's
+holdout opportunity multiset. The paired-cohort eligibility rule itself remains
+frozen from the original manifest.
 
 The **only fallback** is a 5,000-resample evaluation-only player-cluster
 bootstrap of the already frozen selected, Candidate 1, constant, and when
 needed Candidate 3 models, seed `250143`. It is used only when the pre-unblind
 feasibility rule rejects the full refit. It omits fitting uncertainty, and the
-model card must say so.
+model card must say so. The fallback also freezes each paired player's original
+historical Marcel rate and the original pooled shrinkage target; it recomputes
+expected and actual games over each resampled holdout opportunity multiset.
 
 ### Required secondary dependence checks
 
@@ -683,7 +735,12 @@ Regardless of primary or fallback, also compute:
 
 Both secondary checks use the same frozen final-model and comparator
 predictions as the fallback. They resample holdout evaluation rows only and do
-not refit.
+not refit. They also freeze each paired player's original historical Marcel
+rate and pooled shrinkage target. Date-block multiplicities or two-way
+pigeonhole weights are applied to each player's holdout opportunities before
+recomputing selected expected games, Marcel expected games, and actual games.
+Each replicate's MAEs and paired difference use paired-cohort players with at
+least one positive-weight holdout opportunity in that replicate.
 
 Use two-sided percentile 95% intervals for paired Brier differences, CITL, ECE,
 Candidate 4 `holdout_quartile_lift`, `selected_seasonal_games_mae`,
