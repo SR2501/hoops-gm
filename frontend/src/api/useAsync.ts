@@ -70,6 +70,14 @@ export interface UseAsyncOptions {
    * screen mid-auction is worse than a slightly stale one.
    */
   shouldRetry?: RetryPolicy
+  /**
+   * Start the request in a microtask so React StrictMode's development-only
+   * setup/cleanup replay can cancel the discarded effect before I/O begins.
+   *
+   * Use this for expensive reads whose server-side work cannot be cancelled
+   * when the browser aborts the first request.
+   */
+  deferInitialRequest?: boolean
 }
 
 export function useAsync<T>(
@@ -136,7 +144,13 @@ export function useAsync<T>(
         })
     }
 
-    attempt(1)
+    if (options.deferInitialRequest) {
+      queueMicrotask(() => {
+        if (active && !controller.signal.aborted) attempt(1)
+      })
+    } else {
+      attempt(1)
+    }
 
     return () => {
       active = false

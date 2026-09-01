@@ -1,261 +1,399 @@
-/**
- * Reliability — what hoops-gm actually knows about availability.
- *
- * **This screen is mostly empty on purpose, and that is its content.**
- *
- * The project's central claim is that availability is the product. The
- * machinery behind that claim exists: `reliability-metrics` computes observed
- * play and non-play evidence, a monthly trend, back-to-back evidence, minutes
- * consistency and per-category dispersion, all with lineage. What does not
- * exist is a route carrying any of it to a browser — its own backlog entry ends
- * "no schema, API, or UI was added", and `docs/models/reliability-metrics.md`
- * says the same in the same words. So the quantities this screen is named for
- * are computed, current, and unreachable from here.
- *
- * Two options were available. Render the quantities from something else — a
- * heuristic, a proxy, the source's own assumption dressed as ours — or render
- * the gap. The first is how a dashboard ends up confidently wrong, which in
- * this project is the failure that does not crash: a plausible durability
- * number is indistinguishable from a real one until draft day. So the screen
- * shows the gap, names what would close each part of it, and shows the one
- * availability figure that genuinely is on the wire while saying whose it is.
- *
- * **Two independent reads, two independent boundaries.** The assumptions come
- * from the projections cohort and the schedule facts from the schedule cohort.
- * They are deliberately not merged into one load: they are different cohorts
- * with different lineage, and a single spinner over both would let one screen
- * imply they were read together when they were not.
- */
-
-import { useMemo } from 'react'
-import { getCurrentProjections, getScheduleGrid } from '../api/endpoints'
-import { describeProjectionsError, isRetryableProjectionsError } from '../api/projectionsErrors'
-import { describeScheduleGridError } from '../api/scheduleGridErrors'
-import type { CurrentProjections, ScheduleGrid } from '../api/types'
+import { useMemo, useState } from 'react'
+import { getReliabilityScorecards } from '../api/reliabilityEndpoints'
+import { describeReliabilityError } from '../api/reliabilityErrors'
+import type {
+  CategoryConsistency,
+  DistributionSummary,
+  ObservedRateEvidence,
+  PlayerReliabilityScorecard,
+  ReliabilityScorecardsResponse,
+} from '../api/reliabilityTypes'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
-import { AvailabilityAssumptionPanel } from '../components/AvailabilityAssumptionPanel'
-import { EvidenceInventory } from '../components/EvidenceInventory'
-import { buildProjectionsModel } from '../components/projectionsModel'
 import {
-  buildAvailabilitySummary,
-  describePendingLabels,
-  EVIDENCE_SEASON,
-} from '../components/reliabilityModel'
-import { SeasonNote } from '../components/SeasonNote'
+  buildReliabilityRows,
+  filterReliabilityRows,
+  formatNumber,
+  formatRate,
+  isReliabilityFilter,
+  RELIABILITY_FILTER_LABELS,
+  RELIABILITY_FILTERS,
+  type ReliabilityFilter,
+  type ReliabilityRow,
+} from '../components/reliabilityScorecardsModel'
 
-/** ADR-001: one owner, one local league. A picker arrives with a second one. */
-const LEAGUE_ID = 1
+export const RELIABILITY_STALE_AFTER_MS = 5 * 60_000
+export const RELIABILITY_PAGE_SIZE = 50
 
-/**
- * Both cohorts change only when someone re-imports, so this is about the
- * reader's confidence that what is on screen came from this sitting rather than
- * about the underlying facts decaying. Matched to the projections screen for
- * the same reason it was chosen there.
- */
-export const STALE_AFTER_MS = 5 * 60_000
+const CATEGORY_LABELS: Record<string, string> = {
+  fg3m: '3PM',
+  pts: 'PTS',
+  reb: 'REB',
+  ast: 'AST',
+  stl: 'STL',
+  blk: 'BLK',
+  to: 'TO',
+  fg_pct: 'FG impact',
+  ft_pct: 'FT impact',
+}
 
 export function ReliabilityPage() {
-  const projections = useAsync((options) => getCurrentProjections(LEAGUE_ID, options), [], {
-    shouldRetry: isRetryableProjectionsError,
-  })
-  const schedule = useAsync((options) => getScheduleGrid(LEAGUE_ID, options), [])
+  const scorecards = useAsync(getReliabilityScorecards, [], { deferInitialRequest: true })
 
   return (
-    <article className="page">
+    <article className="page reliability">
       <header className="page__header">
         <h1>Reliability</h1>
         <p className="page__lede">
-          A 70-game player and a 55-game player with identical per-game lines are not the same
-          asset. That claim is what this project is built around, and this is the screen where
-          it is supposed to become checkable.{' '}
-          <strong>Most of it is not checkable yet, and this screen says which parts.</strong>{' '}
-          The durability evidence is computed by the backend and carried by no route, so nothing
-          below is a placeholder waiting for a number to be dropped into it — where a quantity
-          is missing, the reason is the content.
-        </p>
-        <p className="season-band" data-testid="season-band">
-          <strong>Which season this is about.</strong> Availability evidence reads{' '}
-          <strong data-testid="season-band-evidence">{EVIDENCE_SEASON}</strong> — the last
-          completed season — because 2026-27 has no played games until late October and draft day
-          is 18 October, so any durability figure that means anything before the draft is about
-          last season. That is an endpoint-contract decision, not a toggle here. Each panel below
-          names the season its own cohort was loaded for, and states how that relates to this one
-          rather than leaving two labels sitting near each other to be conflated.
+          Direct availability observations and played-game production consistency, kept separate.
+          These are historical descriptions, not durability grades, season games played, projected
+          games, or <code>p(play)</code>.
         </p>
       </header>
 
-      <section className="reliability__section">
-        <h2>The evidence inventory</h2>
-        <EvidenceInventory />
-      </section>
-
-      <section className="reliability__section" data-testid="section-assumptions">
-        <AsyncBoundary
-          state={projections}
-          label="the imported cohort's games-played assumptions"
-          staleAfterMs={STALE_AFTER_MS}
-          isEmpty={(data) => data.projections.length === 0}
-          emptyMessage="The current import for this season carries no projection rows, so there are no games-played assumptions to describe. That is an empty cohort, not a failed request."
-          describeError={describeProjectionsError}
-        >
-          {(data) => <AssumptionsView payload={data} />}
-        </AsyncBoundary>
-      </section>
-
-      <section className="reliability__section" data-testid="section-schedule">
-        <AsyncBoundary
-          state={schedule}
-          label="the schedule this evidence would be measured against"
-          staleAfterMs={STALE_AFTER_MS}
-          isEmpty={(data) => data.teams.length === 0}
-          emptyMessage="The current schedule cohort carries no teams, so there is no season for availability evidence to be measured against."
-          describeError={describeScheduleGridError}
-        >
-          {(data) => <ScheduleEvidenceView payload={data} />}
-        </AsyncBoundary>
-      </section>
+      <AsyncBoundary
+        state={scorecards}
+        label="reliability scorecards"
+        staleAfterMs={RELIABILITY_STALE_AFTER_MS}
+        isEmpty={(payload) => payload.scorecards.length === 0}
+        emptyMessage="The verified reliability cohort contains no player scorecards."
+        describeError={describeReliabilityError}
+      >
+        {(payload) => <ReliabilityScorecards payload={payload} />}
+      </AsyncBoundary>
     </article>
   )
 }
 
-function AssumptionsView({ payload }: { payload: CurrentProjections }) {
-  // Derived from the projections model rather than from the payload directly,
-  // so this screen and the projections screen cannot disagree about which
-  // players are in the cohort or what the source said about them.
-  const summary = useMemo(
-    () => buildAvailabilitySummary(buildProjectionsModel(payload)),
-    [payload],
+function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResponse }) {
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<ReliabilityFilter>('all')
+  const [visibleLimit, setVisibleLimit] = useState(RELIABILITY_PAGE_SIZE)
+  const rows = useMemo(() => buildReliabilityRows(payload), [payload])
+  const filtered = useMemo(
+    () => filterReliabilityRows(rows, query, filter),
+    [filter, query, rows],
   )
+  const visible = filtered.slice(0, visibleLimit)
+
+  const changeQuery = (value: string) => {
+    setQuery(value)
+    setVisibleLimit(RELIABILITY_PAGE_SIZE)
+  }
+  const changeFilter = (value: ReliabilityFilter) => {
+    setFilter(value)
+    setVisibleLimit(RELIABILITY_PAGE_SIZE)
+  }
 
   return (
-    <AvailabilityAssumptionPanel
-      summary={summary}
-      source={payload.source}
-      season={payload.season}
-    />
+    <>
+      <section className="reliability__overview" aria-labelledby="reliability-cohort-heading">
+        <div>
+          <p className="reliability__eyebrow">Evidence season</p>
+          <h2 id="reliability-cohort-heading">{payload.season}</h2>
+          <p>
+            {payload.season_type} season · {payload.lineage.window_start} through{' '}
+            {payload.lineage.as_of_date}
+          </p>
+        </div>
+        <dl className="reliability__counts" aria-label="Reliability cohort counts">
+          <div>
+            <dt>Players</dt>
+            <dd data-testid="cohort-scorecards">{payload.counts.scorecards}</dd>
+          </div>
+          <div>
+            <dt>Final games</dt>
+            <dd data-testid="cohort-final-games">{payload.counts.final_games}</dd>
+          </div>
+          <div>
+            <dt>Game logs</dt>
+            <dd data-testid="cohort-game-logs">{payload.counts.player_game_logs}</dd>
+          </div>
+          <div>
+            <dt>Participation rows</dt>
+            <dd data-testid="cohort-participation-rows">
+              {payload.counts.participation_rows}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <p className="reliability__warning" role="note" data-testid="coverage-warning">
+        <strong>Incomplete opportunity coverage.</strong> Rates below use only direct play and
+        direct non-play observations. Missing rows are not absences, opportunity coverage is
+        unknown, and these rates must not be read as season games played or predictions.
+      </p>
+
+      <p className="reliability__limitation" data-testid="roster-limitation">
+        <strong>No roster fragility summary is shown.</strong> This endpoint has no fantasy-roster
+        identity and defines no composite reliability number. Combining these player observations
+        into a roster score here would invent both the membership and the math.
+      </p>
+
+      <section className="reliability__browser" aria-labelledby="player-evidence-heading">
+        <div className="reliability__browser-header">
+          <div>
+            <h2 id="player-evidence-heading">Player evidence</h2>
+            <p>
+              Expand a player for monthly observations and production distributions from games
+              played.
+            </p>
+          </div>
+          <div className="reliability__controls">
+            <label>
+              <span>Search player or id</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => changeQuery(event.target.value)}
+                placeholder="Name or player id"
+              />
+            </label>
+            <label>
+              <span>Evidence filter</span>
+              <select
+                value={filter}
+                onChange={(event) => {
+                  if (isReliabilityFilter(event.target.value)) changeFilter(event.target.value)
+                }}
+              >
+                {RELIABILITY_FILTERS.map((value) => (
+                  <option key={value} value={value}>
+                    {RELIABILITY_FILTER_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <p className="reliability__result-count" role="status" data-testid="reliability-result-count">
+          Showing {visible.length} of {filtered.length} matching players ({rows.length} in cohort).
+        </p>
+
+        {visible.length === 0 ? (
+          <p className="state state--empty">No players match this search and evidence filter.</p>
+        ) : (
+          <div className="reliability__rows" data-testid="reliability-rows">
+            <div className="reliability__columns" aria-hidden="true">
+              <span>Player</span>
+              <span>Availability evidence</span>
+              <span>Back-to-back evidence</span>
+              <span>Played-game production</span>
+            </div>
+            {visible.map((row) => (
+              <ReliabilityPlayer key={row.card.player_id} row={row} />
+            ))}
+          </div>
+        )}
+
+        {visible.length < filtered.length ? (
+          <button
+            type="button"
+            className="reliability__more"
+            onClick={() => setVisibleLimit((current) => current + RELIABILITY_PAGE_SIZE)}
+          >
+            Show {Math.min(RELIABILITY_PAGE_SIZE, filtered.length - visible.length)} more
+          </button>
+        ) : null}
+      </section>
+
+      <Lineage payload={payload} />
+    </>
   )
 }
 
-/**
- * The season a cohort was loaded for, stated against the season evidence reads.
- *
- * Lives in `components/SeasonNote.tsx` — see there for why the relationship is
- * computed rather than left as two labels near each other.
- */
-
-/**
- * The schedule cohort, framed as an availability question rather than a
- * scheduling one.
- *
- * The same facts appear on the Schedule screen, where they answer "how many
- * games does this team play this period?". Here they answer a different
- * question: **what can availability evidence even be measured against?** A
- * back-to-back is a claim about two dates, so a game with no date cannot be
- * classified as one in either direction — and that is a real, live limit on one
- * of the four quantities in the inventory above, not a hypothetical.
- */
-function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
-  const { schedule } = payload.lineage
-  // Two different facts that a review caught this screen conflating.
-  //
-  // `pending_game_ids` is **teams not yet decided** (ADR-013, and the route's
-  // own docstring). It does *not* mean undated: in this cohort all six pending
-  // games carry a date. The undated count is a separate quantity, carried per
-  // game as `game_date === null` with a `date_absence_reason` beside it.
-  //
-  // The first version of this rendered `pending_game_ids.length` under the
-  // label "Undated games" — a well-formed, plausible integer silently about a
-  // different thing than the reader was told, which is the `gameEt` shape on
-  // the one screen built to refuse it. Worse, the browser probe *agreed*: it
-  // checked that the number on screen matched the number from the API, which
-  // it did. Agreement on a value says nothing about agreement on its meaning.
-  const teamsUndecided = schedule.pending_game_ids.length
-  const undated = schedule.pending_games.filter((game) => game.game_date === null).length
-
-  // Read from the payload rather than asserted, including the quantifier.
-  // See describePendingLabels for why each part of that sentence is derived.
-  const pendingLabels = describePendingLabels(schedule.pending_games)
-
+function ReliabilityPlayer({ row }: { row: ReliabilityRow }) {
+  const { card } = row
   return (
-    <section className="assumptions" data-testid="schedule-evidence">
-      <h2>The season this would be measured against</h2>
+    <details className="reliability-card" data-player-id={card.player_id}>
+      <summary>
+        <span className="reliability-card__player">
+          <strong>{row.displayName}</strong>
+          <small>NBA player id {card.player_id}</small>
+        </span>
+        <EvidenceSummary evidence={card.availability.overall} />
+        <B2BSummary evidence={card.availability.back_to_back} />
+        <span className="reliability-card__metric">
+          <strong>{card.production.played_games} played games</strong>
+          <small>
+            Minutes CV {formatNumber(card.production.minutes.coefficient_of_variation, 3)}
+          </small>
+        </span>
+      </summary>
+      <div className="reliability-card__detail">
+        <AvailabilityDetail card={card} />
+        <ProductionDetail card={card} />
+      </div>
+    </details>
+  )
+}
 
-      <p className="page__lede">
-        Availability evidence is a statement about scheduled games, so the schedule bounds what
-        can be observed at all. This is the cohort currently loaded, read from the same lineage
-        block the Schedule screen renders.
+function EvidenceSummary({ evidence }: { evidence: ObservedRateEvidence }) {
+  return (
+    <span className="reliability-card__metric">
+      <strong>{formatRate(evidence.observed_play_rate)} direct-observation rate</strong>
+      <small>
+        {evidence.direct_play} play · {evidence.direct_non_play} non-play ·{' '}
+        {evidence.explicit_unknown} explicit unknown
+      </small>
+    </span>
+  )
+}
+
+function B2BSummary({ evidence }: { evidence: ObservedRateEvidence }) {
+  return (
+    <span className="reliability-card__metric">
+      <strong>
+        {evidence.observed_opportunities === 0
+          ? 'No direct B2B play/non-play observations'
+          : `${String(evidence.direct_non_play)} non-play of ${String(evidence.observed_opportunities)}`}
+      </strong>
+      <small>
+        {evidence.direct_play} play · {evidence.direct_non_play} non-play ·{' '}
+        {evidence.explicit_unknown} explicit unknown · back-to-back subset only
+      </small>
+    </span>
+  )
+}
+
+function AvailabilityDetail({ card }: { card: PlayerReliabilityScorecard }) {
+  const months = card.availability.monthly_trend
+  return (
+    <section aria-labelledby={`availability-${String(card.player_id)}`}>
+      <h3 id={`availability-${String(card.player_id)}`}>Availability evidence</h3>
+      <p>
+        Each row repeats the direct-only denominator. No slope or trend direction is fitted.
       </p>
+      {months.length === 0 ? (
+        <p>No monthly direct observations are available.</p>
+      ) : (
+        <table className="table reliability-card__table">
+          <thead>
+            <tr>
+              <th scope="col">Month</th>
+              <th scope="col">Play</th>
+              <th scope="col">Non-play</th>
+              <th scope="col">Explicit unknown</th>
+              <th scope="col">Direct-only rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((month) => (
+              <tr key={month.month}>
+                <th scope="row">{month.month.slice(0, 7)}</th>
+                <td>{month.evidence.direct_play}</td>
+                <td>{month.evidence.direct_non_play}</td>
+                <td>{month.evidence.explicit_unknown}</td>
+                <td>{formatRate(month.evidence.observed_play_rate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
 
-      <SeasonNote season={payload.season} testId="schedule-evidence-split" />
+function ProductionDetail({ card }: { card: PlayerReliabilityScorecard }) {
+  const minutes = card.production.minutes.distribution_minutes
+  return (
+    <section aria-labelledby={`production-${String(card.player_id)}`}>
+      <h3 id={`production-${String(card.player_id)}`}>Played-game production consistency</h3>
+      <p>
+        These distributions include games in which the player appeared. A non-play observation is
+        never inserted as zero production.
+      </p>
+      <p className="reliability-card__minutes">
+        <strong>Minutes:</strong> mean {formatNumber(minutes.mean)} · sample SD{' '}
+        {formatNumber(minutes.sample_standard_deviation)} · observed p20-p80{' '}
+        {formatRange(minutes)}
+      </p>
+      <table className="table reliability-card__table">
+        <thead>
+          <tr>
+            <th scope="col">Category</th>
+            <th scope="col">Unit</th>
+            <th scope="col">Games</th>
+            <th scope="col">Mean</th>
+            <th scope="col">Sample SD</th>
+            <th scope="col">Observed p20-p80</th>
+            <th scope="col">Cohort baseline</th>
+          </tr>
+        </thead>
+        <tbody>
+          {card.production.categories.map((category) => (
+            <CategoryRow key={category.category} category={category} />
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
+}
 
-      <dl className="facts assumptions__facts">
+function CategoryRow({ category }: { category: CategoryConsistency }) {
+  const ratio = category.ratio_baseline
+  return (
+    <tr>
+      <th scope="row">{CATEGORY_LABELS[category.category] ?? category.category}</th>
+      <td>
+        {category.unit === 'count'
+          ? 'Nightly count'
+          : 'Volume-weighted impact (made − cohort rate × attempts)'}
+      </td>
+      <td>{category.distribution.observed_games}</td>
+      <td>{formatNumber(category.distribution.mean, 2)}</td>
+      <td>{formatNumber(category.distribution.sample_standard_deviation, 2)}</td>
+      <td>{formatRange(category.distribution, 2)}</td>
+      <td>
+        {ratio
+          ? `${String(ratio.made)}/${String(ratio.attempted)} = ${formatRate(ratio.rate)}`
+          : 'Not applicable'}
+      </td>
+    </tr>
+  )
+}
+
+function formatRange(distribution: DistributionSummary, digits = 1): string {
+  return `${formatNumber(distribution.lower_percentile, digits)}–${formatNumber(
+    distribution.upper_percentile,
+    digits,
+  )}`
+}
+
+function Lineage({ payload }: { payload: ReliabilityScorecardsResponse }) {
+  return (
+    <details className="reliability__lineage">
+      <summary>Evidence lineage and cohort coverage</summary>
+      <dl className="facts">
         <div className="facts__row">
-          <dt>Season</dt>
-          <dd data-testid="schedule-evidence-season">
-            <code>{payload.season}</code> · {payload.teams.length} teams ·{' '}
-            {payload.periods.length} scoring periods
-          </dd>
-        </div>
-        <div className="facts__row">
-          <dt>Games</dt>
-          <dd data-testid="schedule-evidence-games">
-            {schedule.source_game_count} published by the source · {schedule.resolved_game_count}{' '}
-            resolved into this cohort · {schedule.persisted_team_row_count} team-rows
-          </dd>
-        </div>
-        <div className="facts__row">
-          <dt>Teams not yet decided</dt>
-          <dd data-testid="schedule-evidence-pending">
-            {teamsUndecided === 0 ? (
-              'Every published game has both teams assigned.'
-            ) : (
-              <>
-                <strong>{teamsUndecided}</strong> published game
-                {teamsUndecided === 1 ? ' has' : 's have'} no teams assigned yet
-                {pendingLabels}. A game with no
-                teams cannot be attributed to any team&rsquo;s calendar, so none of them can be
-                classified as a back-to-back in either direction.
-              </>
-            )}
-          </dd>
-        </div>
-        <div className="facts__row">
-          <dt>Undated games</dt>
-          <dd data-testid="schedule-evidence-undated">
-            {undated === 0 ? (
-              'No scheduled game is missing a date, so no game is excluded from back-to-back classification for want of one.'
-            ) : (
-              <>
-                <strong>{undated}</strong> of those {teamsUndecided} also
-                {undated === 1 ? ' carries' : ' carry'} no date. This is a subset of the row above,
-                not a further count — a back-to-back is a claim about two dates, so these are
-                blocked twice over rather than blocking two different games.
-              </>
-            )}
-          </dd>
-        </div>
-        <div className="facts__row">
-          <dt>Observed games</dt>
-          <dd data-testid="schedule-evidence-observed">
-            {/* The load-bearing sentence on this screen. It is stated as a
-                property of the API rather than as a claim about the season,
-                because this client cannot see the participation ledger and
-                should not pretend to know what is in it. */}
-            <strong>Not on the API.</strong> No route serves observed participation, so this
-            screen cannot say how many of these games have been played, let alone who played
-            them. Everything in the inventory above depends on that, and none of it can be
-            derived from the schedule alone.
+          <dt>Schedule coverage</dt>
+          <dd>
+            {payload.counts.schedule_context_team_games} context rows for{' '}
+            {payload.counts.scheduled_team_games} scheduled team-games
           </dd>
         </div>
         <div className="facts__row">
           <dt>Schedule cohort</dt>
           <dd>
-            refresh {schedule.refresh_id} · version <code>{schedule.version}</code> · refreshed{' '}
-            <code>{schedule.refreshed_at}</code>
+            <code>{payload.lineage.schedule_version}</code> · refreshed{' '}
+            <code>{payload.lineage.schedule_refreshed_at}</code>
+          </dd>
+        </div>
+        <div className="facts__row">
+          <dt>Observation cohort</dt>
+          <dd>
+            <code>{payload.lineage.source_version}</code>
+          </dd>
+        </div>
+        <div className="facts__row">
+          <dt>Derivation</dt>
+          <dd>
+            <code>{payload.lineage.derivation_version}</code> · computed{' '}
+            <code>{payload.lineage.computed_at}</code>
           </dd>
         </div>
       </dl>
-    </section>
+    </details>
   )
 }
