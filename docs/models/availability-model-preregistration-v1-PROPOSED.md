@@ -484,9 +484,12 @@ the coefficients, quartile counts, and `quartile_lift`.
 
 The selection-stage interval for `quartile_lift` uses 2,000
 evaluation-only player-cluster bootstrap resamples with seed `250146`.
-Recompute the quartiles and lift in every resample. Any non-finite resample,
-failure to produce all 2,000 resamples, or failure to reproduce with the seed
-vetoes Candidate 4.
+Recompute the quartiles and lift in every resample. Report the two-sided 95%
+percentile interval using the linearly interpolated empirical 0.025 and 0.975
+quantiles (`numpy.quantile(..., method="linear")`). The interval is
+diagnostic-only: Candidate 4 eligibility uses the two point-estimate thresholds
+above, not either interval endpoint. Any non-finite resample, failure to produce
+all 2,000 resamples, or failure to reproduce with the seed vetoes Candidate 4.
 
 If Candidate 4 reaches final evaluation, also report
 `holdout_quartile_lift`, defined by the same formula on the holdout using the
