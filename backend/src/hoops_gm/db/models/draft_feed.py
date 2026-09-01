@@ -105,8 +105,8 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
         # A row either names a player, or says why it cannot. The second arm
         # was added by migration ``0021`` and is narrow on purpose: an
         # observation that names nobody is admitted **only** while it carries a
-        # reason, and ``apply_observations`` filters ``pending`` on
-        # ``skipped_reason IS NULL`` — so a nameless row can never be an
+        # reason. Recognition reasons are not in ``apply_observations``' exact
+        # retryable-code allowlist, so a nameless row can never be an
         # application candidate. The invariant "anything applicable names a
         # player" is unchanged; what changed is that a record whose identity
         # the recogniser refused is now recorded instead of dropped.
@@ -217,11 +217,12 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     #: real readings of a pick. The recogniser writes
     #: ``player_external_id_unreadable`` and ``record_names_no_player`` at
     #: **ingest** time, on a record whose identity it could not read, and such a
-    #: row names no player at all. Both are permanent — nothing here ever
-    #: clears this column — and both keep the row out of ``pending``, which is
-    #: exactly what the second case needs: an id that cannot be read is not
-    #: going to become readable, so leaving the row as an application candidate
-    #: (which ``blocked_reason`` would have done) would be wrong.
+    #: row names no player at all. Recognition and dedupe reasons are permanent.
+    #: A narrow set of apply-time state conflicts is different: a later
+    #: append-only void can make the same captured row valid, so
+    #: ``apply_observations`` reconsiders those exact codes and clears the reason
+    #: only after that row appends successfully. Artifact identity, locator, and
+    #: source provenance never change.
     skipped_reason: Mapped[str | None] = mapped_column(Text)
     #: Why the *last apply run* stopped at this row without consuming it.
     #:

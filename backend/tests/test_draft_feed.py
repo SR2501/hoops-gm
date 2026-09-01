@@ -5677,25 +5677,11 @@ def test_a_sale_past_the_assumed_budget_is_applied_rather_than_burned(session: S
     assert len(draft_service.load_events(session, draft)) == 2
 
 
-def test_a_refusal_that_survives_still_burns_its_row_permanently(session: Session) -> None:
-    """The mechanism the test above escapes, driven so it is not taken on trust.
-
-    Without this, ``[None, None]`` up there is consistent with two very
-    different worlds: one where ``draft_budget_exceeded`` stopped reaching the
-    burn, and one where the burn never worked at all. Only the second is
-    excluded here, and it is excluded by watching a *different*, still-live
-    refusal burn a row and stay burned across a re-ingest.
-
-    ``draft_roster_full`` is the vehicle: ``roster_size`` is 2, so ``t1``'s
-    third purchase cannot be recorded. That refusal is correct and stays — it
-    is a fact about a format the draft was created with, not about a scalar we
-    guessed.
-
-    **This is also a live defect, and it is not mine to fix here.** The burn is
-    permanent for every surviving refusal, so a row skipped for a reason the
-    owner then resolves by hand never returns to ``pending``. Route B removed
-    the worst input to it. Filed rather than fixed.
-    """
+def test_a_roster_full_row_retries_after_the_causative_sale_is_voided(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """A stored capture survives an apply-time conflict and needs no new key."""
     league = _league(
         session,
         fantrax_league_id="LG-BURN",
@@ -5719,25 +5705,134 @@ def test_a_refusal_that_survives_still_burns_its_row_permanently(session: Sessio
     outcome = feed_service.apply_observations(session, draft)
     assert [event.player_label for event in outcome.applied] == [JOKIC, EDWARDS]
 
-    burned = [row for row in feed_service.load_observations(session, draft) if row.player_label]
-    third = next(row for row in burned if row.player_label == HALIBURTON)
+    rows = [row for row in feed_service.load_observations(session, draft) if row.player_label]
+    assert len(rows) == 3
+    third = next(row for row in rows if row.player_label == HALIBURTON)
+    identity_and_provenance = (
+        third.id,
+        third.transport,
+        third.artifact_key,
+        third.locator,
+        third.recogniser,
+        third.bridge_payload_id,
+    )
     assert third.skipped_reason is not None
     assert third.skipped_reason.startswith("draft_roster_full")
     assert third.applied_event_sequence is None
 
-    # The permanence. Re-ingesting the identical capture and re-applying does
-    # not retry it, because ``pending`` filters on ``skipped_reason IS NULL``
-    # and nothing ever sets it back to ``None``.
-    feed_service.ingest(session, draft)
+    refused = feed_service.feed_status(session, draft)
+    assert refused.pending_count == 1
+    assert dict(refused.retryable) == {"draft_roster_full": 1}
+    assert refused.skipped == ()
+    session.commit()
+    status_document = client.get(f"/api/v1/drafts/{draft.id}/feed")
+    assert status_document.status_code == 200, status_document.text
+    assert status_document.json()["retryable"] == {"draft_roster_full": 1}
+    assert status_document.json()["pending_count"] == 1
+
+    # Re-ingesting identical bytes reuses the same observation. Recovery does
+    # not ask the source to manufacture a new identity.
+    second_ingest = feed_service.ingest(session, draft).sources[0]
+    assert second_ingest.observations_written == 0
+    assert second_ingest.observations_already_present == 3
+    assert len(feed_service.load_observations(session, draft)) == 3
+
+    # The second sale caused the refusal. Remove it through the append-only
+    # correction path, then retry the unchanged stored observation.
+    applied_events = draft_service.load_events(session, draft)
+    edwards_sequence = next(
+        event.sequence for event in applied_events if event.player_label == EDWARDS
+    )
+    draft_service.record_void(session, draft, supersedes_sequence=edwards_sequence)
+
+    pending = feed_service.feed_status(session, draft)
+    assert pending.pending_count == 1
+    assert dict(pending.retryable) == {"draft_roster_full": 1}
+
     retry = feed_service.apply_observations(session, draft)
-    assert list(retry.applied) == []
-    still = next(
+    assert [event.player_label for event in retry.applied] == [HALIBURTON]
+    recovered = next(
         row
         for row in feed_service.load_observations(session, draft)
         if row.player_label == HALIBURTON
     )
-    assert still.skipped_reason is not None, (
-        "If this is None the burn has been fixed elsewhere and the test above "
-        "no longer excludes what it claims to."
+    assert (
+        recovered.id,
+        recovered.transport,
+        recovered.artifact_key,
+        recovered.locator,
+        recovered.recogniser,
+        recovered.bridge_payload_id,
+    ) == identity_and_provenance
+    assert recovered.skipped_reason is None
+    assert recovered.applied_event_sequence == retry.applied[0].sequence
+
+    state = draft_service.load_state(session, draft)
+    assert [holding.player_label for holding in state.participants[0].holdings] == [
+        JOKIC,
+        HALIBURTON,
+    ]
+    assert feed_service.apply_observations(session, draft).applied == ()
+    assert len(draft_service.load_events(session, draft)) == 4
+    third_ingest = feed_service.ingest(session, draft).sources[0]
+    assert third_ingest.observations_written == 0
+    assert third_ingest.observations_already_present == 3
+    assert len(feed_service.load_observations(session, draft)) == 3
+
+
+def test_retryable_apply_conflicts_are_an_exact_contract() -> None:
+    """Only conflicts an append-only correction can invalidate are replayed."""
+    assert {
+        "draft_board_full",
+        "draft_closed",
+        "draft_lot_player_mismatch",
+        "draft_player_already_taken",
+        "draft_roster_full",
+        "draft_sale_below_recorded_bid",
+    } == feed_service._RETRYABLE_APPLY_CONFLICTS
+
+    for reason in (
+        "player_external_id_unreadable",
+        "record_names_no_player",
+        "duplicate_within_run",
+        "already_in_log",
+        "no_player_label",
+        "sale_without_amount",
+        "draft_event_not_applicable: frozen format mismatch",
+        "draft_row_rejected: malformed event",
+    ):
+        assert feed_service._skip_disposition(reason) == "permanent"
+
+
+def test_a_malformed_sale_is_not_replayed_as_recoverable(session: Session) -> None:
+    """Recovery must not turn a missing amount into a future application."""
+    draft = _auction_draft(session)
+    row = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="malformed-sale",
+        locator="responses[0].data.draftPicks[0]",
+        recogniser="test",
+        observed_at=NOW,
+        kind=InstantKind.SALE,
+        team_external_id="t1",
+        participant_id=draft.participants[0].id,
+        player_label=JOKIC,
+        amount=None,
     )
-    assert still.applied_event_sequence is None
+    session.add(row)
+    session.flush()
+
+    first = feed_service.apply_observations(session, draft)
+    assert first.applied == ()
+    assert [reason for _, reason in first.skipped] == ["sale_without_amount"]
+
+    status = feed_service.feed_status(session, draft)
+    assert status.pending_count == 0
+    assert status.retryable == ()
+    assert dict(status.skipped) == {"sale_without_amount": 1}
+
+    second = feed_service.apply_observations(session, draft)
+    assert second.applied == ()
+    assert second.skipped == ()
+    assert draft_service.load_events(session, draft) == []
