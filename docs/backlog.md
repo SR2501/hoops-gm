@@ -1544,7 +1544,7 @@ Backtest harness scoring the availability model against held-out seasons. Scores
 
 ### `availability-model` - Building the per-game availability model
 
-- [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it. **CORRECTED 2026-08-31, `data-engineer`: this note is stale, and only one of its two named routes is closed** — `injury-status-conversion` is `done`. **Further corrected 2026-08-31 by architect ruling**, on independent cumulative review: an earlier version of this correction also claimed `participation-ledger-population` had populated the direct non-play labels this note said were missing (citing 43,037 rows, 596 players, 1,227/1,230 games) and called both routes closed. That overstated it - `participation-ledger-population` is reopened to `pending` (see that item) because its own Done clause requires a multi-season cohort and what exists is one season with three acknowledged silent gaps, so its route is **not** closed either; the 43,037-row figure is real evidence and is not retracted, but the item that was supposed to certify it as "populated at season scale" per its own written standard had not actually met that standard. Both this item's original two blockers therefore remain live in one form or another, joined by a third. Left verbatim above rather than deleted, because the blocker it names really was the blocker at the time. **The graph itself does not show this item as blocked** by *this* prose note alone, since a reader trusting only the prose and not the dependency line could still misread it — which is precisely the `backlog_graph.py`-documented failure mode of prose disagreeing with its own dependency line; see that script's own docstring. Independently re-deriving the underlying opportunity-denominator question (not trusting this note, `reliability-metrics.md`'s `opportunity_coverage=null`, or `participation-ledger-population`'s original `done` marker) found a **third, previously uncounted route**, filed as `participation-opportunity-coverage` and added below as a dependency alongside the reopened `participation-ledger-population`. In short: an honest per-game *opportunity* denominator - distinct from the direct play/non-play labels, which do exist for one season - is not yet derivable, because no NBA-side roster-interval or transaction table exists in the ledger's schema and at least three players (`player_id` 893, 2154, 5109) show a multi-game silent participation gap the ledger's own recorded source outage does not explain, for reasons this store cannot determine and which are invisible to the only committed coverage tool because it measures game-level rather than player-level completeness. See `participation-opportunity-coverage` for the full evidence and `participation-ledger-population` for the reopening.
+- [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it. **CORRECTED 2026-08-31, `data-engineer`: this note is stale, and only one of its two named routes is closed** — `injury-status-conversion` is `done`. **Further corrected 2026-08-31 by architect ruling**, on independent cumulative review: an earlier version of this correction also claimed `participation-ledger-population` had populated the direct non-play labels this note said were missing (citing 43,037 rows, 596 players, 1,227/1,230 games) and called both routes closed. That overstated it - `participation-ledger-population` is reopened to `pending` (see that item) because its own Done clause requires a multi-season cohort and what exists is one season with three acknowledged silent gaps, so its route is **not** closed either; the 43,037-row figure is real evidence and is not retracted, but the item that was supposed to certify it as "populated at season scale" per its own written standard had not actually met that standard. Both this item's original two blockers therefore remain live in one form or another, joined by a third. Left verbatim above rather than deleted, because the blocker it names really was the blocker at the time. **The graph itself does not show this item as blocked** by *this* prose note alone, since a reader trusting only the prose and not the dependency line could still misread it — which is precisely the `backlog_graph.py`-documented failure mode of prose disagreeing with its own dependency line; see that script's own docstring. Independently re-deriving the underlying opportunity-denominator question (not trusting this note, `reliability-metrics.md`'s `opportunity_coverage=null`, or `participation-ledger-population`'s original `done` marker) found a **third, previously uncounted route**, filed as `participation-opportunity-coverage` and added below as a dependency alongside the reopened `participation-ledger-population`. In short: an honest per-game *opportunity* denominator - distinct from the direct play/non-play labels, which do exist for one season - is not yet derivable, because no NBA-side roster-interval or transaction table exists in the ledger's schema and at least three players (`player_id` 893, 2154, 5109) show a multi-game silent participation gap the ledger's own recorded source outage does not explain, for reasons this store cannot determine and which are invisible to the only committed coverage tool because it measures game-level rather than player-level completeness. See `participation-opportunity-coverage` for the full evidence and `participation-ledger-population` for the reopening. **Further split 2026-08-31 by architect ruling, on a second independent cumulative review**: the two remaining blockers are not the same kind of requirement and must not be read as such. `participation-ledger-population`'s job is narrower than this item's earlier notes implied — a multi-season *direct-observation* ledger only, never manufacturing an absence or `unknown` row — while `participation-opportunity-coverage` alone owns classifying every at-risk player-game as confirmed-observed/confirmed-absent/unknown and must acquire independent roster/opportunity evidence neither item currently has. This item therefore remains blocked by two separable obligations rather than one circular one.
 - **Depends on:** `injury-status-conversion`, `participation-ledger`, `participation-ledger-population`, `schedule-density`, `participation-opportunity-coverage`
 
 Per-player p(play) for each scheduled game, conditioned on B2B/density, rest days, road trips, age, career and recent minutes load, injury history and body part recurrence, current report status (via its conversion rate), and team playoff/tanking situation. Aggregates to expected games over any window (RoS, fantasy week, playoff weeks). Persists driver features for explainability.
@@ -3018,6 +3018,29 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
   drive** - it is accurate as far as it goes and remains useful evidence
   toward the still-open multi-season requirement, not retracted.
 
+  **SPLIT 2026-08-31 by architect ruling, on a second independent cumulative
+  review: the gap-explicit half of the justification above is retracted from
+  this item, not satisfied by it.** The reopening above quoted this item's
+  original Done clause as requiring both "a genuine multi-season cohort" and
+  that "gaps are explicit rows rather than absent ones," and reopened this
+  item on both grounds. The second half was wrong to keep here: this item's
+  own ingest mechanism can only persist a row for a player the source actually
+  names in a box score or an inactive list, and has no way to manufacture an
+  explicit row for a player who is silently absent from both — enumerating
+  who *should* have appeared is exactly `participation-opportunity-coverage`'s
+  job, which this item cannot pre-empt. Requiring it here made the two items
+  **mutually dependent on each other's completion**: this item couldn't be
+  done until gaps were explicit, and making gaps explicit was
+  `participation-opportunity-coverage`'s job, which depends on this item being
+  done first. **This is not the original requirement quietly narrowed to fit
+  what was delivered** - the multi-season requirement, the actual reason this
+  item is reopened, is unchanged and unmet; the gap-explicit requirement is
+  removed from this item's Done clause below and now belongs entirely to
+  `participation-opportunity-coverage`, which both depends on this item and
+  must separately acquire the independent roster/opportunity evidence neither
+  item currently has. See the revised Done clause below and
+  `docs/handoff.md` for the full account of why the split was necessary.
+
   Driven 2026-08-22 and **the count is inseparable from its
   store**, because that separation is what made this item's status disputed
   within `main` itself. The ledger holds **43,037 participation rows over 596
@@ -3083,10 +3106,38 @@ throttle that cannot be raised without changing our posture toward the source.
 Effort-bound work can be parallelised across lanes; a fetch budget cannot.
 Draft day does not move, and on 2026-08-21 it was 58 days out.
 
-Done when the ledger holds a genuine multi-season cohort, its coverage is
-measured rather than assumed, and gaps are explicit rows rather than absent ones
-— `availability-model` must be able to tell "he did not play" from "we have no
-observation", which is the distinction the whole availability thesis rests on.
+Done when the ledger holds a genuine multi-season cohort of **direct**
+`player_participation` observations — populated by running the existing
+season-parameterized ingest (`python -m hoops_gm.ingest.backfill season
+<season> --with-participation`) across additional seasons beyond 2025-26 — and each
+season's coverage is measured and published as its own census with the store
+path and schema revision it was read from, following the pattern already set
+by `docs/adapters/participation-ledger-2025-26-coverage.json` and
+`hoops_gm.availability.coverage`. **This item must never manufacture an
+absence or `unknown` row for a player-game the source is silent about.** A
+player-game with no participation row of any kind — whether because the
+source outage is the kind already named above, or for any other reason —
+remains simply **absent from this direct-observation ledger**, and nothing
+consuming it may read that absence as evidence of either play or non-play.
+Classifying every at-risk player-game as confirmed-observed, confirmed-absent,
+or unknown — the opportunity-completeness question — is
+`participation-opportunity-coverage`'s job, not this one's, and it needs
+independent roster/opportunity evidence this item's ingest mechanism cannot
+produce: `parse_box_score_traditional_v3` and `parse_box_score_summary_v3`
+persist only players the source actually names in a box score or an inactive
+list, and have no way to enumerate who else *should* have appeared. **REVISED
+2026-08-31 by architect ruling, on a second independent cumulative review**:
+an earlier version of this clause required "gaps are explicit rows rather
+than absent ones," which is impossible for this item to satisfy by its own
+ingest mechanism and made this item and `participation-opportunity-coverage`
+mutually dependent on each other's completion — a circular semantic
+prerequisite neither could ever discharge. The requirement is removed from
+here and now belongs entirely to `participation-opportunity-coverage`, whose
+own Done clause states it. This is **not** the original gap-explicit
+requirement quietly satisfied; it is retracted from this item and relocated
+to the item that can actually own it, and both items now have an
+independently satisfiable, testable Done clause with no semantic prerequisite
+on each other's completion.
 
 Gate: Adapter gate — this runs the existing ingest against the live source at
 scale. No new model.
@@ -3095,6 +3146,17 @@ scale. No new model.
 
 - [ ] **pending**
 - **Depends on:** `participation-ledger-population`
+
+**Ownership boundary, stated precisely after a second independent cumulative
+review found the earlier split ambiguous: this item, and only this item, owns
+classifying every at-risk player-game as confirmed-observed,
+confirmed-absent, or unknown.** `participation-ledger-population` owns
+populating and publishing the direct, multi-season observation ledger this
+item reads and never manufactures an absent or unknown row itself; this item
+depends on that ledger reaching its own (multi-season) Done state, and
+separately must acquire independent roster/opportunity evidence neither item
+currently has, because the ledger's ingest mechanism cannot supply it. Neither
+item's Done clause references an unfinished obligation of the other's.
 
 **2026-08-31, `data-engineer`, re-derived rather than trusted.** `availability-model`
 needs a per-player, per-scheduled-game *opportunity* count — the denominator
@@ -3177,23 +3239,40 @@ returns a genuinely different roster per season — independently verified live
 (single throttled call pair, one team, `season="2025-26"` vs `"2024-25"`: 18
 players each, **not** the same 18; 8 player IDs present in one season and
 absent from the other). So it is **season-scoped**, not current-only. What it
-is *not*: its response carries no per-player effective-date field of any kind
-(`headers` checked directly: `TeamID, SEASON, LeagueID, PLAYER, NICKNAME,
-PLAYER_SLUG, NUM, POSITION, HEIGHT, WEIGHT, BIRTH_DATE, AGE, EXP, SCHOOL,
-PLAYER_ID, HOW_ACQUIRED` — `HOW_ACQUIRED` is a text label, sometimes null,
-carrying no date). A season-scoped, undated snapshot cannot reconstruct
-*within-season* roster intervals — it cannot say whether a player named on the
-2025-26 roster was there in October or only from a February trade, which is
-exactly the granularity `availability-model`'s per-game opportunity question
-needs. `CommonAllPlayers` and `PlayerIndex` are the same shape and are already
+lacks is a **structured, per-player effective-date field**: its headers are
+`TeamID, SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION,
+HEIGHT, WEIGHT, BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED`, and
+none of them is a dated field with a documented contract. **CORRECTED
+2026-08-31 by architect ruling, on a second independent cumulative review**:
+an earlier version of this paragraph said `HOW_ACQUIRED` carries "no date" at
+all. That overclaimed. Re-checked directly against the live 2025-26 roster for
+one team: `HOW_ACQUIRED` is **null for some rows** (3 of 18 in the checked
+team) and, where populated, is **free text that frequently embeds a date** —
+observed values include `"Signed on 03/03/26"`, `"Traded from PHI on
+02/09/23"`, and `"Draft Rights Traded from MEM on 06/25/25"`, alongside
+undated forms like `"#7 Pick in 2022 Draft"` (a draft year, not a transaction
+date). The precise contract is therefore: **no structured effective-date
+field exists, but an incomplete, sometimes-null free-text acquisition label
+may contain one.** That still falls short of what within-season interval
+reconstruction needs — the date, when present, is unparsed prose with no
+declared format guarantee, no coverage guarantee across rows, and no
+guarantee it corresponds to the specific season being read (a player's
+`HOW_ACQUIRED` on the 2025-26 roster could describe an acquisition from a
+prior season) — so it cannot reconstruct *within-season* roster intervals
+reliably, but the earlier blanket "carries no date" was false and is
+retracted. It cannot say whether a player named on the 2025-26 roster was
+there in October or only from a February trade without parsing and trusting
+this free-text field, which is exactly the granularity `availability-model`'s
+per-game opportunity question needs and which this field does not reliably
+supply. `CommonAllPlayers` and `PlayerIndex` are the same shape and are already
 adapted in this project (`docs/adapters/nba-stats.md`; both cost one request
 per season, both are one-row-per-`PERSON_ID`, both corroborate season-level
 team affiliation) — naming them here as existing, cheap, **season-level**
 evidence surfaces, not as a solution to the within-season question, which none
-of the three endpoints answer. No NBA transactions/waiver-wire endpoint exists
-in `nba_api` at all (checked by enumerating `nba_api.stats.endpoints`
-submodules for `roster`/`transact`/`assign` matches — exactly the one
-`CommonTeamRoster` hit).
+of the three endpoints answer reliably. No NBA transactions/waiver-wire
+endpoint exists in `nba_api` at all (checked by enumerating
+`nba_api.stats.endpoints` submodules for `roster`/`transact`/`assign` matches
+— exactly the one `CommonTeamRoster` hit).
 
 Season-scoped `CommonTeamRoster` snapshots, captured **prospectively** at a
 regular cadence (e.g. weekly per team) starting now, would let a future season

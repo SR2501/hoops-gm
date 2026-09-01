@@ -287,22 +287,33 @@ independent review.** This addendum previously called `CommonTeamRoster` a
 independently verified with a single throttled live call pair (one team,
 `season="2025-26"` vs `"2024-25"`: 18 players each, 8 IDs present in one season
 and absent from the other). It is **season-scoped**, not current-only. What it
-still lacks is any per-player effective-date field: its headers are `TeamID,
-SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION, HEIGHT, WEIGHT,
-BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED`, and `HOW_ACQUIRED` is a
-sometimes-null text label carrying no date. A season-scoped, undated snapshot
-cannot reconstruct *within-season* roster intervals. `CommonAllPlayers` and
-`PlayerIndex` are the same shape and already adapted here (`nba-stats.md`) —
-existing, cheap, season-level evidence, not a within-season answer either. No
-NBA transactions/waiver-wire endpoint exists in `nba_api` at all. Captured
-**prospectively** at a regular cadence, `CommonTeamRoster` snapshots could
-bound a future roster change to the gap between two captures, which is cheaper
-than a new adapter and still short of a dated transaction record. Any
-implementation that calls `CommonTeamRoster` or any other not-yet-adapted NBA
-endpoint requires the Adapter gate in full — fixture, parser contract, loud live
-smoke — regardless of NBA already being an existing source elsewhere in this
-project. An authoritative historical transactions source is a new, currently
-unvetted adapter, which this addendum names and does not select.
+lacks is a **structured, per-player effective-date field**: its headers are
+`TeamID, SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION,
+HEIGHT, WEIGHT, BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED`, none of
+them dated by contract. **CORRECTED 2026-08-31 by architect ruling, on a
+second independent cumulative review**: an earlier version of this sentence
+said `HOW_ACQUIRED` carries "no date." Re-checked directly: it is null for
+some rows (3 of 18 on the checked team) and, where populated, is free text
+that frequently embeds a date — `"Signed on 03/03/26"`, `"Traded from PHI on
+02/09/23"`, `"Draft Rights Traded from MEM on 06/25/25"` — alongside undated
+forms like `"#7 Pick in 2022 Draft"`. So: **no structured effective-date
+field, but an incomplete, sometimes-null free-text label that may contain
+one.** That still falls short of within-season interval reconstruction: the
+embedded date, when present, is unparsed prose with no declared format
+guarantee, no coverage guarantee, and no guarantee it describes the season
+being read rather than an earlier acquisition still shown on a later roster.
+`CommonAllPlayers` and `PlayerIndex` are the same shape and already adapted
+here (`nba-stats.md`) — existing, cheap, season-level evidence, not a reliable
+within-season answer either. No NBA transactions/waiver-wire endpoint exists
+in `nba_api` at all. Captured **prospectively** at a regular cadence,
+`CommonTeamRoster` snapshots could bound a future roster change to the gap
+between two captures, which is cheaper than a new adapter and still short of a
+dated transaction record. Any implementation that calls `CommonTeamRoster` or
+any other not-yet-adapted NBA endpoint requires the Adapter gate in full —
+fixture, parser contract, loud live smoke — regardless of NBA already being an
+existing source elsewhere in this project. An authoritative historical
+transactions source is a new, currently unvetted adapter, which this addendum
+names and does not select.
 
 Reproduce these counts without a committed script — the queries were exploratory
 and are not shipped as adapter code, deliberately, because no source or fit is
