@@ -32237,3 +32237,244 @@ existing entry is preserved unchanged.
 **Could not verify:** Hosted exact-head CI has not run for this append-only
 replacement head. No code, evidence, model card, backlog, estimator, split, fit,
 or holdout changed, and the holdout was not rerun.
+
+---
+
+## 2026-08-31 - data-engineer - Availability opportunity coverage: re-derived, still not derivable, boundary made durable
+
+**Changed:** `docs/backlog.md`, `docs/governance/risks.md`,
+`docs/adapters/participation-ledger-store.md`. No code, no migration, no
+adapter, no fitted estimator, no `p(play)`, no browser surface, no API, and no
+Fantrax access. Added backlog item `participation-opportunity-coverage` (191
+items total, 121 pending, 70 done, 0 blocked, recounted from the finished file
+by `scripts/backlog_graph.py`, exit 0, no defects). Made `availability-model`
+depend on it and corrected its stale prose, which named two blockers that
+`injury-status-conversion` and `participation-ledger-population` had already
+closed - the item sat in `backlog_graph.py`'s own "ready" set despite reading
+as blocked, which is precisely the failure mode that script's docstring names
+itself unable to detect. Added risk `R64` and an addendum to
+`participation-ledger-store.md`.
+
+**Task boundary respected.** Did not fit or evaluate any availability
+estimator, did not touch the consumed injury-conversion holdout, did not
+inspect Basketball Monster assumptions, and made no owner-only decision.
+
+**Now true, re-derived rather than trusted.** Read `AGENTS.md`,
+`docs/what-draft-day-looks-like.md`, `docs/plan.md`, ADR-002, ADR-007 and its
+2026-08-22 amendment, `docs/governance/gates.md`/`risks.md`,
+`docs/models/reliability-metrics.md`, `docs/adapters/participation-ledger-store.md`,
+and the `availability-model`/`participation-ledger`/`participation-ledger-population`
+backlog entries, then re-checked their conclusion against the live 2025-26 store
+at `C:\Users\steverones\hoops-gm-data\hoops_gm.db` (43,037 rows, 596 players,
+1,227/1,230 final games, schema `0016`) with fresh SQL rather than accepting the
+prose. `reliability-metrics.md` already ships `coverage_status=incomplete_r35`
+/ `opportunity_coverage=null`, stating the merged data lacks authoritative
+historical roster intervals and proof that every game returned a complete
+participation payload. **That verdict holds**, and re-deriving it found three
+things not previously on record:
+
+1. **No NBA-side roster-interval or transaction table exists anywhere in this
+   schema.** `rosters`, `roster_slots` and `transactions` all carry a
+   `fantasy_team_id`/`league_id` foreign key into the Fantrax league tables -
+   they record a fantasy owner's roster, never NBA team membership - and
+   nothing else names one. `team_schedule` is empty (0 rows) in this store, by
+   the store's own documented choice to keep `ScheduleLeagueV2` out of the
+   tip-off cross-check; that specific gap is not load-bearing, because which
+   games a team played reconstructs cleanly from
+   `nba_games.home_team_id`/`away_team_id` (verified: all 30 teams show exactly
+   82 games each for 2025-26, and Damian Lillard, `player_id=2751`, carries a
+   participation row for all 82 of team 21's games with zero gap - a
+   season-long injury absence does not, by itself, vanish).
+2. **A distinct, smaller vanishing pattern is real and structurally confirmed,
+   not hypothetical.** Three of 596 players show a multi-game silent
+   participation gap the ledger's own recorded 2025-11-19 three-game outage
+   does not explain: Mike Conley (`player_id=893`, five straight team-14 games,
+   2026-02-04..02-11, while 18 teammates have rows in the same window - a
+   player-specific silence, not a source-wide one, with no explanation
+   anywhere in this store), CJ Huntley (`player_id=2154`, 46 straight team-20
+   games, 2025-11-17..2026-03-02), and James Wiseman (`player_id=5109`, 23
+   straight team-18 games, 2025-10-29..2025-12-18). Huntley and Wiseman's shape
+   matches a two-way/G-League assignment window, confirmed structurally: the
+   `g_league` `DnpReason` that `parse_participation_comment` explicitly detects
+   fires on **zero** of the season's 43,037 rows, meaning an assignment removes
+   a player from the source entirely rather than labelling him - R35 made
+   concrete rather than theoretical. Conley's gap has no such reading available
+   from anything in this store.
+3. **The only committed coverage tool cannot see any of this.**
+   `hoops_gm.availability.coverage.measure_coverage` counts a game as observed
+   the moment any participation row references it, so all three windows above
+   report as fully observed; player-level completeness is unmeasured by
+   anything committed. `inactive_list_available=True` (all 43,037 rows here)
+   certifies only that the source's `inactives` key was present, per
+   `parse_box_score_summary_v3`'s own contract - not that the named list was
+   exhaustive. Conley's window is the existence proof that the two claims
+   differ: the key is present (his teammates resolve normally) and he is still
+   entirely absent from it.
+
+**Control used to validate the zero/nonzero extraction.** Team-game counts
+were cross-checked two ways before trusting either: `SELECT team_id,
+COUNT(*)` over the union of `home_team_id`/`away_team_id` in `nba_games`
+against a direct `COUNT(*) FROM nba_games WHERE home_team_id=21 OR
+away_team_id=21` for team 21 specifically; both agree at 82, and the same
+query pattern reproduces `participation-ledger-store.md`'s own committed
+1,227==1,227 tip-off-contamination proxy independently, which is the
+document's own stated self-check.
+
+**Cheapest authoritative source identified, not adopted.** `nba_api`'s only
+roster-shaped call is `CommonTeamRoster` (checked by enumerating the installed
+package's `nba_api.stats.endpoints` submodules for `roster`/`transact`/`assign`
+matches - exactly one hit), a current-snapshot endpoint with no historical
+form; it cannot retroactively reconstruct 2025-26 intervals but could be
+captured prospectively, one snapshot per team per day, to build genuine
+roster-interval evidence for 2026-27 onward. No NBA transactions/waiver-wire
+endpoint exists in `nba_api` at all. An authoritative historical transactions
+source is therefore a new, currently unvetted adapter - named here, not
+selected here.
+
+**Reliability/expected-games browser surfaces.** `reliability-ui` depends only
+on `reliability-metrics` (done, deliberately descriptive-only, ships
+`opportunity_coverage=null` on purpose) and was already unaffected and ready
+before this unit; nothing here changes that, and the durability
+scorecards/B2B/trend charts it describes may proceed today. `expected-games`
+and everything sequenced behind it in the auction chain - `zscore-engine`,
+`gscore-engine`, `risk-adjusted-valuation`, `auction-values` and on - depend on
+`availability-model`, which now correctly shows as blocked by
+`participation-opportunity-coverage` rather than silently reading as ready.
+
+**Could not verify:** Whether the Conley/Huntley/Wiseman pattern generalises
+beyond these three - the >=3-game-gap threshold used to surface them is a
+convenience cut, not a validated boundary, and a looser or tighter cut was not
+swept. Whether the true cause of Conley's specific gap is capture loss,
+personal/family absence omitted from the inactive list by the team, or
+something else - nothing in this store distinguishes those readings. Whether
+`CommonTeamRoster`'s current-snapshot shape is stable across the whole
+`nba_api` version range this project pins, only that the endpoint exists.
+Whether a historical NBA transactions source exists anywhere at acceptable
+cost and trust - only that `nba_api` does not carry one. No live source was
+called; every number above comes from the already-populated local store and
+already-committed parser code. This unit does not settle whether
+`participation-opportunity-coverage` is achievable before 18 October, only
+that it is real and now visible in the graph rather than invisible inside a
+stale "ready" read.
+
+**Next:** Independent review of this documentation-only unit before it merges;
+this lane does not self-approve. Whoever picks up
+`participation-opportunity-coverage` should start from `nba_api.CommonTeamRoster`
+prospective capture (the only source currently reachable through an approved
+adapter surface) rather than re-deriving the negative finding above, and should
+treat any historical-transactions adapter as a new source needing its own
+Adapter-gate review and, given the project's stated posture on adding sources,
+owner awareness before work begins.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: two of the entry above's cited gap figures did not reproduce
+
+**Corrected**, after an independent code-review pass on the unmerged commit
+found the discrepancy by re-running the SQL rather than trusting the prose,
+exactly the check this project's house rules ask for. Two of five spot-checked
+numeric claims in the entry above did not reproduce:
+
+1. **CJ Huntley's date range was wrong.** Stated as "2025-11-17..2026-03-02".
+   Re-querying `nba_games` joined against `player_participation` for
+   `player_id=2154` against the whole of team 20's 82-game season shows the
+   actual contiguous missing block is **2025-11-18..2026-02-26** (still 46
+   games; only the boundary dates were wrong, off by the neighbouring real
+   `inactive` rows on 2025-11-16 and 2026-03-03).
+2. **James Wiseman's figure understated and mischaracterised the finding.**
+   Stated as "23 straight team-18 games, 2025-10-29..2025-12-18," presented as
+   if it fully described him. The corrected picture, from a full game-by-game
+   listing of team 18's 82 games: Wiseman carries a row for only **6 of 82**
+   team-18 games all season — three in October (2025-10-23, 10-25, 10-26), a
+   **24-game** silent block (2025-10-29..2025-12-18, one more than originally
+   stated), three more games (2025-12-20, 12-22, 12-23), then a **second,
+   larger 52-game silent block running from 2025-12-26 through the season's
+   end that the entry above never mentioned**. The two-way/G-League reading is
+   correspondingly weaker for him than for Huntley, who does return to steady
+   coverage; Wiseman's shape is closer to two brief appearances against a
+   near-total season-long absence.
+
+Both errors trace to the same mechanism: the ad hoc query that first surfaced
+these three players computed the gap only *within* the span between the
+player's own first and last observed row, so it correctly found the first
+silent block for each player but never checked whether coverage resumed for
+the rest of the season, and separately mis-transcribed Huntley's boundary
+dates when writing the entry above from the query output. Mike Conley's figure,
+the season-length team-game counts, the `g_league` reason count, and the
+Lillard 82/82 zero-gap control all independently reproduced.
+
+**Now true:** `docs/backlog.md`'s `participation-opportunity-coverage` item,
+`docs/governance/risks.md`'s `R64`, and the addendum in
+`docs/adapters/participation-ledger-store.md` are corrected in place (those
+three are living documents, not append-only) to the figures above. The
+underlying conclusion — an honest per-player opportunity denominator is not
+currently derivable, no NBA-side roster-interval table exists in this schema,
+and the committed coverage tool is game-level rather than player-level — is
+unchanged by this correction; only the specific evidence cited for two of
+three example players was wrong in the way described.
+
+**Could not verify:** Whether any other numeric claim in the entry above beyond
+the two identified and the four independently reproduced also fails to
+reproduce; the review that found this spot-checked five of the entry's
+claims, not all of them. Whether Wiseman's pattern (two brief NBA appearances
+against a near-season-long absence) reflects a real transaction this store
+cannot see, or a different data phenomenon — nothing in this store
+distinguishes those readings, which is exactly the gap
+`participation-opportunity-coverage` exists to name.
+
+**Next:** This correction is itself part of the same unmerged, unpushed
+documentation-only unit and has not yet been independently re-reviewed.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: overclaimed CommonTeamRoster shape, overclaimed assignment mechanism, reopened participation-ledger-population, and a stale recount
+
+**Corrected**, following an independent cumulative review of frozen head `7c1a06c767401efd160df3a60d59af4949b09efa` (architect-ruled) that found the two entries above, taken together, still overclaimed in three places. Quoting and retracting each:
+
+1. **"`nba_api.stats.endpoints` contains exactly one roster-shaped call, `CommonTeamRoster`, which is a **current-snapshot** endpoint with no historical/dated form (checked by enumerating the installed package's endpoint submodules) — it cannot retroactively reconstruct 2025-26 intervals."** This is **retracted as written**. Enumerating endpoint *submodules* only shows that one exists; it says nothing about what the endpoint's parameters accept. Independently re-checked by calling it: installed `nba_api` **1.11.4**'s `CommonTeamRoster(team_id, season=..., ...)` accepts a `season` parameter and returns a genuinely different roster per season — verified with one throttled live call pair (one team, `season="2025-26"` vs `"2024-25"`: 18 players each, 8 player IDs present in one season and absent from the other). It is **season-scoped**, not current-only. What remains true, independently re-verified, is that its response carries **no per-player effective-date field** (headers: `TeamID, SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION, HEIGHT, WEIGHT, BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED` — the last is a sometimes-null text label with no date), so it still cannot reconstruct *within-season* roster intervals. `docs/backlog.md`, `docs/adapters/participation-ledger-store.md`, and `docs/governance/risks.md` are corrected in place to the season-scoped-but-undated framing, and now also name `CommonAllPlayers`/`PlayerIndex` as existing, already-adapted, season-level evidence surfaces without overclaiming them as a within-season answer. Any implementation calling `CommonTeamRoster` now states explicitly that it requires the Adapter gate in full (fixture, parser contract, loud live smoke) despite NBA being an existing source elsewhere.
+
+2. **"Huntley's earlier segment and Wiseman's two brief segments match a two-way/G-League assignment window... confirming an assignment produces no row at all rather than a labelled one, which is R35's warning made concrete."** This is **retracted as an explanation of cause**. What is actually verified, and all that is verified: zero of the season's 43,037 rows carry `reason='g_league'`, and no `raw_comment` in the store matches the substrings `parse_participation_comment` checks for (`"g league"`, `"g-league"`, `"two-way"`, `"assignment"`). That shows the detector for **that one specific cause** never fires this season; it is not evidence of what actually happened to Conley, Huntley, or Wiseman. This store holds no independent, dated assignment or transaction record for any of the three, so a G-League optioning, an unreported personal absence, a capture defect, or something else are all equally unruled-out — narrowed accordingly in `docs/backlog.md`, `docs/governance/risks.md` (R64), and `docs/adapters/participation-ledger-store.md`. The finding that survives, and that this unit is actually built on, is narrower and does not need the retracted mechanism: player-specific silence exists, for reasons this store cannot determine, and it is invisible to the only committed coverage tool (`hoops_gm.availability.coverage.measure_coverage`, which is game-level, not player-level) — unchanged and independently reproduced again this pass.
+
+3. **Stale current-state/recount assertions.** The first entry above states "no code, migration, adapter, or fitted estimator... changed" and reports a recount of "191 items total, 121 pending, 70 done, 0 blocked." **By architect ruling on independent cumulative review, `docs/backlog.md`'s `participation-ledger-population` is reopened from `done` to `pending`**: its own written Done clause requires "a genuine multi-season cohort" and gaps that are "explicit rows rather than absent ones," and what was delivered and marked done against that clause is one season with three acknowledged silent gaps. `availability-model` and the rewritten `participation-opportunity-coverage` both already depended on it and remain correctly blocked; reopening it introduces no `done-rests-on-unfinished` defect (checked: `scripts/backlog_graph.py`, clean). The backlog now recounts, from the finished file rather than by carrying the earlier number forward: **69 done, 0 blocked, 122 pending, 191 total.** `participation-opportunity-coverage` itself is also rewritten this pass so its Done clause is affirmative and machine-checkable — a predeclared training/evaluation window and unknown-share threshold committed by `quant` under a frozen preregistration analogous to `injury-status-conversion-preregistration.md`, a coverage report classifying every player-game as `confirmed-observed`/`confirmed-absent`/`unknown`, and a committed test comparing the two rather than a person reading both and agreeing — rather than the earlier "characterised well enough for `quant` to rule" prose, which was a judgement call dressed as a condition.
+
+**Now true, in addition to what the two entries above still hold:** ADR-007 carries a new dated, Proposed factual amendment (2026-08-31, not altering its `Accepted` status or its 2026-08-22 amendment's own analysis) correcting that amendment's "the participation ledger is unpopulated" to the current state — populated for one season, not multi-season, not opportunity-complete. Searched `docs/models/injury-status-conversion.md`, `injury-status-conversion-literature.md`, and the two preregistration documents for a comparable stale claim tied to this unit's findings and found none warranting correction: the model card already scopes itself to "the 2025-26 regular season" and already lists "trades, buyouts, waivers, G League recalls, and changing roster eligibility" as a blind spot, consistent with rather than contradicted by this unit. Those are `quant`-owned Model-gate documents and were read, not edited, absent an actual error.
+
+**Could not verify:** Whether `CommonTeamRoster`'s season-scoping and header shape are stable across the whole `nba_api` version range this project would pin for real use — this pass exercised exactly one team, one season pair, one installed version (1.11.4). Whether `HOW_ACQUIRED`'s non-null values ever carry information useful toward interval reconstruction despite lacking a date — not explored beyond confirming it is sometimes null. Whether any other numeric or causal claim beyond the three retracted here also overclaims; this review was targeted at the architect's named findings, not an exhaustive re-audit of every sentence in the prior two entries.
+
+**Next:** Freeze this replacement head; request the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: circular dependency deadlock split, and a second CommonTeamRoster overclaim
+
+**Corrected**, following a second independent cumulative review of frozen head `cd2dd64888437e7aef968ea1a875e72b79bcb18d` (architect-ruled), which found two further problems in the entries above.
+
+**1. High-severity dependency deadlock, now split.** Reopening `participation-ledger-population` while its own written Done clause still required "gaps are explicit rows rather than absent ones" made that item and `participation-opportunity-coverage` mutually dependent on each other's completion: `participation-ledger-population`'s ingest mechanism (`parse_box_score_traditional_v3` / `parse_box_score_summary_v3`) can only persist a row for a player the source actually names in a box score or an inactive list — it has no way to manufacture an explicit row for a player silently absent from both, which is exactly the enumeration `participation-opportunity-coverage` exists to do. Requiring gap-explicitness of the ledger item therefore made it depend, in substance, on work that itself depends on the ledger item being done first. **Split by architect ruling:** `participation-ledger-population`'s Done clause is revised to the smallest honest deliverable it can actually own — a genuine multi-season cohort of **direct** `player_participation` observations, populated by running the existing season-parameterized ingest (`python -m hoops_gm.ingest.backfill season <season> --with-participation`) across additional seasons, with each season's coverage measured and published as its own census with store path and schema revision, following the pattern already set for 2025-26. It must never manufacture an absence or `unknown` row for a silent player-game; a player-game with no row of any kind remains simply **absent from this direct-observation ledger**, not evidence of play or non-play. Classifying every at-risk player-game as confirmed-observed/confirmed-absent/unknown moves entirely to `participation-opportunity-coverage`, which keeps its dependency on the completed multi-season ledger and must separately acquire independent roster/opportunity evidence neither item currently has. Both items now have an independently satisfiable, testable Done clause with no semantic prerequisite on the other's completion. **This is not the original gap-explicit requirement quietly satisfied or narrowed to fit what exists** — it is retracted from `participation-ledger-population` and relocated to `participation-opportunity-coverage`, which is the only item that can actually discharge it. `docs/backlog.md` carries the full revised text in both items' entries and in `availability-model`'s dependency note.
+
+**2. Medium-severity CommonTeamRoster overclaim, corrected.** The entries above (and `docs/backlog.md` / `docs/adapters/participation-ledger-store.md`) stated `CommonTeamRoster`'s `HOW_ACQUIRED` field "carries no date." Re-checked directly against a live 2025-26 team roster rather than trusted: `HOW_ACQUIRED` is null for some rows (3 of 18 checked) and, where populated, frequently embeds a date in free text — observed values include `"Signed on 03/03/26"`, `"Traded from PHI on 02/09/23"`, and `"Draft Rights Traded from MEM on 06/25/25"`, alongside undated forms like `"#7 Pick in 2022 Draft"`. The precise, corrected contract, now stated everywhere the earlier claim appeared: **no structured effective-date field exists on this endpoint, but an incomplete, sometimes-null free-text acquisition label may contain a date.** That still does not make the endpoint sufficient for within-season interval reconstruction — the embedded date, when present, is unparsed prose with no declared format guarantee, no coverage guarantee across rows, and no guarantee it describes the season actually being read rather than an earlier acquisition still shown on a later roster — but the earlier blanket "no date" claim was false and is retracted, not merely refined.
+
+**3. A cosmetic fix taken alongside the repair, named because a repair round should not also silently rewrite history.** `docs/decisions/ADR-007-availability-in-spine.md`'s 2026-08-31 amendment (itself appended, not rewritten, in the prior correction) had an extra trailing blank line at the very end of the file, introduced by that append. Removed — confirmed by `git diff` that only the trailing blank line changed and no existing paragraph, including the amendment's own text and the ADR's `Accepted` status line, was touched.
+
+**Now true:** `docs/backlog.md` recounts to the same **69 done, 0 blocked, 122 pending, 191 total** as before this round (no item's status changed, only two items' Done-clause text and one item's dependency note) — `scripts/backlog_graph.py` confirms zero defects and the unchanged header. `docs/adapters/participation-ledger-store.md` and `docs/backlog.md` carry the corrected `HOW_ACQUIRED` contract consistently.
+
+**Could not verify:** Whether `HOW_ACQUIRED`'s embedded-date format is stable or documented anywhere by the source, or whether it is populated consistently enough across the full league (only one team's 18 rows were inspected). Whether parsing it would meaningfully narrow any of the three players' silent-gap windows without a fixture/contract test, which was not built here. Whether any other document beyond the three named carries the retracted "no date" phrasing verbatim; this pass searched `docs/backlog.md`, `docs/adapters/participation-ledger-store.md`, and `docs/governance/risks.md` (which never mentioned `CommonTeamRoster` and needed no change) and found no further instance, but did not re-audit every document in the repository.
+
+**Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.
+
+---
+
+## 2026-08-31 - data-engineer - Correction: the ADR-007 amendment and projection-strategy.md still assigned the split-away denominator to participation-ledger-population
+
+**Corrected**, following a third independent cumulative review of frozen head `e7d8eae2a925a1fe2efd575578d743fa19cfe3d8` (architect-ruled) that found one remaining Medium boundary-propagation defect: two living documents still described `participation-ledger-population` as responsible for the opportunity denominator or for gap-explicitness, after the prior round's split moved that duty entirely to `participation-opportunity-coverage`.
+
+**1. `docs/decisions/ADR-007-availability-in-spine.md`'s new 2026-08-31 amendment.** Its "What remains genuinely open" paragraph still said `participation-ledger-population` was reopened partly "because it names three games with no participation rows at all as gaps that must be explicit rather than absent." Since that amendment is this branch's own new, still-`Proposed`, unmerged text and not pre-existing ADR content, it was **edited in place** rather than corrected by a further append — confirmed by `git diff` against the merge-base that the entire amendment remains a pure addition after the pre-existing content, with nothing before it touched. The paragraph now states the reopening rests on the multi-season requirement alone, and that explicit ternary classification belongs solely to `participation-opportunity-coverage`.
+
+**2. `docs/models/projection-strategy.md`.** Its "Non-appearance reasons" bullet said `PlayerGameLogs` cannot supply the opportunity denominator and that this "is precisely why `participation-ledger-population` is the binding constraint" — assigning the denominator itself to the wrong item, the same misattribution the ADR-007 paragraph made. Corrected to state the two-stage boundary: `participation-ledger-population` supplies multi-season **direct** observations only, never a manufactured absence or `unknown` row; `participation-opportunity-coverage` alone classifies every at-risk player-game as confirmed-observed/confirmed-absent/unknown, and needs independent roster/opportunity evidence the ledger item's ingest mechanism cannot produce. Its priority-list item 5 ("spend the remaining weeks unblocking `participation-ledger-population`") was similarly amended to name both items rather than implying the single one covers the whole denominator question. This is a factual cross-module contract correction directed by architect, not a model result, and does not touch ADR-002's production/availability separation or any other conclusion in this research document.
+
+**Repository-wide sweep performed before this push.** Grepped the full repository for `participation-ledger-population`, `participation-opportunity-coverage`, and gap-explicit/denominator-ownership phrasing. Six files reference the two item names: `docs/backlog.md`, `docs/governance/risks.md`, `docs/adapters/participation-ledger-store.md`, `docs/decisions/ADR-007-availability-in-spine.md`, `docs/models/projection-strategy.md`, and `docs/handoff.md` (append-only, not edited). The first three were already internally consistent as of the prior round's independent review; the two corrected here were the residual contradictions. `docs/governance/gates.md`'s one "denominator" hit is an unrelated schedule-string context and needed no change. No other living document was found assigning the opportunity classification duty to `participation-ledger-population` or vice versa.
+
+**Now true:** `docs/backlog.md` recounts to the same **69 done, 0 blocked, 122 pending, 191 total** — no item's status changed this round, only two living documents' prose. `scripts/backlog_graph.py` confirms zero defects and the unchanged header.
+
+**Could not verify:** Whether every one of the ~30 unrelated "denominator" hits across the repository (injury-report cohort documents, schedule adapters, ADR-013, ADR-015) is free of an analogous misattribution — this sweep specifically checked files naming `participation-ledger-population` or `participation-opportunity-coverage` by slug, not every document using the word "denominator" in an unrelated sense, since a full read of all ~19 files that word appears in was out of proportion to the two specific findings this round was scoped to.
+
+**Next:** Freeze this replacement head; return it to the same independent reviewer for cumulative re-review before any merge. This lane does not self-approve.

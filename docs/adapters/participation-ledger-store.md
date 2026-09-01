@@ -211,6 +211,120 @@ disjoint failure lists and no union.
 
 ---
 
+## Addendum, 2026-08-31: what an opportunity denominator would need, checked rather than assumed
+
+`docs/models/reliability-metrics.md` ships `coverage_status=incomplete_r35` /
+`opportunity_coverage=null` and states the merged data lacks "authoritative
+historical roster intervals and proof that every game returned a complete
+participation payload." This addendum re-derives that verdict against the live
+store above instead of trusting it, for `docs/backlog.md`'s
+`participation-opportunity-coverage`, and it holds — with three findings that
+were not on record before.
+
+**No NBA-side roster-interval or transaction table exists in this schema.**
+`rosters`, `roster_slots` and `transactions` each carry a
+`fantasy_team_id`/`league_id` foreign key into the Fantrax league tables — they
+are a fantasy owner's roster, not NBA team membership — and nothing else names
+an NBA roster window. `team_schedule` is empty (0 rows) here too, by the
+deliberate choice above to keep `ScheduleLeagueV2` out of the tip-off
+cross-check, but that specific absence is not load-bearing: which games a team
+played reconstructs cleanly from `nba_games.home_team_id`/`away_team_id` alone —
+checked, all 30 teams show exactly 82 games each for 2025-26.
+
+**A season-long injury absence does not, by itself, vanish.** Damian Lillard
+(`player_id=2751`, team 21) carries a row — mostly `inactive` — for **all 82**
+of his team's games with zero gap, which is the ledger behaving exactly as the
+thesis needs it to. But three players show a multi-game silence the ledger's
+own recorded 2025-11-19 outage (`0022500259`/`260`/`261`, above) does not
+explain: **Mike Conley** (`player_id=893`) has zero rows of any outcome for
+five straight team-14 games (2026-02-04..02-11) while 18 teammates have rows in
+that same window — a player-specific silence, not a source-wide one, with no
+explanation anywhere in this store; **CJ Huntley** (`player_id=2154`) is
+silent for 46 straight team-20 games (2025-11-18..2026-02-26, bookended by real
+`inactive` rows on 2025-11-16 and 2026-03-03); **James Wiseman**
+(`player_id=5109`) carries a row for only **6 of team 18's 82 games all
+season** — three at the start (2025-10-23, 10-25, 10-26), silence for the next
+24 straight games (2025-10-29..2025-12-18), three more (2025-12-20, 12-22,
+12-23), then silence for the remaining 52 games through the season's end, never
+resolving. **CORRECTED 2026-08-31 after independent review**: an earlier draft
+of this addendum stated Wiseman's gap as "23 straight games,
+2025-10-29..2025-12-18" as if that fully described him, which undercounts the
+first block by one game and omits the second, larger 52-game silent block
+entirely — the shape is closer to "present for one road trip in October, one in
+December, invisible the rest of the season" than to a single bounded absence.
+**NARROWED 2026-08-31 by architect ruling, on independent cumulative review**:
+this addendum previously read Huntley's and Wiseman's earlier segments as
+"matching a two-way/G-League assignment window" and treated the zero-`g_league`
+finding below as confirming that mechanism structurally. That overclaimed. What
+is verified is only that zero of the season's 43,037 rows carry
+`reason='g_league'` and that no `raw_comment` in the store matches the
+substrings `parse_participation_comment` checks for (`"g league"`, `"g-league"`,
+`"two-way"`, `"assignment"`) — this store's detector for that one cause never
+fires, this season. **That does not establish what caused any of the three
+gaps**: no dated, independent assignment or transaction record exists anywhere
+in this store for Conley, Huntley or Wiseman, so a G-League optioning, an
+unreported absence, a capture defect, or something else are all equally
+unruled-out. What survives, and is the actual finding this addendum supports,
+is narrower: player-specific silence exists, for reasons this store cannot
+determine, and it is invisible to the coverage tool below.
+
+**`hoops_gm.availability.coverage.measure_coverage` cannot see any of this.** It
+counts a game as observed the moment *any* participation row references it, so
+all three windows above report as fully observed — player-level completeness is
+currently unmeasured by anything committed. And `inactive_list_available=True`
+(all 43,037 rows here) certifies only that the source's `inactives` key was
+present, per `parse_box_score_summary_v3`'s own contract — not that the named
+list was exhaustive. Conley's window is the existence proof that the two claims
+differ: the key is present (his teammates resolve normally) and he is still
+absent from it entirely.
+
+**Cheapest source discussion, corrected 2026-08-31 by architect ruling on
+independent review.** This addendum previously called `CommonTeamRoster` a
+"current-snapshot endpoint with no historical form," concluded from enumerating
+`nba_api`'s endpoint submodules without calling it. That was wrong: installed
+`nba_api` **1.11.4**'s `CommonTeamRoster(team_id, season=..., ...)` accepts a
+`season` parameter and returns a genuinely different roster per season —
+independently verified with a single throttled live call pair (one team,
+`season="2025-26"` vs `"2024-25"`: 18 players each, 8 IDs present in one season
+and absent from the other). It is **season-scoped**, not current-only. What it
+lacks is a **structured, per-player effective-date field**: its headers are
+`TeamID, SEASON, LeagueID, PLAYER, NICKNAME, PLAYER_SLUG, NUM, POSITION,
+HEIGHT, WEIGHT, BIRTH_DATE, AGE, EXP, SCHOOL, PLAYER_ID, HOW_ACQUIRED`, none of
+them dated by contract. **CORRECTED 2026-08-31 by architect ruling, on a
+second independent cumulative review**: an earlier version of this sentence
+said `HOW_ACQUIRED` carries "no date." Re-checked directly: it is null for
+some rows (3 of 18 on the checked team) and, where populated, is free text
+that frequently embeds a date — `"Signed on 03/03/26"`, `"Traded from PHI on
+02/09/23"`, `"Draft Rights Traded from MEM on 06/25/25"` — alongside undated
+forms like `"#7 Pick in 2022 Draft"`. So: **no structured effective-date
+field, but an incomplete, sometimes-null free-text label that may contain
+one.** That still falls short of within-season interval reconstruction: the
+embedded date, when present, is unparsed prose with no declared format
+guarantee, no coverage guarantee, and no guarantee it describes the season
+being read rather than an earlier acquisition still shown on a later roster.
+`CommonAllPlayers` and `PlayerIndex` are the same shape and already adapted
+here (`nba-stats.md`) — existing, cheap, season-level evidence, not a reliable
+within-season answer either. No NBA transactions/waiver-wire endpoint exists
+in `nba_api` at all. Captured **prospectively** at a regular cadence,
+`CommonTeamRoster` snapshots could bound a future roster change to the gap
+between two captures, which is cheaper than a new adapter and still short of a
+dated transaction record. Any implementation that calls `CommonTeamRoster` or
+any other not-yet-adapted NBA endpoint requires the Adapter gate in full —
+fixture, parser contract, loud live smoke — regardless of NBA already being an
+existing source elsewhere in this project. An authoritative historical
+transactions source is a new, currently unvetted adapter, which this addendum
+names and does not select.
+
+Reproduce these counts without a committed script — the queries were exploratory
+and are not shipped as adapter code, deliberately, because no source or fit is
+proposed here. The equivalent ad hoc queries are: join `player_participation` to
+`nba_games` grouped by `player_id`, compare each single-team player's row count
+against `COUNT(*) FROM nba_games WHERE (home_team_id=? OR away_team_id=?) AND
+game_date BETWEEN <first_dt> AND <last_dt>`, and list the dates present in the
+second set but absent from the first. None of this used a fitted model, a paid
+source, or Fantrax access, and none of it computed a `p(play)`-adjacent
+quantity.
+
 ## Why the data is not committed and this file is
 
 The split is deliberate and predates this document: **the repository holds the
