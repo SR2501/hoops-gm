@@ -32556,6 +32556,74 @@ computations.
 **Next:** Keep `reliability-ui` pending until an approved source supplies
 fantasy-roster membership and an explicitly defined, gated roster-level
 fragility contract. Do not derive either from projections or schedule proxies.
+
+---
+
+## 2026-09-01 - backend - Recovering burned draft-feed observations after append-only correction
+
+**Completed:** `draft-feed-burned-row-recovery`. The local draft feed now
+distinguishes permanent stored skips from an exact allowlist of apply-time state
+conflicts. Rows carrying `draft_board_full`, `draft_closed`,
+`draft_lot_player_mismatch`, `draft_player_already_taken`,
+`draft_roster_full`, or `draft_sale_below_recorded_bid` are reconsidered on
+every `apply_observations` call. This is the explicit recovery decision:
+automatic reconsideration of already-burned eligible rows, not a separate local
+recovery action. A successful retry clears only that row's reversible reason;
+recognition/admission defects, `already_in_log`, `duplicate_within_run`,
+ordered/out-of-turn halts, and contradicted keys keep their existing fail-closed
+contracts.
+
+**Identity and provenance:** Recovery mutates no source identity. The regression
+test preserves the same `draft_feed_observations.id`, `transport`,
+`artifact_key`, `locator`, `recogniser`, and `bridge_payload_id`; identical
+capture bytes dedupe before and after recovery. The recovered row is linked to
+the one replacement event sequence and a subsequent apply appends nothing.
+`FeedStatus` and `GET /api/v1/drafts/{id}/feed` now publish retryable reason
+counts separately from permanent `skipped` counts while including those rows in
+`pending_count`.
+
+**Driven reproduction:** An auction with roster size two stores three captured
+sales for seat one. Jokic and Edwards apply; Haliburton is retained as
+`draft_roster_full`. Re-ingest writes zero rows and reports all three already
+present. An append-only void supersedes Edwards' sale; the exact Haliburton row
+then applies. Derived holdings are Jokic and Haliburton, with Edwards absent,
+and the log contains exactly four events: two original sales, one void, and one
+replacement sale.
+
+**Mutation evidence:** Baseline focused tests were green at implementation
+commit `85e46878643a598c51ec9a46f05688d0790767ab` in an isolated detached
+worktree. M1 removed `draft_roster_full` from the allowlist; the reproduction
+failed specifically at `pending_count`, `assert 0 == 1`, with the row reported
+as permanently skipped. M2 classified every non-null stored reason as
+retryable; the malformed-sale control failed specifically at
+`pending_count`, `assert 1 == 0`, with `sale_without_amount` incorrectly
+requeued. Each mutation was asserted present, restored to a clean tree, and the
+three focused tests returned green before the temporary worktree was removed.
+
+**Gates:** From `backend/` with `PYTHONPATH=$PWD/src`: `ruff check .` clean;
+`ruff format --check .` reported 238 files formatted; strict `mypy` found no
+issues in 232 source files; the full default suite reported **2401 passed, 1
+skipped, 41 deselected** in 788.58 seconds. The complete
+`tests/test_draft_feed.py` suite also passed (**117 passed**). Backlog status
+changed to done and the authoritative header recounts to **70 done, 0 blocked,
+121 pending, 191 total**.
+
+**Boundary:** This only appends to the local draft event log through the
+existing `record_pick`, `record_sale`, and `record_void` paths. It sends no
+Fantrax write, changes no userscript/action executor, and widens no ToS
+exposure. No migration is needed: the persisted column and dedupe constraint
+are unchanged; only typed interpretation of existing reason codes changed.
+
+**Could not verify:** No owner production database containing a historical
+burned row was available, so retroactive recovery was verified against the
+persisted reproduction rather than real season data. No live Fantrax call was
+made, deliberately; this unit has no external-source or account-write behavior.
+The exact allowlist cannot recover a future new state-conflict code until that
+code is deliberately classified and tested, which is the intended fail-closed
+limit rather than a silent fallback.
+
+**Next:** Review frozen PR head before merge. This lane does not merge or
+self-approve.
 ---
 
 ## 2026-08-31 - quant - Availability model preregistration v1

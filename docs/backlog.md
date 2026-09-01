@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**69 done - 0 blocked - 122 pending - 191 total**
+**70 done - 0 blocked - 121 pending - 191 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2542,41 +2542,42 @@ the owner has told us his league's budgets differ per team.
 
 ### `draft-feed-burned-row-recovery` - Letting a skipped observation be retried
 
-- [ ] **pending** - Filed 2026-08-28 by `backend` while landing `per-team-auction-budgets` Route B, and **driven rather than reasoned about**: `test_a_refusal_that_survives_still_burns_its_row_permanently` in `backend/tests/test_draft_feed.py` watches a `draft_roster_full` refusal burn a row and stay burned across a re-ingest.
+- [x] **done** - Completed 2026-09-01 by `backend`. Filed 2026-08-28 while landing `per-team-auction-budgets` Route B, and **driven rather than reasoned about**: the old reproduction in `backend/tests/test_draft_feed.py` watched a `draft_roster_full` refusal burn a row and stay burned across a re-ingest.
 - **Depends on:** `draft-tracker-bridge-feed`
 
 **Acceptance:** an observation skipped for a reason the owner has since resolved
 returns to `pending` and is retried, without the identical capture having to
 arrive under a new artifact key.
 
-**The mechanism, named so it can be disproved in ninety seconds.**
-`apply_observations` in `backend/src/hoops_gm/draft/feed/service.py` sets
-`row.skipped_reason` on the `except DraftLogError` branch. `pending` in the same
-function is built by filtering `row.skipped_reason is None`. **No assignment of
-`skipped_reason = None` exists anywhere in the package** - grep it. So a skip is
-permanent, and re-ingesting the same capture dedupes on the artifact key against
-the burned row instead of retrying it.
+**The recovery contract, named so it can be disproved in ninety seconds.**
+`_RETRYABLE_APPLY_CONFLICTS` and `_skip_disposition` in
+`backend/src/hoops_gm/draft/feed/service.py` classify only append-time state
+conflicts that an append-only void or correction can invalidate. Existing rows
+carrying one of those stable `DraftLogError.code` prefixes remain application
+candidates and are reconsidered on every local `apply_observations` call; no
+separate recovery endpoint or replacement artifact key exists. A successful
+ordinary `record_pick` or `record_sale` clears only that row's retryable reason
+and links the same observation to the new event sequence.
 
-Two branches already work around this rather than through it, which is the
-evidence that it is a defect and not a design: the `draft_pick_out_of_turn` halt
-deliberately sets `blocked_reason` instead, and so does the contradicted-key
-path, each with a comment saying in as many words that `skipped_reason` is never
-cleared. Two special cases avoiding a general behaviour is the shape of a
-general behaviour being wrong.
+Permanent recognition and admission failures
+(`player_external_id_unreadable`, `record_names_no_player`, missing player/team
+or sale amount), dedupe outcomes (`already_in_log`, `duplicate_within_run`) and
+storage/configuration defects are not in that allowlist and remain terminal.
+`draft_pick_out_of_turn` and contradicted-key handling retain their existing
+`blocked_reason` contract: they remain pending, stop or block in their existing
+fail-closed order, and are not silently converted into recovery candidates.
 
-**Route B removed the worst input to it and nothing else.**
-`draft_budget_exceeded` was the one refusal that fired on a *correct* capture -
-it burned a real pick because our budget scalar was wrong. That code no longer
-exists. `draft_roster_full`, `draft_player_already_taken` and the rest still
-burn, and each of those is resolvable by hand: the owner voids the entry that
-filled the roster, re-runs, and the observation waiting behind it is silently
-gone rather than applied.
-
-**Not in scope for the lane that filed it**, which had a hard calendar
-constraint and an owner-approved unit that did not include this. Rows burned
-before this lands stay burned; a recovery path would have to decide whether to
-clear them retroactively, and that is a decision about data the owner may have
-already reconciled by hand.
+**Acceptance evidence.**
+`test_a_roster_full_row_retries_after_the_causative_sale_is_voided` drives the
+original three-sale/two-roster-slot failure, re-ingests the identical artifact,
+voids the sale that filled the roster, and applies the exact stored third
+observation. Its database id, transport, artifact key, locator, recogniser and
+bridge-payload linkage are unchanged; one replacement sale is appended and a
+second apply is a no-op. The same test checks the polled status reports
+`retryable={"draft_roster_full": 1}` and `pending_count=1`. The focused
+permanent-skip test proves a malformed sale never re-enters pending, while the
+full draft-feed suite retains ordered halt, contradiction, unreadable-id and
+dedupe coverage.
 
 ### `draft-tracker` - Building the live draft tracker
 
