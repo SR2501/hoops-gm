@@ -33177,3 +33177,19 @@ The reconciled local fixes also preserve the remote profile boundary while refus
 **Could not verify:** Hosted checks and PostgreSQL have not run on the eventual correction head. No NBA auction or linear Fantrax capture exists.
 
 **Next:** Commit, run targeted document gates, obtain fresh cumulative exact-head review, reconcile any remote advance, push normally, and wait for hosted gates before merge. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Preserved official coordinate refusal
+
+**Changed:** Cumulative publication review found that strict recognition was still downstream of a lossy official parser. `parse_draft_picks` used `int()` and truthy alias selection, so `overallPick: 1.9` became the valid-looking integer `1`, `overallPick: "bad"` became absence, and `overallPick: 0` fell through to a sibling alias. The feed recogniser could not recover what the parser had erased and could retain player identity on a historical claim.
+
+The official adapter now selects round, pick and overall coordinate aliases by key presence and accepts only JSON integers or canonical signed digit strings. A supplied boolean, float, malformed string or other non-exact value raises the adapter's stable `SourceContractError` before `FantraxDraftPick` is constructed. Zero remains zero through parsing and is then permanently refused by the feed recogniser as `draft_coordinate_unreadable`, with player identity withheld. Adapter-contract tests pin malformed, fractional, boolean, zero/fallback and healthy populated cases. Existing recorded `getDraftPicks` empty-response coverage remains unchanged.
+
+The backlog wording now says the board recogniser persists observations regardless of profile; `source_board_profile` gates participant attribution and application, not observation creation.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts, draft-feed and rendered-board suites pass after this change. Full Code and Adapter gates, cumulative exact-head review and hosted PostgreSQL remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload exists, so accepted coordinate runtime types beyond the constructed integer and digit-string cases remain unobserved. The real endpoint's committed completed-draft fixture is still an empty list. No NBA auction or linear board capture exists.
+
+**Next:** Commit this append, rerun the full Code and Adapter gates, obtain clean cumulative review, reconcile any remote advance without force-overwriting, push normally, wait for hosted exact-head checks, and merge PR #148 only while clean. Do not touch PR #150.
