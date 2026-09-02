@@ -71,6 +71,7 @@ from hoops_gm.draft.feed.recognise import (
     _player_label,
 )
 from hoops_gm.identity.names import normalize_key
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 from hoops_gm.ingest.fantrax_official.parsers import parse_draft_picks
 
@@ -2499,13 +2500,11 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     reported input, and they are the reason this test asserts a rule rather
     than the three values someone happened to send.
 
-    **What this does not fix, and it is upstream of here.**
-    ``parse_draft_picks`` converts with a bare ``int()``, so ``overallPick:
-    1.9`` has already become ``1`` before this function sees it. Re-coercing
-    cannot recover a truncation that happened earlier — the value arriving here
-    is a perfectly valid ``1``. That defect lives in
-    ``hoops_gm.ingest.fantrax_official.parsers``, which this lane does not own,
-    and is recorded in ``docs/handoff.md`` rather than patched here.
+    ``parse_draft_picks`` now refuses non-integral or malformed supplied
+    coordinates before constructing this typed record. These assertions remain
+    necessary for direct callers and for values outside the storage bound,
+    which are valid Python integers even though no database column can hold
+    them.
     """
 
     def official(**kwargs: Any) -> RecognitionResult:
@@ -3942,69 +3941,40 @@ def test_the_recogniser_reads_every_response_in_the_batch() -> None:
     assert result.instants[0].provenance.locator.startswith("responses[1].data")
 
 
-def test_the_official_coercers_do_not_survive_the_parser_that_feeds_them() -> None:
-    """Excludes: believing round 7 closed the read-a-field asymmetry.
+@pytest.mark.parametrize("overall_pick", [1.9, "1_0"])
+def test_the_official_parser_refuses_non_exact_coordinates(overall_pick: object) -> None:
+    record = {
+        "teamId": "t1",
+        "playerId": "p1",
+        "playerName": JOKIC,
+        "overallPick": overall_pick,
+    }
 
-    **This test documents a defect that is not fixed, and is deliberately
-    written to fail when it is.** The fix belongs in
-    ``hoops_gm.ingest.fantrax_official.parsers``, which this unit does not own.
+    with pytest.raises(SourceContractError, match="overall_pick must be an exact integer"):
+        parse_draft_picks({"draftPicks": [record]})
 
-    Round 7 routed every field in ``recognise_official_draft_picks`` through the
-    same coercers as the bridge path. That is real, and it is bounded: the
-    coercers see values that ``parse_draft_picks`` has *already* converted with
-    a bare ``int()``/``float()`` and selected with a truthy ``or`` chain. By the
-    time they run, a fractional ordinal is an exact ``int`` and an invented
-    amount is an ordinary ``float`` — in range, correctly typed, and wrong.
 
-    So the asymmetry is closed at the typed-dataclass layer and open across the
-    raw source, and the discriminator is that the *bridge* reader, given the
-    identical raw record, refuses it. Each case below asserts that difference,
-    which is why a reader cannot dismiss this as the two paths being allowed to
-    differ: they differ **on the same bytes**.
+def test_an_official_zero_coordinate_is_not_replaced_and_cannot_apply() -> None:
+    record = {
+        "teamId": "t1",
+        "playerId": "p1",
+        "playerName": JOKIC,
+        "overallPick": 0,
+        "overall": 3,
+    }
+    official = recognise_official_draft_picks(
+        parse_draft_picks({"draftPicks": [record]}),
+        artifact_key="sha256:seam",
+        received_at=NOW,
+        context=_context(),
+    )
 
-    When the parser is fixed, this test fails, and it should — the assertion to
-    change is the ``official`` side, and the bridge side is already right.
-    """
-    raw_cases: list[tuple[str, dict[str, object], DraftType, object]] = [
-        # A fractional ordinal truncates to a position the payload never claimed,
-        # colliding with whoever really holds that pick.
-        ("fractional ordinal", {"overallPick": 1.9}, DraftType.SNAKE, 1),
-        # Python's literal grammar, applied to a JSON string.
-        ("python-grammar ordinal", {"overallPick": "1_0"}, DraftType.SNAKE, 10),
-        # ``0`` is falsy, so a real zero is discarded for a sibling key.
-        ("zero ordinal falls through", {"overallPick": 0, "overall": 3}, DraftType.SNAKE, 3),
-    ]
-
-    for label, extra, draft_type, expected_ordinal in raw_cases:
-        record: dict[str, object] = {
-            "teamId": "t1",
-            "playerId": "p1",
-            "playerName": JOKIC,
-            **extra,
-        }
-        context = _context(draft_type=draft_type)
-
-        official = recognise_official_draft_picks(
-            parse_draft_picks({"draftPicks": [record]}),
-            artifact_key="sha256:seam",
-            received_at=NOW,
-            context=context,
-        )
-        bridge = recognise_bridge_payload(
-            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-            body_json={"responses": [{"data": {"draftPicks": [record]}}]},
-            dedupe_key="seam",
-            received_at=NOW,
-            captured_at=None,
-            context=context,
-        )
-
-        assert [i.overall_pick for i in official.instants] == [expected_ordinal], label
-        assert official.unrecognised == (), label
-        assert bridge.instants == (), label
-        assert [shape.reason for shape in bridge.unrecognised] == [
-            "record_missing_draft_coordinate"
-        ], label
+    assert len(official.instants) == 1
+    instant = official.instants[0]
+    assert instant.overall_pick is None
+    assert instant.player_label is None
+    assert instant.player_external_id is None
+    assert instant.skipped_reason == "draft_coordinate_unreadable"
 
 
 def test_an_auction_amount_the_payload_set_to_zero_is_not_replaced_by_a_sibling_bid() -> None:

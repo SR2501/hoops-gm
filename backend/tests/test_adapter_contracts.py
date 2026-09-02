@@ -470,6 +470,20 @@ class TestFantraxDraftPicks:
         assert picks[0].team_id == "xwsfomdwms46061r"
         assert picks[0].overall_pick == 91
 
+    @pytest.mark.parametrize("value", [1.9, "bad", True])
+    def test_a_supplied_coordinate_must_be_an_exact_integer(self, value: object) -> None:
+        with pytest.raises(SourceContractError, match="overall_pick must be an exact integer"):
+            parse_draft_picks(
+                {"currentDraftPicks": [{"teamId": "xwsfomdwms46061r", "overallPick": value}]}
+            )
+
+    def test_coordinate_aliases_are_selected_by_presence_not_truthiness(self) -> None:
+        picks = parse_draft_picks(
+            {"currentDraftPicks": [{"teamId": "xwsfomdwms46061r", "overallPick": 0, "overall": 3}]}
+        )
+
+        assert picks[0].overall_pick == 0
+
     def test_the_error_envelope_is_still_checked_before_parsing(self) -> None:
         with pytest.raises(SourceRejected):
             parse_draft_picks(load("fantrax_getleagueinfo_missing_league_id.json"))

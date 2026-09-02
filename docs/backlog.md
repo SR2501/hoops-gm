@@ -1994,10 +1994,12 @@ nothing about the owner's NBA auction DOM, which has not been observed.
 - [ ] **pending**
 - **Depends on:** `draft-board-dom-parser`, `fantrax-auction-capture`
 
-`board_dom.parse_draft_board` returns picks; `draft/feed/` conditionally joins
-them to `ObservedInstant`s only for an explicit `fantrax_football_snake_v1`
-mock profile with a complete binding. Every other rendered board remains
-evidence-only because applicability is a contract decision, not a parsing one.
+`board_dom.parse_draft_board` returns picks and the board recogniser persists
+them as `ObservedInstant`s regardless of profile. An explicit
+`fantrax_football_snake_v1` mock profile with a complete binding gates
+participant attribution and application, not observation creation. Every other
+rendered board remains evidence-only because applicability is a contract
+decision, not a parsing one.
 
 **The questions it has to answer**, none of which the parser is entitled to
 decide on its own:
