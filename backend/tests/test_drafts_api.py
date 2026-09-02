@@ -23,8 +23,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.models.draft import Draft
 from hoops_gm.db.models.enums import DraftType
 from hoops_gm.db.models.league import League
+from hoops_gm.draft import service as draft_service
 
 _MUTATING = {"PUT", "PATCH", "DELETE"}
 
@@ -92,6 +94,7 @@ def test_creating_a_draft_returns_the_whole_derived_state(
         "auction_budget": "200.00",
     }
     assert [seat["team_slot"] for seat in state["participants"]] == [1, 2, 3, 4]
+    assert [seat["source_seat"] for seat in state["participants"]] == [None, None, None, None]
     assert [seat["is_owner"] for seat in state["participants"]] == [True, False, False, False]
     assert state["open_lot"] is None
     assert state["next_pick"] is None, "An auction has no turn order to publish."
@@ -515,6 +518,7 @@ def test_a_snake_draft_publishes_whose_turn_it_is(client: TestClient, session: S
         "team_slot": 1,
         "participant_id": seats[1],
     }
+    assert [seat["source_seat"] for seat in state["participants"]] == [None, None, None]
     assert state["format"]["auction_budget"] is None
     assert all(seat["remaining_budget"] is None for seat in state["participants"])
 
@@ -560,6 +564,123 @@ def test_a_pick_out_of_turn_is_refused(client: TestClient, session: Session) -> 
     )
     assert response.status_code == 422
     assert response.json()["error"] == "draft_pick_out_of_turn"
+
+
+def test_a_rotated_source_binding_resolves_the_turn_without_redefining_team_slot(
+    client: TestClient, session: Session
+) -> None:
+    """The source column orders the pick; the public team slot names the participant."""
+    league = _league(
+        session,
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        budget=None,
+        name="rotated source order",
+    )
+    state = _create(
+        client,
+        league,
+        participants=[
+            {"team_slot": 1, "source_seat": 2, "display_name": "Team 1", "is_owner": True},
+            {"team_slot": 2, "source_seat": 3, "display_name": "Team 2"},
+            {"team_slot": 3, "source_seat": 1, "display_name": "Team 3"},
+        ],
+    )
+    by_slot = {seat["team_slot"]: seat for seat in state["participants"]}
+
+    assert [by_slot[slot]["source_seat"] for slot in (1, 2, 3)] == [2, 3, 1]
+    assert state["next_pick"]["team_slot"] == 3
+    assert state["next_pick"]["participant_id"] == by_slot[3]["id"]
+
+    draft = session.get(Draft, state["id"])
+    assert draft is not None
+    internal = draft_service.load_state(session, draft)
+    assert internal.next_pick is not None
+    assert internal.next_pick.team_slot == 1, "The frozen ordered coordinate remains source seat 1."
+
+    recorded = client.post(
+        f"/api/v1/drafts/{state['id']}/events",
+        json={
+            "event_type": "pick",
+            "participant_id": by_slot[3]["id"],
+            "player_label": "Nikola Jokic",
+        },
+    )
+    assert recorded.status_code == 201, recorded.text
+    assert recorded.json()["participants"][2]["holdings"][0]["player_label"] == "Nikola Jokic"
+
+
+@pytest.mark.parametrize(
+    "source_seats",
+    [
+        [1, 2, None],
+        [1, 1, 3],
+        [1, 2, 4],
+    ],
+    ids=["partial", "duplicate", "out_of_range"],
+)
+def test_draft_creation_rejects_any_source_binding_that_is_not_a_bijection(
+    client: TestClient,
+    session: Session,
+    source_seats: list[int | None],
+) -> None:
+    league = _league(
+        session,
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        budget=None,
+        name="invalid source order",
+    )
+    response = client.post(
+        "/api/v1/drafts",
+        json={
+            "league_id": league.id,
+            "name": "invalid binding",
+            "tool_usage": "blind",
+            "participants": [
+                {
+                    "team_slot": team_slot,
+                    "source_seat": source_seat,
+                    "display_name": f"Team {team_slot}",
+                }
+                for team_slot, source_seat in enumerate(source_seats, start=1)
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "draft_source_seat_binding_invalid"
+    assert client.get("/api/v1/drafts").json()["drafts"] == []
+
+
+def test_draft_creation_rejects_a_nonpositive_source_seat_at_the_schema_boundary(
+    client: TestClient, session: Session
+) -> None:
+    league = _league(
+        session,
+        draft_type=DraftType.SNAKE,
+        team_count=2,
+        roster_size=2,
+        budget=None,
+        name="invalid source ordinal",
+    )
+    response = client.post(
+        "/api/v1/drafts",
+        json={
+            "league_id": league.id,
+            "name": "invalid source ordinal",
+            "tool_usage": "blind",
+            "participants": [
+                {"team_slot": 1, "source_seat": 0, "display_name": "Team 1"},
+                {"team_slot": 2, "source_seat": 2, "display_name": "Team 2"},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "source_seat" in response.text
 
 
 def test_the_snapshot_survives_the_league_changing_underneath(

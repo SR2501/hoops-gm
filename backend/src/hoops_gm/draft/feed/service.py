@@ -17,14 +17,15 @@ Fantrax anything but a GET.
 provenance of.
 
 **The one decision made here, stated so it can be argued with.** An observed
-RPC selection with an independently anchored team id is appended to the log
-automatically. It is not held for
-confirmation. The unit exists because the owner cannot both think about value
-and be a keyboard at 7:14pm, and a feed that requires a click per pick is a
-keyboard with extra steps. The safety of that is not "we trust the recogniser";
-it is that the log is append-only and correctable by ``void``, that every
-appended event is traceable back to the exact bytes that caused it, and that a
-wrong claim is refused by ``draft.state``'s derivation before it is written.
+RPC selection with an independently anchored team id, or a supported rendered
+selection resolved through the draft's frozen complete source-seat binding, is
+appended to the log automatically. It is not held for confirmation. The unit
+exists because the owner cannot both think about value and be a keyboard at
+7:14pm, and a feed that requires a click per pick is a keyboard with extra
+steps. The safety of that is not "we trust the recogniser"; it is that the log
+is append-only and correctable by ``void``, that every appended event is
+traceable back to the exact source artifact that caused it, and that a wrong
+claim is refused by ``draft.state``'s derivation before it is written.
 
 **What is deliberately not automatic.** A sale is appended too, but a
 *disagreement* between the two sources never is: it is reported and left. And
@@ -32,10 +33,10 @@ an ordered draft stops applying at the first out-of-turn pick rather than
 skipping it, because skipping desynchronises every subsequent pick and the
 owner would find out at pick 30 rather than pick 8.
 
-Rendered-board selections are the explicit exception. Their column ordinal has
-no established binding to ``DraftParticipant``, so they are stored as
-``source_board_evidence_only`` and exposed through :func:`source_board_evidence`;
-they never enter the application queue.
+Rendered-board selections enter the same application queue only when the draft
+froze a complete source-seat binding at creation. Drafts without one retain the
+``source_board_evidence_only`` behavior, and auction or unrecognised layouts are
+still refused before observations exist.
 """
 
 from __future__ import annotations
@@ -371,7 +372,8 @@ def build_context(session: Session, draft: Draft) -> RecognitionContext | str:
     Everything here is read from our own tables. ``team_external_ids`` comes
     from ``fantasy_teams.fantrax_team_id`` for the seats *this draft* declared.
     RPC recognition refuses when that set is empty; rendered-board recognition
-    does not need it because it publishes source columns without attribution.
+    does not need it because participant attribution, when enabled, comes from
+    the draft's frozen source-seat binding.
     """
     league = session.get(League, draft.league_id)
     if league is None:  # pragma: no cover - FK makes this unreachable
@@ -403,6 +405,35 @@ def _participant_by_external_id(session: Session, draft: Draft) -> dict[str, int
     return {str(external): participant_id for external, participant_id in rows if external}
 
 
+def _participant_by_source_seat(session: Session, draft: Draft) -> dict[int, int] | None:
+    """The complete frozen board-column binding, or no usable binding.
+
+    Creation admits only complete or absent bindings. The shape is checked again
+    here so a partially hand-edited database fails closed as evidence-only rather
+    than applying whichever subset happened to remain.
+    """
+    rows = session.execute(
+        select(DraftParticipant.source_seat, DraftParticipant.id)
+        .where(DraftParticipant.draft_id == draft.id)
+        .order_by(DraftParticipant.team_slot)
+    ).all()
+    if all(source_seat is None for source_seat, _participant_id in rows):
+        return None
+    if (
+        len(rows) != draft.team_count
+        or any(source_seat is None for source_seat, _participant_id in rows)
+        or sorted(source_seat for source_seat, _participant_id in rows if source_seat is not None)
+        != list(range(1, draft.team_count + 1))
+    ):
+        logger.error("draft_feed.source_seat_binding_invalid", extra={"draft_id": draft.id})
+        return None
+    return {
+        source_seat: participant_id
+        for source_seat, participant_id in rows
+        if source_seat is not None
+    }
+
+
 def _existing_keys(session: Session, draft: Draft) -> set[tuple[str, str, str]]:
     rows = session.execute(
         select(
@@ -420,6 +451,7 @@ def _store(
     result: RecognitionResult,
     *,
     participants: dict[str, int],
+    source_participants: dict[int, int] | None = None,
     existing: set[tuple[str, str, str]],
     bridge_payload_ids: dict[str, int] | None = None,
     stored_skip_reason: str | None = None,
@@ -457,6 +489,13 @@ def _store(
             already += 1
             continue
         existing.add(key)
+        participant_id = participants.get(instant.team_external_id or "")
+        if (
+            participant_id is None
+            and source_participants is not None
+            and instant.source_seat is not None
+        ):
+            participant_id = source_participants.get(instant.source_seat)
         row = DraftFeedObservation(
             draft_id=draft.id,
             transport=DraftFeedTransport(provenance.transport.value),
@@ -470,7 +509,7 @@ def _store(
             team_external_id=instant.team_external_id,
             source_seat=instant.source_seat,
             source_seat_label=instant.source_seat_label,
-            participant_id=participants.get(instant.team_external_id or ""),
+            participant_id=participant_id,
             player_label=instant.player_label,
             player_external_id=instant.player_external_id,
             overall_pick=instant.overall_pick,
@@ -758,6 +797,7 @@ def ingest_bridge(
     # order is that, but only if it is actually recorded in arrival order.
     rows.reverse()
     participants = _participant_by_external_id(session, draft)
+    source_participants = _participant_by_source_seat(session, draft)
     draft_format = draft_service.format_from_snapshot(draft)
     existing = _existing_keys(session, draft)
 
@@ -886,9 +926,12 @@ def ingest_bridge(
             bridge_payload_ids={
                 instant.provenance.artifact_key: row.id for instant in result.instants
             },
-            # A source column has no established participant binding. Keep the
-            # evidence visible and permanently outside the application queue.
-            stored_skip_reason="source_board_evidence_only",
+            source_participants=source_participants,
+            # Legacy/manual drafts have no frozen source-column binding. Keep
+            # their evidence visible and permanently outside the apply queue.
+            stored_skip_reason=(
+                None if source_participants is not None else "source_board_evidence_only"
+            ),
         )
         written += stored
         already += seen
@@ -922,10 +965,14 @@ def ingest_bridge(
             "them parsed as a draft board; only their RPC siblings were read."
         )
     elif snapshots:
+        attribution = (
+            "each column was attributed only through the draft's frozen source-seat binding."
+            if source_participants is not None
+            else "no frozen source-seat binding exists, so its columns remain evidence-only."
+        )
         notes.append(
             f"{boards_read} of {snapshots} page snapshot(s) for this league parsed as "
-            "a draft board. The markup carries no Fantrax team id; each column is "
-            "stored as source_seat and is not attributed to DraftParticipant."
+            f"a draft board. The markup carries no Fantrax team id; {attribution}"
         )
     if sale_instants:
         # Non-heuristic by construction: conditioned only on a fact already
@@ -1233,12 +1280,11 @@ def _admit(row: DraftFeedObservation) -> _Admitted | str:
     ``no_seat_for_team_external_id`` means the source named a team and we have
     no seat linked to it, which the owner fixes by linking the Fantrax team.
     ``source_named_no_team`` means the reading names nobody to attribute the
-    pick to at all, which he cannot fix, and which is the ordinary state of
-    every rendered-board observation: the Fantrax draft board carries no team id
-    in its markup — ``draftTeamId`` and ``cellTeamId`` are console vocabulary —
-    so the column ordinal is the only seat identity it offers and this unit is
-    not entitled to map that onto one of our participants. Reporting both under
-    one string would send the owner to relink a team that is already linked.
+    pick to at all. That is the state of an unbound rendered-board observation:
+    the markup carries no team id — ``draftTeamId`` and ``cellTeamId`` are
+    console vocabulary — and its column can be resolved only when the draft
+    froze an explicit source-seat binding. Reporting both refusals under one
+    string would send the owner to relink a team that is already linked.
     """
     if row.participant_id is None:
         return (
@@ -1715,6 +1761,32 @@ def apply_observations(
             row.skipped_reason = "already_in_log"
             skipped.append((row.id, "already_in_log"))
             continue
+        if row.source_seat is not None and state.next_pick is not None:
+            observed_coordinate = (
+                row.overall_pick,
+                row.round_number,
+                row.pick_in_round,
+                row.source_seat,
+            )
+            expected_coordinate = (
+                state.next_pick.overall_pick,
+                state.next_pick.round_number,
+                state.next_pick.pick_in_round,
+                state.next_pick.team_slot,
+            )
+            if observed_coordinate != expected_coordinate:
+                # A cumulative board republishes historical cells. A novel
+                # player in one of those cells is a correction or source
+                # defect, not the selection due now. ``record_pick`` accepts a
+                # participant rather than a source coordinate, so without this
+                # gate a rotated participant who happens to be on the clock can
+                # turn that historical row into the next event.
+                halted = "draft_pick_coordinate_mismatch"
+                row.blocked_reason = (
+                    f"{halted}:expected={expected_coordinate}:observed={observed_coordinate}"
+                )
+                skipped.append((row.id, halted))
+                break
 
         try:
             if row.kind is InstantKind.SALE or row.amount is not None:
@@ -1788,6 +1860,16 @@ def apply_observations(
 
 
 @dataclass(frozen=True, slots=True)
+class ParticipantSkipped:
+    """Permanent skips attributed to one stable draft participant."""
+
+    participant_id: int
+    team_slot: int
+    total: int
+    reasons: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FeedStatus:
     """Everything the screen needs to say how much it can be trusted."""
 
@@ -1814,6 +1896,8 @@ class FeedStatus:
     #: next local apply. Kept separate from permanent ``skipped`` reasons.
     retryable: tuple[tuple[str, int], ...]
     skipped: tuple[tuple[str, int], ...]
+    skipped_by_participant: tuple[ParticipantSkipped, ...]
+    unattributed_skipped: tuple[tuple[str, int], ...]
     last_sequence: int
     #: Board slots an earlier reading filled and the newest one does not.
     #:
@@ -2238,8 +2322,13 @@ def feed_status(
             for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
         )
 
+    state = draft_service.load_state(session, draft)
+    participant_reasons: dict[int, dict[str, int]] = {
+        seat.participant.id: {} for seat in state.participants
+    }
     retryable: dict[str, int] = {}
     skipped: dict[str, int] = {}
+    unattributed_skipped: dict[str, int] = {}
     for row in rows:
         disposition = _skip_disposition(row.skipped_reason)
         if disposition == "retryable":
@@ -2247,11 +2336,13 @@ def feed_status(
             _tally(retryable, row.skipped_reason.partition(":")[0])
         elif disposition == "permanent":
             assert row.skipped_reason is not None
-            _tally(skipped, row.skipped_reason.partition(":")[0])
+            reason = row.skipped_reason.partition(":")[0]
+            _tally(skipped, reason)
+            reasons = participant_reasons.get(row.participant_id or -1)
+            _tally(reasons if reasons is not None else unattributed_skipped, reason)
 
     applied = sum(1 for row in rows if row.applied_event_sequence is not None)
     pending = sum(1 for row in rows if _is_application_candidate(row))
-    state = draft_service.load_state(session, draft)
     # ``draft_closed`` is a claim about the draft's *current* status, so it is
     # filtered against the status rather than trusted as a stamp. The stamp is
     # written by ``apply_observations``, which only a caller passing
@@ -2286,6 +2377,16 @@ def feed_status(
         blocked=blocked,
         retryable=tuple(sorted(retryable.items())),
         skipped=tuple(sorted(skipped.items())),
+        skipped_by_participant=tuple(
+            ParticipantSkipped(
+                participant_id=seat.participant.id,
+                team_slot=seat.participant.team_slot,
+                total=sum(participant_reasons[seat.participant.id].values()),
+                reasons=tuple(sorted(participant_reasons[seat.participant.id].items())),
+            )
+            for seat in state.participants
+        ),
+        unattributed_skipped=tuple(sorted(unattributed_skipped.items())),
         last_sequence=state.last_sequence,
         board_regressions=board_regressions(board_readings),
     )

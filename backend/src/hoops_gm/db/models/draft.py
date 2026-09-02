@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -146,9 +147,11 @@ class Draft(IntPk, TimestampMixin, Base):
 class DraftParticipant(IntPk, TimestampMixin, Base):
     """One seat in a draft.
 
-    ``team_slot`` is one-indexed and matches the coordinate vocabulary
-    :class:`hoops_gm.draft.formats.DraftPick` already uses, so an ordered
-    draft's pick order maps onto participants without a second convention.
+    ``team_slot`` is the one-indexed local participant order. Legacy/manual
+    ordered drafts also use it as pick order. A draft created with a complete
+    ``source_seat`` binding instead resolves the rendered board's ordered
+    columns through that frozen mapping; the two ordinals are deliberately
+    distinct.
 
     ``owner_draft_id`` is the nullable-sentinel pattern this codebase already
     uses for ``league_scoring_profiles.active_league_id``: it mirrors
@@ -162,7 +165,14 @@ class DraftParticipant(IntPk, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("draft_id", "team_slot", name="uq_draft_participants_draft_slot"),
         UniqueConstraint("owner_draft_id", name="uq_draft_participants_owner_draft_id"),
+        Index(
+            "uq_draft_participants_draft_source_seat",
+            "draft_id",
+            "source_seat",
+            unique=True,
+        ),
         CheckConstraint("team_slot >= 1", name="team_slot_positive"),
+        CheckConstraint("source_seat IS NULL OR source_seat >= 1", name="source_seat_positive"),
         CheckConstraint(
             "owner_draft_id IS NULL OR owner_draft_id = draft_id",
             name="owner_sentinel_matches_draft",
@@ -171,6 +181,10 @@ class DraftParticipant(IntPk, TimestampMixin, Base):
 
     draft_id: Mapped[int] = mapped_column(ForeignKey("drafts.id", ondelete="CASCADE"), index=True)
     team_slot: Mapped[int] = mapped_column()
+    #: Optional frozen binding from the rendered board's one-indexed column to
+    #: this participant. Distinct from ``team_slot``: source column order can be
+    #: rotated relative to the local participant order.
+    source_seat: Mapped[int | None] = mapped_column()
     display_name: Mapped[str] = mapped_column(String(128))
     #: Set only for the owner's seat. See the class docstring.
     owner_draft_id: Mapped[int | None] = mapped_column(ForeignKey("drafts.id", ondelete="CASCADE"))

@@ -1594,8 +1594,9 @@ def board_locator(seat: int, round_number: int, pick_in_round: int) -> str:
     The board's own coordinates: the column, and the cell's ``round-pick``
     ``<mark>``. A path into the artifact, exactly as an RPC locator is, and the
     locator remains a path into the artifact; ``source_seat`` also stores the
-    column explicitly so API consumers do not have to parse this string. Neither
-    is a mapping to one of our ``draft_participants`` rows.
+    column explicitly so API consumers do not have to parse this string. The
+    recogniser itself makes no participant mapping; the feed may resolve a
+    complete binding frozen on the draft.
 
     Comfortably inside ``MAX_LOCATOR_CHARS``: a 99-seat, 999-round board renders
     to 27 characters.
@@ -1640,8 +1641,9 @@ def recognise_board_snapshot(
       board carries no team id anywhere -- ``draftTeamId`` and ``cellTeamId`` are Fantrax console
       vocabulary and appear nowhere in the markup. The column ordinal is stored
       as ``source_seat`` and is not assumed to equal
-      :class:`DraftParticipant.team_slot`. ``seat_name`` is retained only as a
-      mutable source label.
+      :class:`DraftParticipant.team_slot`. A later feed pass may resolve an
+      explicit frozen source-seat binding; this recogniser never infers one.
+      ``seat_name`` is retained only as a mutable source label.
 
     **An auction board is refused by name rather than guessed at.** Every byte
     of evidence under ADR-020 is one football snake draft. An auction board may
@@ -1732,9 +1734,10 @@ def recognise_board_snapshot(
         "Read from the rendered board, not from an RPC body. Transport stays "
         "BRIDGE_CAPTURE (ADR-020 decision 1) so that two readings off one pipe "
         "cannot look like two pipes; the distinction is the recogniser name.",
-        "The board carries no Fantrax team id. Its column is stored only as "
-        "source_seat; the mutable seat_name is evidence for display and neither "
-        "is matched to DraftParticipant.",
+        "The board carries no Fantrax team id. Its column is stored as source_seat; "
+        "the mutable seat_name is display evidence and is never matched to a "
+        "DraftParticipant. Participant attribution, when available, uses only the "
+        "draft's explicit frozen source-seat binding.",
     ]
     if reading.truncated:
         # A cut that lands past the grid yields a perfectly good board, which is

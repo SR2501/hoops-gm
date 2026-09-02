@@ -64,6 +64,7 @@ class ParticipantSpec:
     display_name: str
     is_owner: bool = False
     fantasy_team_id: int | None = None
+    source_seat: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +174,21 @@ def create_draft(
             f"A {fmt.team_count}-team draft needs exactly one seat per team slot "
             f"1..{fmt.team_count}; got {slots}.",
         )
+    source_seats = [spec.source_seat for spec in participants]
+    if any(source_seat is not None for source_seat in source_seats):
+        expected_source_seats = list(range(1, fmt.team_count + 1))
+        present_source_seats = sorted(
+            source_seat for source_seat in source_seats if source_seat is not None
+        )
+        if (
+            len(present_source_seats) != len(source_seats)
+            or present_source_seats != expected_source_seats
+        ):
+            raise DraftLogError(
+                "draft_source_seat_binding_invalid",
+                f"A source-seat binding must map every participant one-to-one onto "
+                f"1..{fmt.team_count}; got {source_seats}.",
+            )
     owners = [spec for spec in participants if spec.is_owner]
     if len(owners) > 1:
         raise DraftLogError(
@@ -205,6 +221,7 @@ def create_draft(
             DraftParticipant(
                 draft_id=draft.id,
                 team_slot=spec.team_slot,
+                source_seat=spec.source_seat,
                 display_name=spec.display_name.strip(),
                 owner_draft_id=draft.id if spec.is_owner else None,
                 fantasy_team_id=spec.fantasy_team_id,
@@ -229,6 +246,7 @@ def _recorded_participants(session: Session, draft: Draft) -> list[RecordedParti
         RecordedParticipant(
             id=row.id,
             team_slot=row.team_slot,
+            source_seat=row.source_seat,
             display_name=row.display_name,
             is_owner=row.is_owner,
             fantasy_team_id=row.fantasy_team_id,

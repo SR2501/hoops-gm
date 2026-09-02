@@ -27,9 +27,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Integer, Numeric, String
 from sqlalchemy.dialects import postgresql
@@ -5554,6 +5555,149 @@ def test_the_status_document_itself_reports_the_missing_pick(
     # The board really is short a player, which is what the report is about.
     events = client.get(f"/api/v1/drafts/{draft.id}/events").json()
     assert [event["player_label"] for event in events["events"]] == [JOKIC]
+
+
+def test_feed_status_partitions_every_permanent_skip_by_stable_participant_or_unattributed(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """Per-seat completeness accounts for every aggregate skip and guesses none."""
+    league = _league(session, team_count=3, roster_size=2)
+    teams = _teams(session, league, ["t1", "t2", "t3"])
+    draft = _draft(session, league, teams)
+    participants = sorted(draft.participants, key=lambda participant: participant.team_slot)
+    rows = [
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key=f"skip-{index}",
+            locator=f"$[{index}]",
+            recogniser="status-partition-test",
+            observed_at=NOW + timedelta(seconds=index),
+            kind="selection",
+            team_external_id=team_external_id,
+            source_seat=source_seat,
+            participant_id=participant_id,
+            player_label=player_label,
+            player_external_id=player_external_id,
+            skipped_reason=reason,
+        )
+        for index, (
+            participant_id,
+            team_external_id,
+            source_seat,
+            player_label,
+            player_external_id,
+            reason,
+        ) in enumerate(
+            [
+                (
+                    participants[0].id,
+                    "t1",
+                    None,
+                    None,
+                    None,
+                    "record_names_no_player",
+                ),
+                (
+                    participants[0].id,
+                    "t1",
+                    None,
+                    None,
+                    None,
+                    "player_external_id_unreadable",
+                ),
+                (
+                    participants[1].id,
+                    "t2",
+                    None,
+                    None,
+                    "p2",
+                    "no_player_label",
+                ),
+                (
+                    None,
+                    None,
+                    1,
+                    "Source-only Player",
+                    None,
+                    "source_board_evidence_only",
+                ),
+                (
+                    None,
+                    "outside-this-draft",
+                    None,
+                    "Unmapped Team Player",
+                    None,
+                    "no_seat_for_team_external_id",
+                ),
+            ],
+            start=1,
+        )
+    ]
+    session.add_all(rows)
+    session.commit()
+
+    response = client.get(f"/api/v1/drafts/{draft.id}/feed")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["skipped"] == {
+        "no_player_label": 1,
+        "no_seat_for_team_external_id": 1,
+        "player_external_id_unreadable": 1,
+        "record_names_no_player": 1,
+        "source_board_evidence_only": 1,
+    }
+    assert body["skipped_by_participant"] == [
+        {
+            "participant_id": participants[0].id,
+            "team_slot": 1,
+            "total": 2,
+            "reasons": {
+                "player_external_id_unreadable": 1,
+                "record_names_no_player": 1,
+            },
+        },
+        {
+            "participant_id": participants[1].id,
+            "team_slot": 2,
+            "total": 1,
+            "reasons": {"no_player_label": 1},
+        },
+        {
+            "participant_id": participants[2].id,
+            "team_slot": 3,
+            "total": 0,
+            "reasons": {},
+        },
+    ]
+    assert body["unattributed_skipped"] == {
+        "no_seat_for_team_external_id": 1,
+        "source_board_evidence_only": 1,
+    }
+
+    partitioned: dict[str, int] = {}
+    for item in body["skipped_by_participant"]:
+        for reason, count in item["reasons"].items():
+            partitioned[reason] = partitioned.get(reason, 0) + count
+    for reason, count in body["unattributed_skipped"].items():
+        partitioned[reason] = partitioned.get(reason, 0) + count
+    assert partitioned == body["skipped"]
+
+    schemas = cast("FastAPI", client.app).openapi()["components"]["schemas"]
+    status_properties = schemas["FeedStatusResponse"]["properties"]
+    assert {
+        "skipped",
+        "skipped_by_participant",
+        "unattributed_skipped",
+    } <= set(status_properties)
+    assert set(schemas["ParticipantSkippedOut"]["properties"]) == {
+        "participant_id",
+        "team_slot",
+        "total",
+        "reasons",
+    }
 
 
 def test_the_official_path_surfaces_a_refused_identity_too(session: Session) -> None:

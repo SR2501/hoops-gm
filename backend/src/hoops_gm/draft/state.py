@@ -116,6 +116,7 @@ class RecordedParticipant:
     display_name: str
     is_owner: bool
     fantasy_team_id: int | None = None
+    source_seat: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,12 +415,25 @@ def _apply_pick(
     label = _require_label(event)
     _refuse_if_board_full(board, fmt.total_roster_slots, event.sequence)
     expected = fmt.pick_at(board.selections() + 1)
-    if participant.team_slot != expected.team_slot:
+    participant_order_slot = (
+        participant.source_seat if participant.source_seat is not None else participant.team_slot
+    )
+    if participant_order_slot != expected.team_slot:
+        if participant.source_seat is None:
+            detail = (
+                f"Overall pick {expected.overall_pick} belongs to team slot "
+                f"{expected.team_slot}; {participant.display_name} holds slot "
+                f"{participant.team_slot}."
+            )
+        else:
+            detail = (
+                f"Overall pick {expected.overall_pick} belongs to source seat "
+                f"{expected.team_slot}; {participant.display_name} is bound to source seat "
+                f"{participant.source_seat}."
+            )
         raise DraftLogError(
             "draft_pick_out_of_turn",
-            f"Overall pick {expected.overall_pick} belongs to team slot "
-            f"{expected.team_slot}; {participant.display_name} holds slot "
-            f"{participant.team_slot}.",
+            detail,
             sequence=event.sequence,
         )
     _refuse_if_roster_full(board, participant, fmt.roster_size, event.sequence)
@@ -613,6 +627,19 @@ def _validate_seats(
             f"A {fmt.team_count}-team draft needs exactly one seat per team slot "
             f"1..{fmt.team_count}; got {slots}.",
         )
+    source_seats = [participant.source_seat for participant in participants]
+    if any(source_seat is not None for source_seat in source_seats):
+        present_source_seats = sorted(
+            source_seat for source_seat in source_seats if source_seat is not None
+        )
+        if len(present_source_seats) != len(source_seats) or present_source_seats != list(
+            range(1, fmt.team_count + 1)
+        ):
+            raise DraftLogError(
+                "draft_source_seat_binding_invalid",
+                f"A source-seat binding must map every participant one-to-one onto "
+                f"1..{fmt.team_count}; got {source_seats}.",
+            )
     return {participant.id: participant for participant in participants}
 
 
@@ -720,9 +747,19 @@ def derive_state(
     ):
         next_pick = fmt.pick_at(selections + 1)
         next_pick_participant_id = next(
-            (seat.id for seat in participants if seat.team_slot == next_pick.team_slot),
+            (
+                seat.id
+                for seat in participants
+                if (seat.source_seat if seat.source_seat is not None else seat.team_slot)
+                == next_pick.team_slot
+            ),
             None,
         )
+        if next_pick_participant_id is None:  # pragma: no cover - _validate_seats proves totality
+            raise DraftLogError(
+                "draft_source_seat_binding_invalid",
+                f"Ordered slot {next_pick.team_slot} has no participant.",
+            )
 
     if closed_at is not None:
         status = DraftStatus.CLOSED
