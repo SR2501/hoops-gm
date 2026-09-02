@@ -2064,11 +2064,12 @@ append, `(overall, round, pick_in_round, source_seat)` must equal the current
 frozen format coordinate, and the append carries the exact
 `expected_last_sequence` whose coordinate was checked. The apply pass rechecks
 the profile, binding and the row's exact successful-reading provenance
-(capture, artifact, coordinate and player), so a legacy or handcrafted pending
-row cannot bypass the ingest gate. That rejection happens before contradiction
-and status reconciliation, so ineligible board evidence cannot suppress or
-falsely corroborate a valid RPC event. Unprofiled drafts, including completely
-bound snakes and linears, remain `source_board_evidence_only`.
+(`BRIDGE_CAPTURE`, capture, artifact, deterministic full coordinate and player),
+so a legacy or handcrafted pending row cannot bypass the ingest gate. That
+rejection happens before contradiction and status reconciliation, so ineligible
+board evidence cannot suppress or falsely corroborate a valid RPC event.
+Unprofiled drafts, including completely bound snakes and linears, remain
+`source_board_evidence_only`.
 
 Board-content dedupe, replay, dimension history, regression publication and
 append-only event semantics remain in place. Auction still refuses as

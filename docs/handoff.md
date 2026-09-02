@@ -33105,3 +33105,15 @@ Focused tests prove a profiled row with no successful reading remains evidence-o
 **Could not verify:** The explicit `fantrax_football_snake_v1` profile is a creation-time evidence declaration, not an inferred sport field; the schema has no sport discriminator and this change deliberately does not invent one from league ids, labels or DOM shape. No NBA auction capture exists and no NBA profile is defined.
 
 **Next:** Run the full gates, publish one new exact head, and commission a fresh cumulative review of both application and reconciliation boundaries. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Completed the board provenance tuple
+
+**Changed:** Final cumulative review of `9275457c44b75fd604f5e3d6203f060175655341` found that successful-reading membership still omitted two facts: transport and `overall_pick`. The shared eligibility predicate now requires `BRIDGE_CAPTURE` exactly and derives the frozen snake coordinate from `overall_pick`, requiring its round, pick-in-round and source seat to match before either apply or reconciliation. Tests reproduce a board-shaped row labelled `OFFICIAL_HTTP` and a matching row with no overall pick; in both cases the valid RPC pick appends, the board row becomes evidence-only, and cross-transport witness count remains zero.
+
+**Gates:** The rendered-board and draft-feed suites pass; focused Ruff and strict mypy pass after the fix. Full and hosted gates plus one fresh exact-head review remain outstanding.
+
+**Could not verify:** No new source applicability was established. NBA auction semantics remain without a capture or profile, and the explicit football mock profile remains the only admitted declaration.
+
+**Next:** Run the final full matrix, publish and independently review the exact head. Do not merge or self-approve.

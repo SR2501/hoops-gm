@@ -100,6 +100,7 @@ from hoops_gm.draft.feed.reconcile import (
     reconcile,
     values_disagree,
 )
+from hoops_gm.draft.formats import SnakeDraftFormat
 from hoops_gm.draft.state import DraftLogError
 from hoops_gm.identity.names import normalize_key
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
@@ -502,6 +503,7 @@ def _recognised_board_slots(session: Session, draft: Draft) -> set[_RecognisedBo
 def _board_row_is_eligible(
     row: DraftFeedObservation,
     *,
+    draft: Draft,
     source_participants: dict[int, int] | None,
     recognised_slots: set[_RecognisedBoardSlot],
 ) -> bool:
@@ -511,11 +513,27 @@ def _board_row_is_eligible(
     if (
         source_participants is None
         or row.recogniser != BOARD_RECOGNISER
+        or row.transport is not DraftFeedTransport.BRIDGE_CAPTURE
         or row.bridge_payload_id is None
         or row.source_seat is None
+        or row.overall_pick is None
         or row.round_number is None
         or row.pick_in_round is None
         or row.participant_id != source_participants.get(row.source_seat)
+    ):
+        return False
+    draft_format = draft_service.format_from_snapshot(draft)
+    if not isinstance(draft_format, SnakeDraftFormat):
+        return False
+    expected = draft_format.pick_at(row.overall_pick)
+    if (
+        row.round_number,
+        row.pick_in_round,
+        row.source_seat,
+    ) != (
+        expected.round_number,
+        expected.pick_in_round,
+        expected.team_slot,
     ):
         return False
     return (
@@ -1790,6 +1808,7 @@ def apply_observations(
     for row in pending:
         if _board_row_is_eligible(
             row,
+            draft=draft,
             source_participants=source_participants,
             recognised_slots=recognised_slots,
         ):
@@ -1810,6 +1829,7 @@ def apply_observations(
         if row.applied_event_sequence is not None
         and _board_row_is_eligible(
             row,
+            draft=draft,
             source_participants=source_participants,
             recognised_slots=recognised_slots,
         )
@@ -2428,6 +2448,7 @@ def feed_status(
         if names_a_player(row)
         and _board_row_is_eligible(
             row,
+            draft=draft,
             source_participants=source_participants,
             recognised_slots=recognised_slots,
         )

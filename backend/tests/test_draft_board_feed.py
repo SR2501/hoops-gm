@@ -683,6 +683,84 @@ def test_a_profiled_board_row_requires_successful_reading_provenance(
     assert draft_service.load_events(session, draft) == []
 
 
+@pytest.mark.parametrize(
+    ("transport", "overall_pick"),
+    [
+        (DraftFeedTransport.OFFICIAL_HTTP, 1),
+        (DraftFeedTransport.BRIDGE_CAPTURE, None),
+    ],
+    ids=["wrong_transport", "missing_overall"],
+)
+def test_malformed_profiled_board_rows_neither_apply_nor_corroborate_rpc(
+    session: Session,
+    transport: DraftFeedTransport,
+    overall_pick: int | None,
+) -> None:
+    league = _league(session)
+    draft = _draft(
+        session,
+        league,
+        source_seats=tuple(range(1, SEATS + 1)),
+        source_board_profile=PROFILE,
+    )
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:malformed",
+        occupied_slots=[
+            {
+                "source_seat": 1,
+                "round_number": 1,
+                "pick_in_round": 1,
+                "player_label": "Nikola Jokic",
+                "player_external_id": "same-player",
+            }
+        ],
+    )
+    rpc = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.OFFICIAL_HTTP,
+        artifact_key="official:valid-profiled",
+        locator="currentDraftPicks[0]",
+        recogniser="fxea_getDraftPicks_v1",
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+    )
+    board = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=transport,
+        artifact_key="board:malformed",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        bridge_payload_id=payload_id,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+        overall_pick=overall_pick,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add_all([rpc, board])
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert len(outcome.applied) == 1
+    assert outcome.applied[0].observation_id == rpc.id
+    assert board.skipped_reason == "source_board_evidence_only"
+    status = feed_service.feed_status(session, draft, now=NOW)
+    assert status.reconciliation is not None
+    assert status.reconciliation.witnessed_by_two_transports == 0
+    assert status.reconciliation.agreements == ()
+
+
 def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
     session: Session,
 ) -> None:
