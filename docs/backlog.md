@@ -4635,8 +4635,10 @@ Added `GET /api/v1/drafts/{draft_id}/source-board`. It returns an explicit
 grouped by `source_seat`; mutable source labels; server-clock board and contact
 freshness; regressions; and the exact-content undo blind spot. It returns no
 participant ids or budgets. Board observations preserve source
-round/pick/overall/player fields and a dedicated `source_seat` column, remain
-`source_board_evidence_only`, and never append `draft_events`.
+round/pick/overall/player fields and a dedicated `source_seat` column. Without a
+complete explicit binding they remain `source_board_evidence_only` and never
+append `draft_events`; with one, supported snake/linear observations may enter
+the existing append-only pipeline after exact coordinate/order validation.
 
 The state row is separate from pick observations because a refusal and a
 zero-pick board otherwise both have zero pick rows. Keeping only observations
