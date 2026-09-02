@@ -1,0 +1,202 @@
+{
+  "census_version": 2,
+  "scope": {
+    "season": "2022-23",
+    "season_type": "regular",
+    "data_layer": "direct_observations",
+    "coverage_unit": "final game with at least one direct participation row",
+    "opportunity_coverage": null
+  },
+  "provenance": {
+    "source": "stats.nba.com",
+    "source_library": "nba_api==1.11.4",
+    "source_endpoints": [
+      "CommonAllPlayers",
+      "LeagueGameFinder",
+      "PlayerGameLogs",
+      "BoxScoreTraditionalV3",
+      "BoxScoreSummaryV3"
+    ],
+    "ingest_command": "python -m hoops_gm.ingest.backfill season 2022-23 --with-participation",
+    "identity_command": "python -m hoops_gm.ingest.backfill nba-identity --season 2022-23",
+    "ingest_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
+    "census_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
+    "census_generator_sha256": "be4575c0cddda462aa05110ef50529cac8810d2f7f20ce27f3162364767facb8",
+    "database_sha256": "5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d",
+    "preserved_prior_store": {
+      "path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2023-26.db",
+      "bytes": 40513536,
+      "sha256": "e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe"
+    },
+    "raw_capture_manifest": {
+      "algorithm": "sha256 of endpoint, canonical request params, and uncompressed payload sha256, tab-separated and sorted",
+      "sha256": "6179399e75f955f2a23c546cdcdce2640fde1b718322f318fad805da4eb2f27d",
+      "capture_count": 2463,
+      "captures_by_endpoint": {
+        "BoxScoreSummaryV3": 1230,
+        "BoxScoreTraditionalV3": 1230,
+        "CommonAllPlayers": 1,
+        "LeagueGameFinder": 1,
+        "PlayerGameLogs": 1
+      },
+      "first_fetched_at": "2026-09-02T04:03:20.564682+00:00",
+      "last_fetched_at": "2026-09-02T04:52:26.626965+00:00",
+      "missing_captures": [],
+      "off_repository_root": "C:\\Users\\steverones\\hoops-gm-data\\data\\raw"
+    },
+    "run_logs": [
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-production-20260902T040318Z.log",
+        "sha256": "895feabcd5313831fab72e2b7cbd57228a0fd0b854ab2fc342a6964d1a8d2352"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-identity-2022-23-20260902T045223Z.log",
+        "sha256": "29b2fadbf42977eedf2522ca065a70fd6ba9a445e901f753c50f852d1551300a"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-final-cached-replay-20260902T045223Z.log",
+        "sha256": "b5c3d66a0def822fe0d632752fccaffbbaad41e7f9a54cde2306e8a37c968680"
+      }
+    ],
+    "run_log_manifest_sha256": "c7cdc285c7b3e2e1cd0bee7cf5a3fa0df83adc1c76fc5ec7822d7b8ffa5477ef"
+  },
+  "store": {
+    "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db",
+    "dialect": "sqlite",
+    "local_path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2022-26.db",
+    "alembic_revision": "0016"
+  },
+  "source_reconciliation": {
+    "league_game_finder_games": 1230,
+    "league_game_finder_distinct_game_dates": 164,
+    "player_game_log_rows": 25894,
+    "player_game_log_distinct_games": 1230,
+    "database_games": 1230,
+    "stable_game_id_sets_agree": true,
+    "league_game_finder_only_game_ids": [],
+    "player_game_logs_only_game_ids": [],
+    "source_only_game_ids": [],
+    "database_only_game_ids": []
+  },
+  "unresolved_source_outages": [],
+  "production_log_audit": {
+    "policy": "PlayerGameLogs was used only to audit source-game identity and production-row presence. It supplied no participation fitting label.",
+    "supplied_participation_labels": false,
+    "game_log_rows_in_games_without_participation": 0,
+    "games_with_logs_but_no_participation": []
+  },
+  "identity_anchor_audit": {
+    "policy": "A source-named player omitted by CommonAllPlayers is anchored only by the hard NBA person id. No fuzzy match or current-team inference is made; a nameless unknown id fails loudly.",
+    "raw_to_ledger_missing_player_records": 0,
+    "raw_to_ledger_missing_team_records": 0,
+    "recovered_source_named_anchors": []
+  },
+  "limitations": [
+    "Game coverage means only that at least one direct row exists for the game; it is not player-level opportunity coverage.",
+    "A missing player-game row is absent evidence, not an explicit unknown and not evidence of play or non-play.",
+    "The ledger cannot prove roster membership or enumerate who should have appeared; participation-opportunity-coverage requires independent evidence.",
+    "Normalized DNP reasons are convenience labels; raw comments remain the re-derivable source evidence."
+  ],
+  "protocol_support": {
+    "required_direct_census_seasons": [
+      "2022-23",
+      "2023-24",
+      "2024-25",
+      "2025-26"
+    ],
+    "season_roles": {
+      "2022-23": "historical_marcel_support_only",
+      "2023-24": "development",
+      "2024-25": "selection",
+      "2025-26": "held_out"
+    },
+    "direct_label_availability": {
+      "store": {
+        "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db",
+        "dialect": "sqlite",
+        "local_path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2022-26.db",
+        "alembic_revision": "0016"
+      },
+      "seasons": [
+        {
+          "season": "2022-23",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 40932,
+          "distinct_players": 554,
+          "box_score_rows": 25894,
+          "rows_with_inactive_list": 40932
+        },
+        {
+          "season": "2023-24",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43395,
+          "distinct_players": 595,
+          "box_score_rows": 26401,
+          "rows_with_inactive_list": 43395
+        },
+        {
+          "season": "2024-25",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43369,
+          "distinct_players": 587,
+          "box_score_rows": 26306,
+          "rows_with_inactive_list": 43369
+        },
+        {
+          "season": "2025-26",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1227,
+          "games_unobserved": 3,
+          "unobserved_dates": [
+            "2025-11-19",
+            "2025-11-19",
+            "2025-11-19"
+          ],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43160,
+          "distinct_players": 602,
+          "box_score_rows": 26651,
+          "rows_with_inactive_list": 43160
+        }
+      ],
+      "totals": {
+        "rows": 170856,
+        "distinct_players": 899,
+        "games_final": 4920,
+        "games_observed": 4917,
+        "games_unobserved": 3,
+        "is_populated": true
+      }
+    },
+    "outcome_valued_counts_published": false
+  },
+  "season": {
+    "season": "2022-23",
+    "games_total": 1230,
+    "games_final": 1230,
+    "games_observed": 1230,
+    "games_unobserved": 0,
+    "unobserved_dates": [],
+    "unobserved_dates_suppressed": 0,
+    "rows": 40932,
+    "distinct_players": 554,
+    "box_score_rows": 25894,
+    "rows_with_inactive_list": 40932
+  }
+}

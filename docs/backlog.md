@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**71 done - 0 blocked - 120 pending - 191 total**
+**72 done - 0 blocked - 120 pending - 192 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -3162,10 +3162,42 @@ on each other's completion.
 Gate: Adapter gate — this runs the existing ingest against the live source at
 scale. No new model.
 
+### `participation-ledger-2022-23-support` - Populating the preregistered 2022-23 support season
+
+- [x] **done** - **COMPLETED 2026-09-02 by `data-engineer`.** The active
+  off-repository direct-observation ledger is now
+  `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db`.
+  Its 2022-23 support season contains 40,932 direct rows over 554 players and
+  observations in all 1,230 final games, with 25,894 separate production rows.
+  Production ingest and cached replay both completed with zero skipped rows and
+  zero source failures. `LeagueGameFinder`, `PlayerGameLogs`,
+  `BoxScoreTraditionalV3`, `BoxScoreSummaryV3`, and `CommonAllPlayers` are
+  fingerprinted in
+  `docs/adapters/participation-ledger-2022-23-coverage.json`; their stable game
+  ID sets agree, and all direct player IDs were present in `CommonAllPlayers`,
+  so no new hard-ID anchor was needed. The original 2023-26 ledger remains
+  byte-identical at 40,513,536 bytes and SHA-256
+  `e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
+  Logical hashes prove its three seasons' existing direct rows are unchanged in
+  the expanded copy, and the three committed prior census blobs are unchanged.
+  The known 2025-26 outages remain the only unobserved games. No missing
+  player-game was converted into play, non-play, or `unknown`; no opportunity
+  classification or model fitting occurred.
+- **Depends on:** `participation-ledger-population`
+
+This is the narrow support-season delta required by the owner-accepted
+availability preregistration. It does not reopen or revise
+`participation-ledger-population`; 2022-23 is historical Marcel support only.
+The store, backup, log, raw-capture and recovery identities are recorded in
+`docs/adapters/participation-ledger-store.md`.
+
+Gate: Code and Adapter gates. No Model gate: this item supplies direct source
+observations and safe coverage evidence only.
+
 ### `participation-opportunity-coverage` - Establishing an honest per-player, per-scheduled-game opportunity denominator
 
 - [ ] **pending**
-- **Depends on:** `participation-ledger-population`
+- **Depends on:** `participation-ledger-population`, `participation-ledger-2022-23-support`
 
 **Ownership boundary, stated precisely after a second independent cumulative
 review found the earlier split ambiguous: this item, and only this item, owns

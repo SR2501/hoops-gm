@@ -32928,3 +32928,63 @@ this entry was appended.
 
 **Next:** Independently review the exact acceptance head and merge only after
 the documentation, append-only, secret, backlog, and hosted checks pass.
+
+---
+
+## 2026-09-02 - data-engineer - Populated the 2022-23 direct-ledger support season
+
+**Changed:** Populated the one direct-observation support season missing from
+the owner-accepted availability preregistration, without beginning opportunity
+classification or model fitting. Verified `origin/main` at
+`ad9b461a0ca080c96d600909c9f5d586f4916c61` before work. Preserved
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`
+byte-for-byte at 40,513,536 bytes and SHA-256
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`;
+copied it to the new active
+`participation-ledger-direct-2022-26.db`, and backed that copy up before the
+first write.
+
+The existing production command ingested 2022-23 from `stats.nba.com`: 1,230
+games, 25,894 production rows, and 40,932 direct participation rows over 554
+players, with zero skips and zero source failures. A cached replay converged at
+`0 created / 40,932 updated / 0 skipped`. The separate existing NBA identity
+command captured `CommonAllPlayers`, updated 5,212 known identities, created
+none, and a final cached replay converged identically. The stable game-ID sets
+from `LeagueGameFinder`, `PlayerGameLogs`, and the store agree exactly; all
+1,230 final games have direct rows, all 40,932 rows carry source inactive-list
+availability, and no hard-ID recovery was needed because all 554 direct players
+are present in the season's `CommonAllPlayers` capture.
+
+The expanded schema-0016 store is 52,928,512 bytes at SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+Logical primary-key-ordered hashes for `nba_games`, `player_game_logs`, and
+`player_participation` prove every 2023-26 row unchanged; the three prior
+committed census blobs are unchanged too. The only four-season source gaps
+remain the three 2025-26 `BoxScoreSummaryV3` outages
+`0022500259`/`260`/`261`; no label was inferred from their silence.
+
+Published the outcome-safe
+`docs/adapters/participation-ledger-2022-23-coverage.json`, which fingerprints
+all 2,463 source captures, the active and preserved stores, the exact ingest
+code, three run logs, stable-ID reconciliation, and four-season direct-label
+availability. It exposes no outcome-valued count, keyed outcome, holdout class,
+play rate, or per-status/reason marginal. Added the completed narrow backlog
+item `participation-ledger-2022-23-support`, depending on the already-completed
+`participation-ledger-population`; `participation-opportunity-coverage` now
+depends on the support item. The original completed item was not reopened or
+rewritten.
+
+**Could not verify:** No player-level opportunity denominator, historical
+roster interval, or reason for a missing player-game was established; those
+remain explicitly outside this direct ledger and belong to
+`participation-opportunity-coverage`. No outcome value, opportunity class, or
+model output was computed. Hosted CI, the opt-in live-smoke suite, and
+independent review of the eventual PR head had not run when this entry was
+appended. The database, raw captures, backups, logs, and safe generator are
+off-repository and were verified on this machine only; their exact paths,
+hashes, and recovery commands are in
+`docs/adapters/participation-ledger-store.md`.
+
+**Next:** Run the complete Code and Adapter gates, including loud live smoke;
+independently review the exact frozen head; then open the focused PR without
+self-approval or merge.
