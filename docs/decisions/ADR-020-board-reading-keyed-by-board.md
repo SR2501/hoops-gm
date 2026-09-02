@@ -240,6 +240,13 @@ binding, participant resolution instead matches the coordinate to
 `DraftParticipant.source_seat`; the mapped participant's local `team_slot` may
 be different. Mutable display names never participate in either path.
 
+That binding answers which participant owns an ordered source coordinate; it
+does not by itself establish that a rendered board is applicable. A
+board-derived observation may enter participant-attributed events only when the
+draft also freezes a separately reviewed `source_board_profile` whose recorded
+corpus establishes that exact source format. A null or incompatible profile
+keeps the board evidence-only even when the binding is complete.
+
 This distinction is what makes the accepted rotated-binding requirement
 executable: source seat 1 can resolve to a participant whose local team slot is
 not 1 without weakening ordered-pick validation. It establishes no auction,
