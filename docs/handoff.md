@@ -33042,3 +33042,50 @@ appended.
 **Next:** Regenerate and reproduce the safe census from the repaired store,
 run the complete applicable gates, obtain fresh cumulative exact-head review,
 and update the open PR without merging it.
+
+---
+
+## 2026-09-02 - data-engineer - Pinned support-ledger recovery to exact captures
+
+**Changed:** Corrected the remaining cumulative-review finding: the ordinary
+season command was not a reproducible recovery path. Its per-game captures are
+effectively permanent, but `LeagueGameFinder` and `PlayerGameLogs` expire after
+12 hours, so a later "cached" rebuild can silently refetch mutable upstream
+data.
+
+Added `scripts/replay_participation_ledger.py` and an offline Adapter contract.
+The script supplies `NbaStatsClient` with a manifest-backed endpoint factory
+and a zero-delay limiter; there is no default or network-capable endpoint path.
+Every requested endpoint/parameter pair must be present, its relative gzip path
+must remain under the raw root, and its uncompressed SHA-256 must match. The
+run also refuses any unused manifest entry, source failure, or skipped row.
+Contract tests drive exact replay, an unpinned request, changed capture bytes,
+an escaping path, and an unconsumed entry.
+
+The off-repository manifest pins all 2,462 ingest requests at
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json`,
+788,178 bytes, SHA-256
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`.
+The replay code is pinned at commit
+`b7f396514c67a2e23920da353dc1030a2264d101`, script Git-blob SHA-256
+`3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`.
+
+End-to-end proof rebuilt a disposable copy of the preserved 2023-26 store,
+then replayed it again at `0 created / 40,932 updated / 0 skipped`. All 33
+tables are set-equal to the active store after excluding only
+`created_at`/`updated_at`; zero tables differ. The database files are not
+byte-identical because row timestamps and SQLite file history differ, so this
+is explicitly semantic replay equality rather than a false file-identity
+claim. The proof receipt SHA-256 is
+`47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`.
+
+**Could not verify:** The exact-capture replay proves the recorded 2022-23
+source set and database semantics. It does not prove that a future live source
+still returns the same payload; the loud live smoke remains the separate drift
+detector. Timestamp columns are intentionally excluded from cross-rebuild
+equality because a rebuild occurs at a different time. No opportunity class,
+direct outcome marginal, or model output was produced.
+
+**Next:** Regenerate the safe census with the offline replay provenance, run
+all applicable gates, obtain another cumulative review of the final head, and
+leave the PR open and unmerged.

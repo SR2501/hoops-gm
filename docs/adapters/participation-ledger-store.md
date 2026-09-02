@@ -584,9 +584,9 @@ sets from both season sources and the database are exactly equal.
 The committed safe census is
 [`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
 Its LF content SHA-256 is
-`344fa1cdac7f15fbd4fe7ccfb7a6f993bb333d00f4c427354e57b06713c30f01`.
+`d163f03ac256654a15476b5c9bf6bee953e4e470b937913535c7d7c5f3704fae`.
 The generator's Windows working-tree bytes use CRLF and hash to
-`885ecb426589c50ccf69387edb1e3ea6d9a8c8d273b9a7f9d92fbb61a2932fe6`;
+`af0902fcf04c557ca41d1f1c06bc11b1709628d252149b3f7d63da6a0ab502f2`;
 that checkout-only identity is not the published artifact identity.
 It includes the four-season direct-label availability summary required by the
 accepted protocol. No direct `PlayerParticipation.outcome` marginal,
@@ -596,7 +596,7 @@ evidence; they are neither fitting labels nor opportunity denominators. The
 pinned safe generator is
 `C:\Users\steverones\.copilot\session-state\a4e600b1-a630-4087-aaca-1efdfde01e8c\files\build_participation_census_2022_23_safe.py`,
 SHA-256
-`e3ff9e407e7101ec93345d2df340f84ccb616ee9e7bd1308dd07259edaa38a85`.
+`591f98ccaba8a45460adc75763165d6576cedc7f35f30365390c44e8ca2eab89`.
 
 Across the active store, the outcome-safe coverage report now measures 170,856
 direct rows, 899 distinct players, and 4,917 of 4,920 final games observed. The
@@ -663,15 +663,42 @@ Copy-Item `
   -Force
 ```
 
-To rebuild the four-season active store, first make that same copy, then run
-from the data root so `data\raw` resolves to the preserved cache:
+The ordinary production command is not a reproducible recovery command:
+`LeagueGameFinder` and `PlayerGameLogs` expire after 12 hours and may refetch
+changed upstream data. The pinned offline replayer has no network-capable
+endpoint factory. Its manifest names the exact relative gzip path and
+uncompressed SHA-256 for each of the 2,462 requests the season ingest consumes:
+
+- script: `scripts/replay_participation_ledger.py`
+- code commit: `b7f396514c67a2e23920da353dc1030a2264d101`
+- committed script blob SHA-256:
+  `3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`
+- pinned manifest:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json`
+- manifest bytes / SHA-256: `788,178` /
+  `e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`
+- end-to-end proof receipt:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof.json`
+- proof receipt SHA-256:
+  `47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`
+
+The proof rebuilt a disposable copy of the preserved prior, then replayed it a
+second time at `0 created / 40,932 updated / 0 skipped`. Comparing every
+non-timestamp column in all 33 tables against the active store found zero
+differing tables. The SQLite files are not byte-identical because row timestamps
+and file history differ; the proof claims semantic state equality, not file
+identity.
+
+To rebuild the four-season active store, first make the same preserved-prior
+copy, check out the pinned replay commit, and run:
 
 ```powershell
 $env:PYTHONPATH = "C:\path\to\hoops-gm\backend\src"
-$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db"
-cd C:\Users\steverones\hoops-gm-data
-python -m hoops_gm.ingest.backfill season 2022-23 --with-participation
-python -m hoops_gm.ingest.backfill season 2022-23 --with-participation
+python scripts\replay_participation_ledger.py `
+  C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db `
+  C:\Users\steverones\hoops-gm-data\data\raw `
+  C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json `
+  2022-23
 ```
 
 `CommonAllPlayers` is already preserved in `data\raw`; the census generator

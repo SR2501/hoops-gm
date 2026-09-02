@@ -19,8 +19,8 @@
     ],
     "ingest_command": "python -m hoops_gm.ingest.backfill season 2022-23 --with-participation",
     "ingest_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
-    "census_code_commit": "dd707ecc4eccb70e1508e5f3c0d41fe93e7c0fc1",
-    "census_generator_sha256": "e3ff9e407e7101ec93345d2df340f84ccb616ee9e7bd1308dd07259edaa38a85",
+    "census_code_commit": "b7f396514c67a2e23920da353dc1030a2264d101",
+    "census_generator_sha256": "591f98ccaba8a45460adc75763165d6576cedc7f35f30365390c44e8ca2eab89",
     "database_sha256": "93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a",
     "preserved_prior_store": {
       "path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2023-26.db",
@@ -69,6 +69,23 @@
       "restore_receipt": {
         "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-direct-2022-26-identity-restore-20260902T055244Z.json",
         "sha256": "59c3db1b77f3941478595f47a48f003a94d994b976dfff6d41dc99aa83eaae17"
+      }
+    },
+    "offline_replay": {
+      "network_access": false,
+      "script": {
+        "path": "scripts/replay_participation_ledger.py",
+        "git_blob_sha256": "3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4",
+        "code_commit": "b7f396514c67a2e23920da353dc1030a2264d101"
+      },
+      "pinned_capture_manifest": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-pinned-replay-manifest.json",
+        "bytes": 788178,
+        "sha256": "e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a"
+      },
+      "proof_receipt": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof.json",
+        "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32"
       }
     },
     "raw_capture_manifest": {
