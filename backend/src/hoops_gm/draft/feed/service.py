@@ -1421,10 +1421,13 @@ def _admit(row: DraftFeedObservation) -> _Admitted | str:
 #: These, and only these, are what a second reading has to agree about before
 #: it can be filed as corroboration. The set is deliberately narrower than
 #: :data:`hoops_gm.draft.feed.reconcile._COMPARED_FIELDS`, which compares
-#: everything two readings say: the coordinate fields order the apply pass but
-#: are never passed to the draft service, so a coordinate disagreement cannot
-#: make the board assert anything false about *this* holding, and blocking on
-#: it would strand real picks over a difference the owner can never see.
+#: everything two readings say. Coordinate fields do not become facts on a
+#: holding and therefore remain outside this cross-reading comparison. Bound
+#: rendered-board rows have a separate, stricter admission rule below: their
+#: full source coordinate must equal the draft's current next coordinate before
+#: ``record_pick`` is called. That check prevents a changed historical cell from
+#: being laundered into a new holding without pretending the holding stores the
+#: source coordinate.
 #:
 #: ``test_the_blocking_facts_are_exactly_what_the_board_is_told`` derives this
 #: set from the call site rather than trusting this comment, so passing a new
