@@ -1,10 +1,20 @@
 # Availability model - preregistration v1
 
-**Status: Proposed.** Written by `quant`; only the project owner may accept it.
+**Status: Accepted.**
+**Accepted:** 2026-09-01 by the project owner: `Yes, lock those rules`.
 **Author:** quant
 **Original draft:** 2026-08-31
 **Replacement draft:** 2026-09-01, pre-fit and pre-release of any availability
 holdout
+
+The acceptance binds the exact protocol at reviewed PR #141 head
+`07d62da6616fa1248da6e046a8e95f250f945b4f`, merged by
+`3dbeafa695387c9052e3ffcb33a24b14b1cc744f`, where this file has Git blob
+`8f6514f04b834955f258a7ac838d1f79597b5d1f`. This later owner-acceptance
+commit records the protocol commit required by sections 16 and 22.
+Acceptance leaves `FIT_VETOED_PREREQUISITES` unchanged. It does not approve a
+fitted model, release outcomes, waive `participation-opportunity-coverage`, or
+waive any numeric gate.
 
 This is a protocol, not a model card. It fits no estimator, evaluates no
 outcome, emits no `p(play)`, and claims no Model gate. A future result belongs
