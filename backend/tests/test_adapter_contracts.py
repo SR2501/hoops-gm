@@ -470,7 +470,7 @@ class TestFantraxDraftPicks:
         assert picks[0].team_id == "xwsfomdwms46061r"
         assert picks[0].overall_pick == 91
 
-    @pytest.mark.parametrize("value", [1.9, "bad", True])
+    @pytest.mark.parametrize("value", [1.9, "bad", True, "\uff11\uff12", "9" * 5000])
     def test_a_supplied_coordinate_must_be_an_exact_integer(self, value: object) -> None:
         with pytest.raises(SourceContractError, match="overall_pick must be an exact integer"):
             parse_draft_picks(

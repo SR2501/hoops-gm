@@ -47,6 +47,7 @@ from hoops_gm.ingest.league_settings import (
 )
 
 SOURCE = "fantrax_official"
+_MAX_DRAFT_COORDINATE_DIGITS: Final = 10
 
 
 def raise_for_error_envelope(payload: Any, *, endpoint: str) -> None:
@@ -458,7 +459,12 @@ def _draft_coordinate(
     elif isinstance(value, str):
         candidate = value.strip()
         digits = candidate[1:] if candidate.startswith(("+", "-")) else candidate
-        parsed = int(candidate) if digits.isdecimal() else None
+        is_ascii_integer = (
+            bool(digits)
+            and len(digits) <= _MAX_DRAFT_COORDINATE_DIGITS
+            and all("0" <= character <= "9" for character in digits)
+        )
+        parsed = int(candidate) if is_ascii_integer else None
     else:
         parsed = None
     if parsed is None:
