@@ -37,6 +37,11 @@ dev = [
     # Starlette's TestClient prefers httpx2; with httpx it emits a deprecation
     # warning, which the error-on-warning policy below turns into a failure.
     "httpx2>=2.10",
+    # Starlette 1.6.0 still imports the deprecated anyio.abc.BlockingPortal
+    # alias. AnyIO 4.15 warns on that import, and warnings are errors below, so
+    # keep the test stack on the last compatible AnyIO line until Starlette
+    # moves to anyio.from_thread.BlockingPortal.
+    "anyio<4.15",
     "mypy>=1.13",
     "ruff>=0.8",
     # The adapter and identity tests exercise real client code, so the ingest
