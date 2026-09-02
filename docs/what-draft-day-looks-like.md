@@ -288,11 +288,13 @@ valuation chain. `auction-budget-manager` depends on `draft-tracker`, not the
 reverse. Six of its seven dependencies were already done when he answered; the
 seventh, `draft-tracker-bridge-feed`, merged as #104 on 2026-08-27.
 
-**Q12 is why #109 exists.** The draft feed merged with one known defect — a
-record whose player id is unreadable is counted at ingest and never surfaced on
-`GET`, so the board is silently short a player with every channel reading clean.
-That is Q12 verbatim, so the fix is a **dependency edge** rather than a caveat:
-`draft-tracker` cannot be marked done while it exists.
+**Q12 is why #109 existed and was fixed.** The draft feed originally merged
+with one known defect — a record whose player id was unreadable was counted at
+ingest and never surfaced on `GET`, so the board could be silently short a
+player with every channel reading clean. `draft-feed-unreadable-id-surfacing`
+now persists that refusal with `skipped_reason` and publishes it on `GET`.
+`draft-tracker` remains pending for the separate automatic-product/profile
+boundary recorded in the backlog, not for this repaired silence.
 
 ## Named by him, and not in the backlog
 

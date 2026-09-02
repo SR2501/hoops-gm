@@ -47,6 +47,7 @@ from hoops_gm.ingest.league_settings import (
 )
 
 SOURCE = "fantrax_official"
+_MAX_DRAFT_COORDINATE_DIGITS: Final = 10
 
 
 def raise_for_error_envelope(payload: Any, *, endpoint: str) -> None:
@@ -408,15 +409,72 @@ def parse_draft_picks(payload: Any) -> list[FantraxDraftPick]:
         picks.append(
             FantraxDraftPick(
                 team_id=str(row.get("teamId") or row.get("fantasyTeamId") or ""),
-                round_number=_as_int(row.get("round") or row.get("roundNumber")),
-                pick_number=_as_int(row.get("pick") or row.get("pickNumber")),
-                overall_pick=_as_int(row.get("overallPick") or row.get("overall")),
+                round_number=_draft_coordinate(
+                    row,
+                    ("round", "roundNumber"),
+                    field_name="round_number",
+                    endpoint=endpoint,
+                ),
+                pick_number=_draft_coordinate(
+                    row,
+                    ("pick", "pickNumber"),
+                    field_name="pick_number",
+                    endpoint=endpoint,
+                ),
+                overall_pick=_draft_coordinate(
+                    row,
+                    ("overallPick", "overall"),
+                    field_name="overall_pick",
+                    endpoint=endpoint,
+                ),
                 player_id=_optional_str(row.get("playerId") or row.get("id")),
                 player_name=_optional_str(row.get("playerName") or row.get("name")),
                 auction_amount=_as_float(row.get("amount") or row.get("bid") or row.get("salary")),
             )
         )
     return picks
+
+
+def _draft_coordinate(
+    row: dict[str, Any],
+    keys: tuple[str, ...],
+    *,
+    field_name: str,
+    endpoint: str,
+) -> int | None:
+    """An absent coordinate, or an exact integer the source actually supplied."""
+    value: Any = None
+    supplied_key: str | None = None
+    for key in keys:
+        if key in row:
+            value = row[key]
+            supplied_key = key
+            break
+    if supplied_key is None or value is None:
+        return None
+    if isinstance(value, bool):
+        parsed = None
+    elif isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        candidate = value
+        digits = candidate[1:] if candidate.startswith(("+", "-")) else candidate
+        is_ascii_integer = (
+            bool(digits)
+            and len(digits) <= _MAX_DRAFT_COORDINATE_DIGITS
+            and all("0" <= character <= "9" for character in digits)
+        )
+        parsed = int(candidate) if is_ascii_integer else None
+    else:
+        parsed = None
+    if parsed is None:
+        raise SourceContractError(
+            f"{field_name} must be an exact integer when supplied",
+            source=SOURCE,
+            endpoint=endpoint,
+            detail={"key": supplied_key, "value": repr(value)[:100]},
+        )
+    return parsed
 
 
 def _as_int(value: Any) -> int | None:

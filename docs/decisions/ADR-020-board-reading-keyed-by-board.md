@@ -222,3 +222,32 @@ Acceptance does not create or populate that binding, enable authoritative
 participant picks or budgets, or establish NBA, auction, or `layout="other"`
 support. Missing, incomplete, or contradictory binding still refuses
 attribution.
+
+### 2026-09-02 — implementation clarification of the accepted binding
+
+This is a clarification of the accepted source-column binding above, not a new
+decision or a change to this ADR's status. The sentence beginning
+"`DraftParticipant.team_slot` is the internal ordered-draft coordinate
+contract" describes an **unbound** draft. It does not make `team_slot` an alias
+for the rendered column; direct `seat == team_slot` remains explicitly
+rejected.
+
+`DraftPick.team_slot` remains the frozen ordered/source coordinate inside
+`DraftFormat`. When a draft has no source binding, ordered participant
+resolution preserves the existing behavior and matches that coordinate to
+`DraftParticipant.team_slot`. When creation freezes a complete one-to-one
+binding, participant resolution instead matches the coordinate to
+`DraftParticipant.source_seat`; the mapped participant's local `team_slot` may
+be different. Mutable display names never participate in either path.
+
+That binding answers which participant owns an ordered source coordinate; it
+does not by itself establish that a rendered board is applicable. A
+board-derived observation may enter participant-attributed events only when the
+draft also freezes a separately reviewed `source_board_profile` whose recorded
+corpus establishes that exact source format. A null or incompatible profile
+keeps the board evidence-only even when the binding is complete.
+
+This distinction is what makes the accepted rotated-binding requirement
+executable: source seat 1 can resolve to a participant whose local team slot is
+not 1 without weakening ordered-pick validation. It establishes no auction,
+NBA, or `layout="other"` support.

@@ -64,7 +64,13 @@ from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.db.models.draft import Draft, DraftEvent
-from hoops_gm.db.models.enums import DraftEventType, DraftStatus, DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftEventType,
+    DraftSourceBoardProfile,
+    DraftStatus,
+    DraftToolUsage,
+    DraftType,
+)
 from hoops_gm.db.models.league import League
 from hoops_gm.draft import service
 from hoops_gm.draft.formats import AuctionDraftFormat
@@ -117,7 +123,15 @@ class ParticipantRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    team_slot: int = Field(ge=1, description="One-indexed, matching DraftPick.team_slot.")
+    team_slot: int = Field(ge=1, description="One-indexed local participant slot.")
+    source_seat: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Frozen one-indexed rendered-board column. Either every participant supplies "
+            "one or none do; it is distinct from team_slot."
+        ),
+    )
     display_name: str = Field(min_length=1, max_length=128)
     is_owner: bool = False
     fantasy_team_id: int | None = None
@@ -137,6 +151,13 @@ class CreateDraftRequest(BaseModel):
     #: whether the draft is evidence about human behaviour or about this tool's
     #: own advice, and guessing it either way is unrecoverable later.
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None = Field(
+        default=None,
+        description=(
+            "Exact recorded evidence corpus authorising board-derived events. Null keeps "
+            "rendered boards evidence-only even when source seats are bound."
+        ),
+    )
     notes: str | None = None
     participants: list[ParticipantRequest]
 
@@ -281,6 +302,7 @@ class HoldingOut(BaseModel):
 class ParticipantOut(BaseModel):
     id: int
     team_slot: int
+    source_seat: int | None
     display_name: str
     is_owner: bool
     fantasy_team_id: int | None
@@ -346,6 +368,7 @@ class DraftSummary(BaseModel):
     name: str
     is_mock: bool
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None
     status: DraftStatus
     format: FormatOut
     last_sequence: int
@@ -366,6 +389,7 @@ class DraftStateResponse(BaseModel):
     name: str
     is_mock: bool
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None
     notes: str | None
     status: DraftStatus
     format: FormatOut
@@ -415,12 +439,32 @@ def _format_out(state: DraftStateView) -> FormatOut:
 def _state_response(
     draft: Draft, state: DraftStateView, drift: service.LeagueFormatDrift | None
 ) -> DraftStateResponse:
+    next_pick_out: NextPickOut | None = None
+    if state.next_pick is not None:
+        if state.next_pick_participant_id is None:  # pragma: no cover - state invariant
+            raise DraftLogError(
+                "draft_source_seat_binding_invalid",
+                f"Ordered slot {state.next_pick.team_slot} has no participant.",
+            )
+        next_pick_team_slot = next(
+            seat.participant.team_slot
+            for seat in state.participants
+            if seat.participant.id == state.next_pick_participant_id
+        )
+        next_pick_out = NextPickOut(
+            overall_pick=state.next_pick.overall_pick,
+            round_number=state.next_pick.round_number,
+            pick_in_round=state.next_pick.pick_in_round,
+            team_slot=next_pick_team_slot,
+            participant_id=state.next_pick_participant_id,
+        )
     return DraftStateResponse(
         id=draft.id,
         league_id=draft.league_id,
         name=draft.name,
         is_mock=draft.is_mock,
         tool_usage=draft.tool_usage,
+        source_board_profile=draft.source_board_profile,
         notes=draft.notes,
         status=state.status,
         format=_format_out(state),
@@ -439,6 +483,7 @@ def _state_response(
             ParticipantOut(
                 id=seat.participant.id,
                 team_slot=seat.participant.team_slot,
+                source_seat=seat.participant.source_seat,
                 display_name=seat.participant.display_name,
                 is_owner=seat.participant.is_owner,
                 fantasy_team_id=seat.participant.fantasy_team_id,
@@ -475,17 +520,7 @@ def _state_response(
                 high_bid_sequence=state.open_lot.high_bid_sequence,
             )
         ),
-        next_pick=(
-            None
-            if state.next_pick is None
-            else NextPickOut(
-                overall_pick=state.next_pick.overall_pick,
-                round_number=state.next_pick.round_number,
-                pick_in_round=state.next_pick.pick_in_round,
-                team_slot=state.next_pick.team_slot,
-                participant_id=state.next_pick_participant_id,
-            )
-        ),
+        next_pick=next_pick_out,
         selections_made=state.selections_made,
         total_roster_slots=state.total_roster_slots,
         last_sequence=state.last_sequence,
@@ -532,6 +567,7 @@ def list_drafts(session: SessionDep, request: Request) -> DraftListResponse:
                 name=draft.name,
                 is_mock=draft.is_mock,
                 tool_usage=draft.tool_usage,
+                source_board_profile=draft.source_board_profile,
                 status=state.status,
                 format=_format_out(state),
                 last_sequence=state.last_sequence,
@@ -572,10 +608,12 @@ def create_draft(
             name=payload.name,
             tool_usage=payload.tool_usage,
             is_mock=payload.is_mock,
+            source_board_profile=payload.source_board_profile,
             notes=payload.notes,
             participants=[
                 service.ParticipantSpec(
                     team_slot=seat.team_slot,
+                    source_seat=seat.source_seat,
                     display_name=seat.display_name,
                     is_owner=seat.is_owner,
                     fantasy_team_id=seat.fantasy_team_id,
