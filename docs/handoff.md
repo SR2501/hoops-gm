@@ -32928,3 +32928,73 @@ this entry was appended.
 
 **Next:** Independently review the exact acceptance head and merge only after
 the documentation, append-only, secret, backlog, and hosted checks pass.
+
+---
+
+## 2026-09-02 - backend - Bound rendered draft boards to frozen participants
+
+**Changed:** Completed the supported snake/linear boundary of
+`draft-board-feed-integration` after rebasing onto main
+`5d141b5f4672b0cd28db05f84817637c4df004d2`. Migration `0023` adds nullable
+`DraftParticipant.source_seat`; draft creation accepts either no values or a
+complete one-to-one mapping over `1..team_count`, and the participant read
+contract publishes the frozen binding. Partial, duplicate, nonpositive and
+out-of-range mappings are refused. No update or repair surface was added.
+
+A supported rendered-board observation now resolves its source column only
+through that binding and then enters the existing append-only pending/apply
+pipeline. Ordered-state derivation uses the binding for bound drafts and keeps
+the old `team_slot` rule for unbound/manual drafts. The public
+`next_pick.team_slot` still names the mapped participant's local team slot while
+the internal `DraftPick.team_slot` remains the frozen ordered/source coordinate.
+A deliberately rotated mapping proves those values are not aliases.
+
+The apply pass now requires a bound board row's
+`(overall, round, pick_in_round, source_seat)` to equal the current frozen-format
+coordinate before append. Independent review found the missing gate: in a
+three-seat snake, source seat 3 owns both picks 3 and 4, so a changed historical
+pick-3 cell could otherwise append as pick 4. The exact reproduction now blocks
+as `draft_pick_coordinate_mismatch`, leaves the row pending, and appends
+nothing. Existing board-content dedupe, replay, dimension locking, regression
+publication and no-retraction behavior remain intact.
+
+`GET /api/v1/drafts/{id}/feed` retains aggregate `skipped` and adds
+`skipped_by_participant`, ordered by local `team_slot` and keyed by stable
+participant id, plus `unattributed_skipped`. Tests require attributed and
+unattributed reason counts to partition the aggregate exactly; source-only rows
+on an unbound draft remain unattributed rather than being guessed onto the
+same-numbered local slot. The OpenAPI schemas carry both additions.
+
+Auction and `layout="other"` remain refused by their existing named reasons.
+`fantrax-auction-capture` now states the recorded NBA-auction evidence required
+before nomination, price or sale semantics may be added. No Fantrax action,
+external write, bridge executor or automation guardrail changed.
+
+**Gates:** Code and Adapter apply; Model and Automation do not. On the rebased
+code, Ruff check and format-check passed over 239 files, strict mypy passed over
+232 source files, and the complete SQLite-backed suite passed with **2,415
+passed, 1 skipped, 41 live-smoke tests deselected**. The relevant draft API,
+draft feed, rendered-board and migration suites passed together. SQLite Alembic
+upgrade from empty, model/schema comparison, downgrade to base, and the focused
+`0022 -> 0023` current-schema upgrade all passed. The backlog graph recounts 191
+items as 72 done and 119 pending.
+
+**Holdings:** No private capture, database, credential or generated artifact is
+required to resume this unit. The committed board fixture drives the
+snake/rendered path; the linear boundary test changes only its independently
+rendered even-round coordinate marks and proves the parser classifies the result
+as linear before ingest.
+
+**Could not verify:** The historical local PostgreSQL endpoint at
+`127.0.0.1:55432` timed out, so native PostgreSQL execution was not available
+before this append; the repository's configured PostgreSQL CI job still needs
+to run against the exact publication head. No real Fantrax NBA auction or
+linear draft-room capture exists, and this work establishes no auction
+applicability. ADR-020's exact-content undo blind spot remains unchanged.
+Hosted CI and an independent review of the eventual documentation commit had
+not run when this entry was appended.
+
+**Next:** Commit the append-only documentation, independently review one exact
+head, push `sr2501-bind-rendered-draft-board`, open the focused PR, and freeze
+that head for hosted Code, Adapter and PostgreSQL checks. Do not merge or
+self-approve.
