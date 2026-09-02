@@ -405,8 +405,11 @@ identities.
 The original
 [`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
 is preserved unchanged as the already-accepted historical disclosure. The
-current three-season censuses publish no outcome-valued scalar and no new
-outcome-keyed map. Exact marginals were computed privately from the
+current three-season censuses publish no direct `PlayerParticipation.outcome`
+marginal and no new outcome-keyed map. Their played-only `PlayerGameLogs` row
+totals remain source-reconciliation evidence; those totals are outcome-valued,
+but are neither participation fitting labels nor opportunity denominators.
+Exact direct-participation marginals were computed privately from the
 off-repository store and withheld under quant arbitration; reviewers who saw
 them are spent for choices that could respond to those values.
 
@@ -517,9 +520,9 @@ first write:
 
 - active store:
   `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db`
-- active bytes: `52,928,512`
+- active bytes: `52,932,608`
 - active SHA-256:
-  `5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`
+  `93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a`
 - schema: `0016`
 - pre-write backup:
   `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.pre-2022-23-20260902T040259Z.db`
@@ -539,11 +542,36 @@ No migration ran. Exactly one writer used the active store at a time.
 The production pass created those rows with zero skips and zero source
 failures. The final cached replay reported `0 created / 40,932 updated / 0
 skipped`; game and production rows likewise converged at `1,230` and `25,894`.
-The `CommonAllPlayers` reconciliation updated 5,212 existing NBA identities and
-created none. All 554 direct-ledger players are present in that source capture,
-so `recovered_source_named_anchors` is empty for this season. The existing
-fixture contracts still pin the hard-ID-only recovery path and the fail-loud
-nameless-ID refusal; no external-call or parser contract changed in this unit.
+All 554 direct-ledger players are present in the recorded `CommonAllPlayers`
+source capture, so `recovered_source_named_anchors` is empty for this season.
+The existing fixture contracts still pin the hard-ID-only recovery path and the
+fail-loud nameless-ID refusal; no external-call or parser contract changed in
+this unit.
+
+The first census pass ran `nba-identity --season 2022-23` against the active
+store to obtain that capture. That was wrong: `import_nba_players` treats the
+source's historical `TEAM_ID`/`TEAM_ABBREVIATION` as current metadata and
+changed 371 `players.current_team_id` rows plus 631 NBA
+`player_external_ids.external_team` rows. A pre-repair backup preserves that
+state at
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26-before-identity-restore-20260902T055244Z.db`,
+SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+
+The active store was repaired by restoring `players`, `player_external_ids`,
+and `nba_teams` exactly from the preserved 2023-26 database, by primary key,
+without touching any game, production, or participation row. The repair
+receipt is
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26-identity-restore-20260902T055244Z.json`,
+SHA-256
+`59c3db1b77f3941478595f47a48f003a94d994b976dfff6d41dc99aa83eaae17`.
+The repair script is
+`C:\Users\steverones\.copilot\session-state\a4e600b1-a630-4087-aaca-1efdfde01e8c\files\restore_participation_ledger_identity.py`,
+SHA-256
+`da87f9e0ca5cdd8ff79f77a0b6b97f2fa9acfa72b41f0092c8e12ea9d295352e`.
+A final cached season replay still converged at `0 created / 40,932 updated /
+0 skipped` and left all three identity tables exactly equal to the preserved
+prior.
 
 The source manifest contains 2,463 captures: 1,230
 `BoxScoreTraditionalV3`, 1,230 `BoxScoreSummaryV3`, and one each of
@@ -556,17 +584,19 @@ sets from both season sources and the database are exactly equal.
 The committed safe census is
 [`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
 Its LF content SHA-256 is
-`be1dccae9af5ad98f14ae2900c4b93dfc7016ad33700c938eb419331237ebe97`.
+`344fa1cdac7f15fbd4fe7ccfb7a6f993bb333d00f4c427354e57b06713c30f01`.
 The generator's Windows working-tree bytes use CRLF and hash to
-`c0d323bcd52f5ce13738ae36dea0ec3b6661dba582fb9e1080f7b23150ba39d4`;
+`885ecb426589c50ccf69387edb1e3ea6d9a8c8d273b9a7f9d92fbb61a2932fe6`;
 that checkout-only identity is not the published artifact identity.
 It includes the four-season direct-label availability summary required by the
-accepted protocol and publishes no outcome-valued count, keyed outcome,
-holdout class, play rate, or per-status/reason marginal. The pinned safe
-generator is
+accepted protocol. No direct `PlayerParticipation.outcome` marginal,
+opportunity-class marginal, keyed outcome, or play rate is published.
+Played-only `PlayerGameLogs` source-row totals remain source-reconciliation
+evidence; they are neither fitting labels nor opportunity denominators. The
+pinned safe generator is
 `C:\Users\steverones\.copilot\session-state\a4e600b1-a630-4087-aaca-1efdfde01e8c\files\build_participation_census_2022_23_safe.py`,
 SHA-256
-`be4575c0cddda462aa05110ef50529cac8810d2f7f20ce27f3162364767facb8`.
+`e3ff9e407e7101ec93345d2df340f84ccb616ee9e7bd1308dd07259edaa38a85`.
 
 Across the active store, the outcome-safe coverage report now measures 170,856
 direct rows, 899 distinct players, and 4,917 of 4,920 final games observed. The
@@ -588,9 +618,20 @@ final replay produced exact equality. The direct-row SHA-256 values are:
 
 The corresponding `nba_games` and `player_game_logs` logical hashes also match;
 the complete comparison is retained at
-`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.post-2022-23-audit.json`.
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.post-2022-23-audit.json`,
+SHA-256
+`a1a256e4790d5aa933c8c45b923b5c31c61bb00c63651fd076d88e805cc30443`.
 The three prior committed census files are unchanged from the Git blobs named
 above.
+
+Identity state is now covered by the same non-regression rule. The complete
+table digests match the preserved prior exactly:
+
+| table | rows | logical SHA-256 |
+|---|---:|---|
+| `players` | 5,224 | `210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda` |
+| `player_external_ids` | 5,224 | `185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660` |
+| `nba_teams` | 30 | `f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200` |
 
 ### Logs and recovery
 
@@ -603,8 +644,11 @@ The census pins these off-repository logs and their SHA-256 values:
   `participation-ledger-identity-2022-23-20260902T045223Z.log`,
   `29b2fadbf42977eedf2522ca065a70fd6ba9a445e901f753c50f852d1551300a`
 - final cached replay:
-  `participation-ledger-2022-23-final-cached-replay-20260902T045223Z.log`,
+  `participation-ledger-2022-23-post-identity-restore-replay-20260902T055301Z.log`,
   `b5c3d66a0def822fe0d632752fccaffbbaad41e7f9a54cde2306e8a37c968680`
+- identity restoration:
+  `participation-ledger-2022-26-identity-restore-20260902T055244Z.log`,
+  `d5fb9cab869a4bf866855965f7d136aa3a42db9c7fd7168a025b0f87deda6683`
 
 The earlier convergent cached replay is also retained in the same directory
 under `participation-ledger-2022-23-cached-replay-20260902T044845Z.log`;
@@ -627,9 +671,15 @@ $env:PYTHONPATH = "C:\path\to\hoops-gm\backend\src"
 $env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db"
 cd C:\Users\steverones\hoops-gm-data
 python -m hoops_gm.ingest.backfill season 2022-23 --with-participation
-python -m hoops_gm.ingest.backfill nba-identity --season 2022-23
 python -m hoops_gm.ingest.backfill season 2022-23 --with-participation
 ```
+
+`CommonAllPlayers` is already preserved in `data\raw`; the census generator
+reads it directly for stable-ID reconciliation. **Do not run a historical
+`nba-identity` command against the active store.** If that capture is ever
+missing, run the command against a disposable copy of the preserved prior,
+verify the raw capture, and delete the disposable database before rebuilding
+the active store.
 
 Never run either recovery while another writer has either ledger open. The
 pre-write backup is the independent fallback if the preserved prior path is

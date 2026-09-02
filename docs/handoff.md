@@ -32988,3 +32988,57 @@ hashes, and recovery commands are in
 **Next:** Run the complete Code and Adapter gates, including loud live smoke;
 independently review the exact frozen head; then open the focused PR without
 self-approval or merge.
+
+---
+
+## 2026-09-02 - data-engineer - Corrected support-ledger identity and disclosure claims
+
+**Changed:** Corrected two blocked findings on the support-ledger publication
+candidate. The prior entry remains byte-identical because this file is
+append-only; this entry supersedes its active-store hash and its blanket
+outcome-neutral claim.
+
+First, the historical `nba-identity --season 2022-23` capture was not harmless.
+`import_nba_players` wrote historical `TEAM_ID`/`TEAM_ABBREVIATION` values into
+shared current metadata, changing 371 `players.current_team_id` rows and 631
+NBA `player_external_ids.external_team` rows. The earlier non-regression audit
+did not hash those tables and therefore could not see the defect. The mutated
+active store was backed up at SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+The active store was repaired by restoring `players`, `player_external_ids`,
+and `nba_teams` exactly by primary key from the preserved 2023-26 database,
+not by guessing that another season replay meant "current." A final cached
+participation replay converged at `0 created / 40,932 updated / 0 skipped` and
+left all three identity-table hashes equal to the preserved prior. The repaired
+active store is 52,932,608 bytes, SHA-256
+`93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a`.
+The rebuild workflow no longer runs historical identity ingestion against the
+active store; the already-recorded `CommonAllPlayers` payload supplies
+identity reconciliation directly.
+
+Second, quant arbitration kept `player_game_log_rows` and `box_score_rows` but
+rejected the prior wording that called the census entirely outcome-neutral.
+`PlayerGameLogs` contains played-game appearances only, so its source-row total
+is outcome-valued upstream evidence. It is not the direct
+`PlayerParticipation.outcome == played` marginal, not a fitting label, and not
+an opportunity denominator; known cross-source disagreements and outages
+prevent treating the quantities as interchangeable. The census now states the
+narrow invariant:
+`direct_participation_outcome_marginals_published=false`. No direct
+`PlayerParticipation.outcome` marginal, opportunity-class marginal, keyed
+outcome, or play rate is published. The inherited 2023-26 censuses contain the
+same allowed source-row totals but no falsely broad metadata field, so their
+bytes and published blob identities remain unchanged; the adapter page now
+states their semantics precisely.
+
+**Could not verify:** The repair restores identity state exactly to the
+preserved PR #145 artifact; it does not claim that artifact reflects
+post-2025-26 roster movement. No player-level opportunity denominator,
+historical roster interval, direct outcome marginal, opportunity class, or
+model output was produced. Hosted checks and fresh cumulative independent
+review had not run against the eventual repaired head when this correction was
+appended.
+
+**Next:** Regenerate and reproduce the safe census from the repaired store,
+run the complete applicable gates, obtain fresh cumulative exact-head review,
+and update the open PR without merging it.

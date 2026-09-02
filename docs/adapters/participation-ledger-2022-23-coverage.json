@@ -18,15 +18,58 @@
       "BoxScoreSummaryV3"
     ],
     "ingest_command": "python -m hoops_gm.ingest.backfill season 2022-23 --with-participation",
-    "identity_command": "python -m hoops_gm.ingest.backfill nba-identity --season 2022-23",
     "ingest_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
-    "census_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
-    "census_generator_sha256": "be4575c0cddda462aa05110ef50529cac8810d2f7f20ce27f3162364767facb8",
-    "database_sha256": "5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d",
+    "census_code_commit": "dd707ecc4eccb70e1508e5f3c0d41fe93e7c0fc1",
+    "census_generator_sha256": "e3ff9e407e7101ec93345d2df340f84ccb616ee9e7bd1308dd07259edaa38a85",
+    "database_sha256": "93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a",
     "preserved_prior_store": {
       "path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2023-26.db",
       "bytes": 40513536,
       "sha256": "e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe"
+    },
+    "identity_state_reconciliation": {
+      "policy": "CommonAllPlayers is identity-reconciliation evidence only. Historical team metadata is not retained as current identity state.",
+      "matches_preserved_prior": true,
+      "tables": {
+        "players": {
+          "active": {
+            "rows": 5224,
+            "sha256": "210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda"
+          },
+          "preserved_prior": {
+            "rows": 5224,
+            "sha256": "210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda"
+          }
+        },
+        "player_external_ids": {
+          "active": {
+            "rows": 5224,
+            "sha256": "185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660"
+          },
+          "preserved_prior": {
+            "rows": 5224,
+            "sha256": "185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660"
+          }
+        },
+        "nba_teams": {
+          "active": {
+            "rows": 30,
+            "sha256": "f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200"
+          },
+          "preserved_prior": {
+            "rows": 30,
+            "sha256": "f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200"
+          }
+        }
+      },
+      "restore_script": {
+        "path": "C:\\Users\\steverones\\.copilot\\session-state\\a4e600b1-a630-4087-aaca-1efdfde01e8c\\files\\restore_participation_ledger_identity.py",
+        "sha256": "da87f9e0ca5cdd8ff79f77a0b6b97f2fa9acfa72b41f0092c8e12ea9d295352e"
+      },
+      "restore_receipt": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-direct-2022-26-identity-restore-20260902T055244Z.json",
+        "sha256": "59c3db1b77f3941478595f47a48f003a94d994b976dfff6d41dc99aa83eaae17"
+      }
     },
     "raw_capture_manifest": {
       "algorithm": "sha256 of endpoint, canonical request params, and uncompressed payload sha256, tab-separated and sorted",
@@ -54,11 +97,15 @@
         "sha256": "29b2fadbf42977eedf2522ca065a70fd6ba9a445e901f753c50f852d1551300a"
       },
       {
-        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-final-cached-replay-20260902T045223Z.log",
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-26-identity-restore-20260902T055244Z.log",
+        "sha256": "d5fb9cab869a4bf866855965f7d136aa3a42db9c7fd7168a025b0f87deda6683"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-post-identity-restore-replay-20260902T055301Z.log",
         "sha256": "b5c3d66a0def822fe0d632752fccaffbbaad41e7f9a54cde2306e8a37c968680"
       }
     ],
-    "run_log_manifest_sha256": "c7cdc285c7b3e2e1cd0bee7cf5a3fa0df83adc1c76fc5ec7822d7b8ffa5477ef"
+    "run_log_manifest_sha256": "30e102d3a186565b1c5cd8fb4eae64c472bb466d60b74319ac830522ced6fa4f"
   },
   "store": {
     "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db",
@@ -80,7 +127,7 @@
   },
   "unresolved_source_outages": [],
   "production_log_audit": {
-    "policy": "PlayerGameLogs was used only to audit source-game identity and production-row presence. It supplied no participation fitting label.",
+    "policy": "PlayerGameLogs contains played-game appearances only. Its row total is kept as source-reconciliation evidence; it is not a direct PlayerParticipation outcome marginal, fitting label, or opportunity denominator.",
     "supplied_participation_labels": false,
     "game_log_rows_in_games_without_participation": 0,
     "games_with_logs_but_no_participation": []
@@ -184,7 +231,7 @@
         "is_populated": true
       }
     },
-    "outcome_valued_counts_published": false
+    "direct_participation_outcome_marginals_published": false
   },
   "season": {
     "season": "2022-23",

@@ -3175,7 +3175,12 @@ scale. No new model.
   fingerprinted in
   `docs/adapters/participation-ledger-2022-23-coverage.json`; their stable game
   ID sets agree, and all direct player IDs were present in `CommonAllPlayers`,
-  so no new hard-ID anchor was needed. The original 2023-26 ledger remains
+  so no new hard-ID anchor was needed. The historical identity capture
+  initially rewrote 371 current-team and 631 NBA external-team values; the
+  active store now restores the complete `players`, `player_external_ids`, and
+  `nba_teams` state exactly from the preserved prior, with table-level hashes
+  recorded in the census. The reproducible workflow no longer runs historical
+  identity ingestion against the active store. The original 2023-26 ledger remains
   byte-identical at 40,513,536 bytes and SHA-256
   `e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
   Logical hashes prove its three seasons' existing direct rows are unchanged in
