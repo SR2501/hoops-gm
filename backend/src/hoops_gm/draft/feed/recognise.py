@@ -1340,30 +1340,24 @@ def recognise_official_draft_picks(
     that" without noticing the argument held on one path only; if you are about
     to write a fourth, name the path.
 
-    **What this docstring used to say, and why it was wrong.** It justified the
-    weakness with "it can afford to be, because the shape is already typed by
-    ``parse_draft_picks`` rather than guessed from an arbitrary JSON block".
-    Round 8 falsified that by execution. Being typed by that parser is not a
-    safety property, because the parser *normalises before this reader sees
-    anything*: it converts with a bare ``int()``/``float()``/``str()`` and
-    selects aliases with a truthy ``or`` chain. Measured, on the real chain::
+    **What this docstring used to say, and what remains true.** It justified
+    the weakness with "the shape is already typed by ``parse_draft_picks``".
+    Round 8 falsified that by execution: the parser normalised coordinates with
+    bare ``int()`` and truthy aliases before this reader could validate them.
+    That coordinate seam is now strict. Supplied round/pick/overall values must
+    be bounded ASCII exact integers; malformed, fractional, non-ASCII and
+    whitespace-padded forms fail at the adapter boundary, while zero is
+    preserved for this recogniser to refuse as non-positive.
 
-        {"overallPick": 1.9}              -> overall_pick=1     (bridge refuses)
-        {"overallPick": "1_0"}            -> overall_pick=10    (bridge refuses)
-        {"overallPick": 0, "overall": 3}  -> overall_pick=3     (bridge refuses)
-        {"amount": 0, "bid": 10}          -> amount=10.0        (bridge refuses)
+    Typing is still not a general safety property. Auction amount aliases retain
+    the older lossy path::
 
-    Every one of those is *already* a plain, in-range, exactly-typed value by
-    the time the coercers above run, so they pass — and they pass **because**
-    the damage was done upstream, not in spite of it. The round-7 fix that
-    routed every field through the coercers is therefore real but bounded: it
-    closes the asymmetry at the typed-dataclass layer, and **not** across the
-    raw source. The coercers cannot recover information that no longer exists.
+        {"amount": 0, "bid": 10} -> amount=10.0
 
-    That defect lives in
-    :mod:`hoops_gm.ingest.fantrax_official.parsers`, which this unit does not
-    own, and it is filed rather than patched here. **Do not add a "the parser
-    validates that" clause to this docstring.** It does not.
+    That separate amount defect remains in
+    :mod:`hoops_gm.ingest.fantrax_official.parsers`. The coercers here also
+    remain necessary for direct typed callers and storage bounds; neither claim
+    is replaced by the adapter's raw-coordinate grammar.
     """
     anchor_failure = context.anchor_failure()
     if anchor_failure is not None:

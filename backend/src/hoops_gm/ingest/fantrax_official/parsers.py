@@ -457,7 +457,7 @@ def _draft_coordinate(
     elif isinstance(value, int):
         parsed = value
     elif isinstance(value, str):
-        candidate = value.strip()
+        candidate = value
         digits = candidate[1:] if candidate.startswith(("+", "-")) else candidate
         is_ascii_integer = (
             bool(digits)
