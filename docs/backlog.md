@@ -1923,11 +1923,14 @@ agreed with it **749 times out of 749**.
    are console vocabulary and appear nowhere in the markup - so the column
    ordinal is the only stable key there is.
 
-**Not wired into the feed.** `recognise_bridge_payload` still does not read a
-snapshot's contents. Turning a board reading into an `ObservedInstant` means
-deciding its transport, its provenance and what it means for two readings of the
-same board to corroborate each other, and that is a contract question rather
-than a parsing one. See `draft-board-feed-integration`.
+**Historical integration gap, now conditional.** At parser completion,
+`recognise_bridge_payload` did not read snapshot contents and no board reading
+became an `ObservedInstant`. The feed now has a separate rendered-board
+recogniser and permits application only for a mock frozen to the recorded
+`fantrax_football_snake_v1` profile with complete binding and successful-reading
+provenance. Unprofiled, real, linear, auction and `layout="other"` boards remain
+evidence-only or refused; product completion remains in
+`draft-board-feed-integration`.
 
 ### `bridge-snapshot-budget` - The snapshot cap is one league size away from eating the board
 

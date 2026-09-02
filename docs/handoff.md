@@ -33165,3 +33165,15 @@ The reconciled local fixes also preserve the remote profile boundary while refus
 **Could not verify:** No real NBA auction or linear Fantrax capture exists, so the recorded football mock snake profile remains the only admitted board application profile. The local PostgreSQL endpoint has not been re-established. Hosted checks on remote `0f6fb35` were green but do not cover these reconciled commits or the frozen-range refusal.
 
 **Next:** Commit this append, run full Code and Adapter gates, obtain fresh cumulative exact-head review, push normally after checking for another remote advance, wait for exact-head hosted checks, and merge only while the PR is clean and mergeable. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend - Corrected the parser-era integration claim
+
+**Changed:** Fresh cumulative review of reconciled head `372d21bad8fa3c511a0305d630391b2050c35784` found one stale parser-era backlog paragraph still saying rendered boards were not wired into the feed. The paragraph is now explicitly historical and states the current conditional contract: only a profiled, completely bound mock from the recorded football snake evidence may produce applicable board observations with successful-reading provenance; unprofiled, real, linear, auction and `layout="other"` boards remain evidence-only or refused.
+
+**Gates:** This is documentation-only after the complete Code and Adapter gates passed at `372d21b`. Backlog graph, terminators, append-only containment and diff checks must rerun on the correction commit, followed by one fresh cumulative exact-head review.
+
+**Could not verify:** Hosted checks and PostgreSQL have not run on the eventual correction head. No NBA auction or linear Fantrax capture exists.
+
+**Next:** Commit, run targeted document gates, obtain fresh cumulative exact-head review, reconcile any remote advance, push normally, and wait for hosted gates before merge. Do not touch PR #150.
