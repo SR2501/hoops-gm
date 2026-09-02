@@ -1062,6 +1062,38 @@ class LookupMaps:
         )
 
 
+def _missing_participation_player_anchors(
+    participation: GameParticipation,
+    *,
+    known_player_ids: dict[str, int],
+) -> list[NbaPlayerRecord]:
+    """Build hard NBA-ID anchors for players omitted by ``CommonAllPlayers``."""
+    missing: list[NbaPlayerRecord] = []
+    seen = set(known_player_ids)
+    for record in participation.records:
+        key = str(record.nba_player_id)
+        if key in seen:
+            continue
+        if record.player_name is None or not record.player_name.strip():
+            raise SourceContractError(
+                f"per-game participation names unknown NBA player {key} without a name",
+                source="nba_stats",
+                endpoint="BoxScoreTraditionalV3+BoxScoreSummaryV3",
+                detail={"game_id": participation.nba_game_id, "player_id": key},
+            )
+        name = record.player_name.strip()
+        missing.append(
+            NbaPlayerRecord(
+                nba_player_id=record.nba_player_id,
+                display_last_comma_first=name,
+                display_first_last=name,
+                is_active_roster=True,
+            )
+        )
+        seen.add(key)
+    return missing
+
+
 def import_participation(
     session: Session,
     participation: GameParticipation,
@@ -1085,6 +1117,14 @@ def import_participation(
     if game_id is None:
         counts.skipped += len(participation.records)
         return counts
+
+    missing_players = _missing_participation_player_anchors(
+        participation,
+        known_player_ids=maps.players,
+    )
+    if missing_players:
+        import_nba_players(session, missing_players)
+        maps.players.update(LookupMaps.load(session).players)
 
     existing = {
         row.player_id: row

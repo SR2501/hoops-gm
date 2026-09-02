@@ -38,6 +38,7 @@ from hoops_gm.ingest import importers
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.fantrax_official import parse_player_ids
 from hoops_gm.ingest.importers import (
+    _missing_participation_player_anchors,
     import_box_scores,
     import_games,
     import_nba_players,
@@ -57,7 +58,11 @@ from hoops_gm.ingest.nba import (
     parse_player_index,
     parse_teams,
 )
-from hoops_gm.ingest.nba.models import GameParticipation, NbaPlayerPositionRecord
+from hoops_gm.ingest.nba.models import (
+    GameParticipation,
+    NbaPlayerPositionRecord,
+    PlayerParticipationRecord,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -915,6 +920,83 @@ class TestParticipationImport:
         assert counts.created > 0
         rows = game_ready.scalars(select(PlayerParticipation)).all()
         assert len(rows) == counts.created
+
+    def test_participation_anchors_a_source_named_player_missing_from_index(
+        self, game_ready: Session
+    ) -> None:
+        combined = self._combined()
+        missing = PlayerParticipationRecord(
+            nba_player_id=1641777,
+            nba_game_id=combined.nba_game_id,
+            nba_team_id=combined.records[0].nba_team_id,
+            player_name="Charles Bediako",
+            outcome=ParticipationOutcome.INACTIVE,
+            reason=DnpReason.NONE_GIVEN,
+            raw_comment="",
+        )
+
+        counts = import_participation(
+            game_ready,
+            replace(combined, records=[*combined.records, missing]),
+        )
+
+        assert counts.skipped == 0
+        link = game_ready.scalars(
+            select(PlayerExternalId).where(
+                PlayerExternalId.source == ExternalSource.NBA,
+                PlayerExternalId.external_id == "1641777",
+            )
+        ).one()
+        player = game_ready.get(Player, link.player_id)
+        assert player is not None
+        assert player.full_name == "Charles Bediako"
+        assert player.current_team_id is None
+        assert game_ready.scalars(
+            select(PlayerParticipation).where(PlayerParticipation.player_id == player.id)
+        ).one()
+
+    def test_participation_refuses_a_nameless_unknown_player(self, game_ready: Session) -> None:
+        combined = self._combined()
+        nameless = PlayerParticipationRecord(
+            nba_player_id=1641777,
+            nba_game_id=combined.nba_game_id,
+            nba_team_id=combined.records[0].nba_team_id,
+            player_name=None,
+            outcome=ParticipationOutcome.INACTIVE,
+            reason=DnpReason.NONE_GIVEN,
+            raw_comment="",
+        )
+
+        with pytest.raises(SourceContractError, match="unknown NBA player 1641777 without a name"):
+            import_participation(
+                game_ready,
+                replace(combined, records=[*combined.records, nameless]),
+            )
+
+    def test_missing_participation_anchor_uses_only_the_hard_nba_id(self) -> None:
+        participation = GameParticipation(
+            nba_game_id="0022300001",
+            records=[
+                PlayerParticipationRecord(
+                    nba_player_id=1641777,
+                    nba_game_id="0022300001",
+                    nba_team_id=1610612759,
+                    player_name="Charles Bediako",
+                    outcome=ParticipationOutcome.INACTIVE,
+                    reason=DnpReason.NONE_GIVEN,
+                    raw_comment="",
+                )
+            ],
+        )
+
+        anchors = _missing_participation_player_anchors(
+            participation,
+            known_player_ids={},
+        )
+
+        assert [(anchor.nba_player_id, anchor.display_first_last) for anchor in anchors] == [
+            (1641777, "Charles Bediako")
+        ]
 
     def test_absences_keep_the_source_words_verbatim(self, game_ready: Session) -> None:
         import_participation(game_ready, self._combined())
