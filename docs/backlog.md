@@ -1285,8 +1285,8 @@ as auction and note that identity results transfer only if the mock is NBA.
 *Fantrax payload shape* and can only ever be satisfied by Fantrax. Running one
 does not discharge the other.
 
-**Rendered-board acceptance, added after the supported snake/linear feed
-boundary landed:** record an NBA Fantrax auction room through at least one
+**Rendered-board acceptance, added after the explicit profiled
+mock-football-snake boundary landed:** record an NBA Fantrax auction room through at least one
 nomination and completed sale, identify from the captured artifact where
 participant identity, nomination state and clearing price are actually
 represented, and match the parsed sale count and amounts to watched ground
@@ -1991,9 +1991,10 @@ nothing about the owner's NBA auction DOM, which has not been observed.
 - [ ] **pending**
 - **Depends on:** `draft-board-dom-parser`
 
-`board_dom.parse_draft_board` returns picks; `draft/feed/` records
-`ObservedInstant`s with provenance and reconciles them. Nothing joins the two,
-deliberately, because the join is a contract decision and not a parsing one.
+`board_dom.parse_draft_board` returns picks; `draft/feed/` conditionally joins
+them to `ObservedInstant`s only for an explicit `fantrax_football_snake_v1`
+mock profile with a complete binding. Every other rendered board remains
+evidence-only because applicability is a contract decision, not a parsing one.
 
 **The questions it has to answer**, none of which the parser is entitled to
 decide on its own:
