@@ -556,7 +556,10 @@ sets from both season sources and the database are exactly equal.
 The committed safe census is
 [`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
 Its LF content SHA-256 is
-`c0d323bcd52f5ce13738ae36dea0ec3b6661dba582fb9e1080f7b23150ba39d4`.
+`be1dccae9af5ad98f14ae2900c4b93dfc7016ad33700c938eb419331237ebe97`.
+The generator's Windows working-tree bytes use CRLF and hash to
+`c0d323bcd52f5ce13738ae36dea0ec3b6661dba582fb9e1080f7b23150ba39d4`;
+that checkout-only identity is not the published artifact identity.
 It includes the four-season direct-label availability summary required by the
 accepted protocol and publishes no outcome-valued count, keyed outcome,
 holdout class, play rate, or per-status/reason marginal. The pinned safe
