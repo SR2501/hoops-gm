@@ -33219,3 +33219,17 @@ Two stale documentation statements that still described unreadable-player-id GET
 **Could not verify:** No populated live `getDraftPicks` payload establishes whether Fantrax uses JSON integers or digit strings for coordinates; both exact forms are supported, while lossy/non-ASCII forms fail loudly. Hosted PostgreSQL remains outstanding.
 
 **Next:** Commit this append, rerun complete gates, obtain clean cumulative exact-head review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Required verbatim coordinate strings
+
+**Changed:** Cumulative review found that the bounded ASCII coordinate parser still called `strip()`, accepting whitespace-padded values outside its stated exact grammar. It now validates the source string verbatim. Leading/trailing ASCII or non-ASCII whitespace, Unicode numerals, booleans, floats, malformed strings and oversized digit strings all raise `SourceContractError`; canonical signed ASCII digit strings and JSON integers remain supported.
+
+The official recogniser docstring no longer repeats the repaired bare-`int()` coordinate examples. It now distinguishes the strict coordinate seam from the still-lossy, separately scoped auction amount alias path.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts and the draft-feed suite pass. Full Code/Adapter gates and fresh cumulative review remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload establishes its coordinate runtime type. Hosted PostgreSQL remains outstanding. Auction amount alias normalization is unchanged and remains outside this coordinate-focused correction.
+
+**Next:** Commit this append, rerun complete gates, obtain clean cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
