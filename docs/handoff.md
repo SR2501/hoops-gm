@@ -33205,3 +33205,17 @@ The backlog wording now says the board recogniser persists observations regardle
 **Could not verify:** Hosted PostgreSQL and CI remain outstanding on the eventual head. No NBA auction or linear Fantrax capture exists.
 
 **Next:** Commit, run targeted document gates, obtain final cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Bounded official coordinate grammar
+
+**Changed:** Final cumulative review found the strict official coordinate parser still accepted Unicode decimal numerals and could pass an arbitrarily long digit string into Python's bounded integer conversion, raising a raw `ValueError` instead of the adapter contract error. Coordinate strings are now limited to ten ASCII digits plus an optional sign before conversion. Full-width digits, booleans, floats, malformed strings and oversized digit strings all raise `SourceContractError`; integer and canonical signed-digit inputs continue to the feed's positivity and storage-bound checks.
+
+Two stale documentation statements that still described unreadable-player-id GET surfacing as unfixed are now historical. `draft-feed-unreadable-id-surfacing` remains the completed mechanism: permanent refusal rows are persisted and counted by the feed status endpoint.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts and both draft-feed suites pass. Full Code and Adapter gates, append-only checks and fresh cumulative review remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload establishes whether Fantrax uses JSON integers or digit strings for coordinates; both exact forms are supported, while lossy/non-ASCII forms fail loudly. Hosted PostgreSQL remains outstanding.
+
+**Next:** Commit this append, rerun complete gates, obtain clean cumulative exact-head review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
