@@ -611,6 +611,54 @@ def test_a_pending_board_row_cannot_bypass_a_null_profile(
     assert draft_service.load_events(session, draft) == []
 
 
+def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
+    session: Session,
+) -> None:
+    """Applicability is decided before board rows enter reconciliation."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    by_source = {seat.source_seat: seat.id for seat in draft.participants}
+    rpc = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.OFFICIAL_HTTP,
+        artifact_key="official:valid",
+        locator="currentDraftPicks[0]",
+        recogniser="fxea_getDraftPicks_v1",
+        observed_at=NOW,
+        kind="selection",
+        participant_id=by_source[1],
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+    )
+    board = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:ineligible",
+        locator="board[2].1-2",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind="selection",
+        source_seat=2,
+        participant_id=by_source[2],
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+        overall_pick=2,
+        round_number=1,
+        pick_in_round=2,
+    )
+    session.add_all([rpc, board])
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert len(outcome.applied) == 1
+    assert outcome.applied[0].observation_id == rpc.id
+    assert draft_service.load_events(session, draft)[0].participant_id == by_source[1]
+    assert board.skipped_reason == "source_board_evidence_only"
+    assert board.participant_id is None
+    assert rpc.blocked_reason is None
+
+
 def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
     client: TestClient,
     session: Session,

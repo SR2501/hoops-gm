@@ -1698,11 +1698,39 @@ def apply_observations(
 
     observations = load_observations(session, draft)
     pending = [row for row in observations if _is_application_candidate(row)]
+    pending.sort(key=_apply_order)
+    source_participants = _source_board_application_participants(session, draft)
+
+    def board_row_is_eligible(row: DraftFeedObservation) -> bool:
+        if row.recogniser != BOARD_RECOGNISER and row.source_seat is None:
+            return True
+        if source_participants is None or row.source_seat is None:
+            return False
+        return row.participant_id == source_participants.get(row.source_seat)
+
+    # Applicability precedes reconciliation. Otherwise an ineligible legacy
+    # board row can contradict and suppress a valid RPC row before being
+    # classified evidence-only.
+    profile_skipped: list[tuple[int, str]] = []
+    eligible_pending: list[DraftFeedObservation] = []
+    for row in pending:
+        if board_row_is_eligible(row):
+            eligible_pending.append(row)
+            continue
+        row.participant_id = None
+        row.skipped_reason = "source_board_evidence_only"
+        profile_skipped.append((row.id, "source_board_evidence_only"))
+    pending = eligible_pending
+
     # Identity history. A row that was skipped as a duplicate still carries the
     # sequence it corroborated, so it is evidence about which id landed under
-    # which name -- see :func:`_identity_conflicts`.
-    applied_history = [row for row in observations if row.applied_event_sequence is not None]
-    pending.sort(key=_apply_order)
+    # which name -- see :func:`_identity_conflicts`. Ineligible board history
+    # is source evidence, not participant evidence, and cannot contradict RPC.
+    applied_history = [
+        row
+        for row in observations
+        if row.applied_event_sequence is not None and board_row_is_eligible(row)
+    ]
 
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
     # fact about *this* run. Unlike the exact retryable skip-code allowlist, a
@@ -1730,32 +1758,21 @@ def apply_observations(
         for row in pending:
             row.blocked_reason = "draft_closed"
         session.flush()
-        return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
+        return ApplyOutcome(
+            skipped=tuple(profile_skipped),
+            halted="draft_closed",
+            last_sequence=state.last_sequence,
+        )
 
     held = _held_keys(state)
     contradicted = _contradicted_keys(pending, held, applied_history)
 
     applied: list[AppliedEvent] = []
-    skipped: list[tuple[int, str]] = []
+    skipped = list(profile_skipped)
     halted: str | None = None
     seen_this_run: set[str] = set()
-    source_participants = _source_board_application_participants(session, draft)
 
     for row in pending:
-        if row.recogniser == BOARD_RECOGNISER or row.source_seat is not None:
-            bound_participant_id = (
-                None
-                if source_participants is None or row.source_seat is None
-                else source_participants.get(row.source_seat)
-            )
-            if bound_participant_id is None or row.participant_id != bound_participant_id:
-                # Ingest normally stamps this immediately. Recheck here so a
-                # legacy pending row or a hand-edited database cannot bypass
-                # the frozen applicability profile and complete binding.
-                row.participant_id = None
-                row.skipped_reason = "source_board_evidence_only"
-                skipped.append((row.id, "source_board_evidence_only"))
-                continue
         admitted = _admit(row)
         if isinstance(admitted, str):
             skipped.append((row.id, admitted))

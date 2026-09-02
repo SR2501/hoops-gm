@@ -33079,3 +33079,15 @@ blind spot in ADR-020 is unchanged.
 fresh hosted matrix, and independently review that no unprofiled, real, NBA,
 auction or linear path can append a board-derived event. Do not merge or
 self-approve.
+
+---
+
+## 2026-09-02 - backend - Rejected ineligible boards before reconciliation
+
+**Changed:** Fresh cumulative review of exact head `459e21ca088e6062befae56711f7aa8634d21341` found that the apply-time evidence-profile gate ran after contradiction sets were built. A legacy pending board row on an unprofiled draft could therefore disagree about participant identity and suppress a valid RPC-derived pick before the board row was marked `source_board_evidence_only`. Applicability rejection now runs before reconciliation, removes ineligible board rows from both pending and applied identity evidence, and only then computes contradictions. The reviewer's exact bound-null-profile reproduction now appends the valid RPC pick and permanently classifies the board row as source evidence.
+
+**Gates:** The complete rendered-board and draft-feed suites pass after the ordering fix; focused Ruff, format-check and strict mypy pass. Full-suite, migration, repository-document, hosted PostgreSQL and fresh independent cumulative review still need to run on the eventual publication head.
+
+**Could not verify:** Hosted checks have not run on this correction, and the prior clean hosted matrix belongs to an earlier head. No NBA auction evidence exists; the profile boundary and all applicability limits from the preceding handoff entry remain unchanged.
+
+**Next:** Re-run the full local gates, commit and push a new exact head, require fresh hosted checks, and independently review the cumulative diff again. Do not merge or self-approve.
