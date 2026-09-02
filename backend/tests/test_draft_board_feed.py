@@ -48,6 +48,7 @@ from hoops_gm.db.models.draft_feed import (
     DraftSourceBoardState,
 )
 from hoops_gm.db.models.enums import (
+    DraftFeedInstantKind,
     DraftFeedTransport,
     DraftSourceBoardProfile,
     DraftToolUsage,
@@ -290,6 +291,38 @@ def _snapshot(
     session.add(row)
     session.flush()
     return row
+
+
+def _persist_recognised_board_artifact(
+    session: Session,
+    draft: Draft,
+    *,
+    artifact_key: str,
+    occupied_slots: list[dict[str, int | str | None]],
+) -> int:
+    """Seed the post-recognition boundary for apply-only race/coordinate tests."""
+    payload = _snapshot(
+        session,
+        html="<html>apply-layer fixture</html>",
+        dedupe_key=f"GET:apply-layer:{artifact_key}",
+    )
+    session.add(
+        DraftSourceBoardReading(
+            draft_id=draft.id,
+            bridge_payload_id=payload.id,
+            artifact_key=artifact_key,
+            recogniser=BOARD_RECOGNISER,
+            observed_at=NOW,
+            layout="snake",
+            seat_count=draft.team_count,
+            round_count=draft.roster_size,
+            picks_made=len(occupied_slots),
+            seat_labels=[f"Seat {seat}" for seat in range(1, draft.team_count + 1)],
+            occupied_slots=occupied_slots,
+        )
+    )
+    session.flush()
+    return payload.id
 
 
 def _reading(
@@ -590,7 +623,7 @@ def test_a_pending_board_row_cannot_bypass_a_null_profile(
         locator="board[1].1-1",
         recogniser=BOARD_RECOGNISER,
         observed_at=NOW,
-        kind="selection",
+        kind=DraftFeedInstantKind.SELECTION,
         source_seat=1,
         participant_id=participant.id,
         player_label="Nikola Jokic",
@@ -611,6 +644,45 @@ def test_a_pending_board_row_cannot_bypass_a_null_profile(
     assert draft_service.load_events(session, draft) == []
 
 
+def test_a_profiled_board_row_requires_successful_reading_provenance(
+    session: Session,
+) -> None:
+    """A caller cannot manufacture an authoritative row after recognition."""
+    league = _league(session)
+    draft = _draft(
+        session,
+        league,
+        source_seats=tuple(range(1, SEATS + 1)),
+        source_board_profile=PROFILE,
+    )
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    row = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:no-reading",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="no-reading-player",
+        overall_pick=1,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add(row)
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert row.skipped_reason == "source_board_evidence_only"
+    assert row.participant_id is None
+    assert draft_service.load_events(session, draft) == []
+
+
 def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
     session: Session,
 ) -> None:
@@ -625,7 +697,7 @@ def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
         locator="currentDraftPicks[0]",
         recogniser="fxea_getDraftPicks_v1",
         observed_at=NOW,
-        kind="selection",
+        kind=DraftFeedInstantKind.SELECTION,
         participant_id=by_source[1],
         player_label="Nikola Jokic",
         player_external_id="same-player",
@@ -637,7 +709,7 @@ def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
         locator="board[2].1-2",
         recogniser=BOARD_RECOGNISER,
         observed_at=NOW,
-        kind="selection",
+        kind=DraftFeedInstantKind.SELECTION,
         source_seat=2,
         participant_id=by_source[2],
         player_label="Nikola Jokic",
@@ -657,6 +729,10 @@ def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
     assert board.skipped_reason == "source_board_evidence_only"
     assert board.participant_id is None
     assert rpc.blocked_reason is None
+    status = feed_service.feed_status(session, draft, now=NOW)
+    assert status.reconciliation is not None
+    assert status.reconciliation.witnessed_by_two_transports == 0
+    assert status.reconciliation.agreements == ()
 
 
 def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
@@ -760,6 +836,22 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
     )
     by_source = {participant.source_seat: participant.id for participant in draft.participants}
     names = ["Nikola Jokic", "Anthony Edwards", "Tyrese Haliburton"]
+    original_slots: list[dict[str, int | str | None]] = [
+        {
+            "source_seat": source_seat,
+            "round_number": 1,
+            "pick_in_round": source_seat,
+            "player_label": names[source_seat - 1],
+            "player_external_id": f"original-{source_seat}",
+        }
+        for source_seat in range(1, 4)
+    ]
+    original_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:original",
+        occupied_slots=original_slots,
+    )
     session.add_all(
         [
             DraftFeedObservation(
@@ -769,6 +861,7 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
                 locator=f"board[{source_seat}].1-{source_seat}",
                 recogniser=BOARD_RECOGNISER,
                 observed_at=NOW,
+                bridge_payload_id=original_payload_id,
                 kind="selection",
                 source_seat=source_seat,
                 participant_id=by_source[source_seat],
@@ -788,6 +881,20 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
     # In a three-team snake, source seat 3 owns both overall picks 3 and 4.
     # Without an exact coordinate gate this changed historical cell passes the
     # participant-only turn check and is appended as overall pick 4.
+    changed_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:changed",
+        occupied_slots=[
+            {
+                "source_seat": 3,
+                "round_number": 1,
+                "pick_in_round": 3,
+                "player_label": "Shai Gilgeous-Alexander",
+                "player_external_id": "changed-player-id",
+            }
+        ],
+    )
     session.add(
         DraftFeedObservation(
             draft_id=draft.id,
@@ -796,6 +903,7 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
             locator="board[3].1-3",
             recogniser=BOARD_RECOGNISER,
             observed_at=NOW + timedelta(seconds=30),
+            bridge_payload_id=changed_payload_id,
             kind="selection",
             source_seat=3,
             participant_id=by_source[3],
@@ -866,6 +974,20 @@ def test_a_tail_void_between_coordinate_check_and_append_forces_revalidation(
             participant_id=by_source[source_seat],
             player_label=player,
         )
+    pick_four_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:pick-four",
+        occupied_slots=[
+            {
+                "source_seat": 3,
+                "round_number": 2,
+                "pick_in_round": 1,
+                "player_label": "Shai Gilgeous-Alexander",
+                "player_external_id": "pick-four",
+            }
+        ],
+    )
     session.add(
         DraftFeedObservation(
             draft_id=draft.id,
@@ -874,6 +996,7 @@ def test_a_tail_void_between_coordinate_check_and_append_forces_revalidation(
             locator="board[3].2-1",
             recogniser=BOARD_RECOGNISER,
             observed_at=NOW,
+            bridge_payload_id=pick_four_payload_id,
             kind="selection",
             source_seat=3,
             participant_id=by_source[3],

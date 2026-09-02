@@ -449,6 +449,86 @@ def _source_board_application_participants(session: Session, draft: Draft) -> di
     return _participant_by_source_seat(session, draft)
 
 
+type _RecognisedBoardSlot = tuple[
+    str,
+    int,
+    int,
+    int,
+    int,
+    str | None,
+    str | None,
+]
+
+
+def _recognised_board_slots(session: Session, draft: Draft) -> set[_RecognisedBoardSlot]:
+    """Exact observation facts backed by a successful compatible board reading."""
+    readings = session.scalars(
+        select(DraftSourceBoardReading).where(
+            DraftSourceBoardReading.draft_id == draft.id,
+            DraftSourceBoardReading.recogniser == BOARD_RECOGNISER,
+            DraftSourceBoardReading.layout == "snake",
+            DraftSourceBoardReading.seat_count == draft.team_count,
+            DraftSourceBoardReading.round_count <= draft.roster_size,
+        )
+    ).all()
+    slots: set[_RecognisedBoardSlot] = set()
+    for reading in readings:
+        for raw in reading.occupied_slots:
+            source_seat = raw.get("source_seat")
+            round_number = raw.get("round_number")
+            pick_in_round = raw.get("pick_in_round")
+            if not (
+                isinstance(source_seat, int)
+                and isinstance(round_number, int)
+                and isinstance(pick_in_round, int)
+            ):  # pragma: no cover - _record_board_attempt owns these rows
+                continue
+            player_label = raw.get("player_label")
+            player_external_id = raw.get("player_external_id")
+            slots.add(
+                (
+                    reading.artifact_key,
+                    reading.bridge_payload_id,
+                    source_seat,
+                    round_number,
+                    pick_in_round,
+                    player_label if isinstance(player_label, str) else None,
+                    player_external_id if isinstance(player_external_id, str) else None,
+                )
+            )
+    return slots
+
+
+def _board_row_is_eligible(
+    row: DraftFeedObservation,
+    *,
+    source_participants: dict[int, int] | None,
+    recognised_slots: set[_RecognisedBoardSlot],
+) -> bool:
+    """Whether a row is RPC evidence or an applicable recognised board fact."""
+    if row.recogniser != BOARD_RECOGNISER and row.source_seat is None:
+        return True
+    if (
+        source_participants is None
+        or row.recogniser != BOARD_RECOGNISER
+        or row.bridge_payload_id is None
+        or row.source_seat is None
+        or row.round_number is None
+        or row.pick_in_round is None
+        or row.participant_id != source_participants.get(row.source_seat)
+    ):
+        return False
+    return (
+        row.artifact_key,
+        row.bridge_payload_id,
+        row.source_seat,
+        row.round_number,
+        row.pick_in_round,
+        row.player_label,
+        row.player_external_id,
+    ) in recognised_slots
+
+
 def _existing_keys(session: Session, draft: Draft) -> set[tuple[str, str, str]]:
     rows = session.execute(
         select(
@@ -1700,13 +1780,7 @@ def apply_observations(
     pending = [row for row in observations if _is_application_candidate(row)]
     pending.sort(key=_apply_order)
     source_participants = _source_board_application_participants(session, draft)
-
-    def board_row_is_eligible(row: DraftFeedObservation) -> bool:
-        if row.recogniser != BOARD_RECOGNISER and row.source_seat is None:
-            return True
-        if source_participants is None or row.source_seat is None:
-            return False
-        return row.participant_id == source_participants.get(row.source_seat)
+    recognised_slots = _recognised_board_slots(session, draft)
 
     # Applicability precedes reconciliation. Otherwise an ineligible legacy
     # board row can contradict and suppress a valid RPC row before being
@@ -1714,7 +1788,11 @@ def apply_observations(
     profile_skipped: list[tuple[int, str]] = []
     eligible_pending: list[DraftFeedObservation] = []
     for row in pending:
-        if board_row_is_eligible(row):
+        if _board_row_is_eligible(
+            row,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        ):
             eligible_pending.append(row)
             continue
         row.participant_id = None
@@ -1729,7 +1807,12 @@ def apply_observations(
     applied_history = [
         row
         for row in observations
-        if row.applied_event_sequence is not None and board_row_is_eligible(row)
+        if row.applied_event_sequence is not None
+        and _board_row_is_eligible(
+            row,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        )
     ]
 
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
@@ -2332,11 +2415,23 @@ def feed_status(
     context = build_context(session, draft)
     rows = load_observations(session, draft)
     board_readings = load_board_readings(session, draft)
+    source_participants = _source_board_application_participants(session, draft)
+    recognised_slots = _recognised_board_slots(session, draft)
     # A row that names nobody is a recorded refusal, not a reading — see
     # :func:`names_a_player`. It is still counted in ``observation_count`` and
     # still reported by name in ``skipped`` below; what it must not do is make
     # a source look like it has produced a pick.
     instants = [_to_instant(row) for row in rows if names_a_player(row)]
+    reconciliation_instants = [
+        _to_instant(row)
+        for row in rows
+        if names_a_player(row)
+        and _board_row_is_eligible(
+            row,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        )
+    ]
 
     by_transport: dict[SourceTransport, list[ObservedInstant]] = {
         SourceTransport.BRIDGE_CAPTURE: [],
@@ -2344,6 +2439,12 @@ def feed_status(
     }
     for instant in instants:
         by_transport[instant.provenance.transport].append(instant)
+    reconciliation_by_transport: dict[SourceTransport, list[ObservedInstant]] = {
+        SourceTransport.BRIDGE_CAPTURE: [],
+        SourceTransport.OFFICIAL_HTTP: [],
+    }
+    for instant in reconciliation_instants:
+        reconciliation_by_transport[instant.provenance.transport].append(instant)
 
     contact_at = _transport_contact(
         session,
@@ -2353,27 +2454,26 @@ def feed_status(
         # feed can read here. See :func:`_transport_contact`.
         board_is_a_source_here=bool(board_readings),
     )
-    if instants:
+    freshness = tuple(
+        freshness_of(
+            by_transport[transport],
+            transport=transport,
+            now=stamp,
+            silence_threshold=silence_threshold,
+            contact_at=contact_at.get(transport),
+        )
+        for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
+    )
+    if reconciliation_instants:
         report = reconcile(
-            by_transport[SourceTransport.BRIDGE_CAPTURE],
-            by_transport[SourceTransport.OFFICIAL_HTTP],
+            reconciliation_by_transport[SourceTransport.BRIDGE_CAPTURE],
+            reconciliation_by_transport[SourceTransport.OFFICIAL_HTTP],
             now=stamp,
             silence_threshold=silence_threshold,
             contact_at=contact_at,
         )
-        freshness = report.freshness
     else:
         report = None
-        freshness = tuple(
-            freshness_of(
-                [],
-                transport=transport,
-                now=stamp,
-                silence_threshold=silence_threshold,
-                contact_at=contact_at.get(transport),
-            )
-            for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
-        )
 
     state = draft_service.load_state(session, draft)
     participant_reasons: dict[int, dict[str, int]] = {

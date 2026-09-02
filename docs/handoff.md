@@ -33091,3 +33091,17 @@ self-approve.
 **Could not verify:** Hosted checks have not run on this correction, and the prior clean hosted matrix belongs to an earlier head. No NBA auction evidence exists; the profile boundary and all applicability limits from the preceding handoff entry remain unchanged.
 
 **Next:** Re-run the full local gates, commit and push a new exact head, require fresh hosted checks, and independently review the cumulative diff again. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Bound board application to successful recognition
+
+**Changed:** The next cumulative review found two remaining ways ineligible board evidence could cross its boundary. `feed_status` still reconciled rows already classified `source_board_evidence_only`, creating false cross-transport corroboration, and a handcrafted profiled observation could reach apply without any persisted successful board reading. Board eligibility is now one shared predicate used by apply history, pending reconciliation and status reconciliation. A board row must match a successful snake `DraftSourceBoardReading` on draft, recogniser, capture, artifact, source coordinate and player facts, in addition to the exact profile, mock flag and complete participant binding. Ineligible board rows still count as source observations for board liveness, but cannot contradict, corroborate or append an RPC event.
+
+Focused tests prove a profiled row with no successful reading remains evidence-only, the recorded fixture still applies end to end, coordinate and race tests carry explicit post-recognition parents, and a matching unprofiled board/RPC pair reports zero cross-transport witnesses while the RPC pick appends.
+
+**Gates:** The complete rendered-board and draft-feed suites pass with focused Ruff, format-check and strict mypy. Full local, migration, documentation, hosted PostgreSQL and final independent exact-head review remain to be rerun after this append.
+
+**Could not verify:** The explicit `fantrax_football_snake_v1` profile is a creation-time evidence declaration, not an inferred sport field; the schema has no sport discriminator and this change deliberately does not invent one from league ids, labels or DOM shape. No NBA auction capture exists and no NBA profile is defined.
+
+**Next:** Run the full gates, publish one new exact head, and commission a fresh cumulative review of both application and reconciliation boundaries. Do not merge or self-approve.
