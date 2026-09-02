@@ -2062,7 +2062,10 @@ public next-pick participant resolution. Before append, the observation's
 `(overall, round, pick_in_round, source_seat)` must equal the current frozen
 format coordinate. A changed historical cell therefore blocks as
 `draft_pick_coordinate_mismatch` instead of becoming the next pick when the same
-source seat recurs in a snake turn.
+source seat recurs in a snake turn. The append also carries the exact
+`expected_last_sequence` whose coordinate was checked; a concurrent tail void
+therefore raises retryable `draft_sequence_conflict` and forces coordinate
+revalidation rather than letting the recurring source seat hide a stale pick.
 
 The existing board-content dedupe, replay, dimension history, regression
 publication, append-only event semantics and unbound evidence API remain in

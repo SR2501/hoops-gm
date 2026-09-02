@@ -32998,3 +32998,38 @@ not run when this entry was appended.
 head, push `sr2501-bind-rendered-draft-board`, open the focused PR, and freeze
 that head for hosted Code, Adapter and PostgreSQL checks. Do not merge or
 self-approve.
+
+---
+
+## 2026-09-02 - backend - Coupled board admission to the log version
+
+**Changed:** Exact-head review of the rebased board-feed unit found that the
+new current-coordinate check and the subsequent event append were not tied to
+one log version. In a three-seat snake, source seat 3 owns both picks 3 and 4;
+a tail void landing after the pick-4 coordinate check could make pick 3 current
+again, and participant-only validation would accept the stale pick-4 row there.
+Feed-driven picks and sales now pass `expected_last_sequence=state.last_sequence`.
+A concurrent change blocks as retryable `draft_sequence_conflict`, reloads the
+current log version for the response, and leaves the observation pending for
+fresh coordinate validation.
+
+A focused race test enters the exact interval by appending a void after
+coordinate admission and before `record_pick`. It proves the void is the only
+new event, the observation is not burned, and the reported `last_sequence`
+includes the concurrent correction. The existing source-fact classification
+test now distinguishes this state version token from source payload facts.
+
+**Gates:** The rendered-board and full draft-feed suites pass together after
+the fix; focused Ruff and strict mypy pass. The backlog and committed handoff
+prefix checks still need to be rerun after this append, followed by the complete
+hosted matrix on the new exact head.
+
+**Could not verify:** Hosted SQLite, PostgreSQL and Adapter jobs have not run on
+the eventual corrected head. The prior green matrix belongs to
+`fd18d281d0eb06fb7a1054f07ceb97c98c1e699c` and must not be cited for this
+change. The frontend `DraftParticipant.source_seat` type/guard follow-up remains
+outside this backend PR by architect ruling.
+
+**Next:** Commit this review fix and append, preserve the `ad9b461` handoff
+prefix exactly, run independent exact-head review, force-push with lease, and
+require fresh hosted checks. Do not merge or self-approve.

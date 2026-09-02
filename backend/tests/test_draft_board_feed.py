@@ -710,6 +710,114 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
     assert "Shai Gilgeous-Alexander" not in [event["player_label"] for event in events]
 
 
+def test_a_tail_void_between_coordinate_check_and_append_forces_revalidation(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same source seat recurring in a snake cannot hide a log-version race."""
+    league = League(
+        fantrax_league_id=LEAGUE,
+        name="coordinate race",
+        season="2026-27",
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        auction_budget=None,
+    )
+    session.add(league)
+    session.flush()
+    draft = draft_service.create_draft(
+        session,
+        league=league,
+        name="coordinate race",
+        tool_usage=DraftToolUsage.INSTRUMENTED,
+        participants=[
+            draft_service.ParticipantSpec(
+                team_slot=team_slot,
+                source_seat=source_seat,
+                display_name=f"Team {team_slot}",
+            )
+            for team_slot, source_seat in [(1, 2), (2, 3), (3, 1)]
+        ],
+    )
+    by_source = {participant.source_seat: participant.id for participant in draft.participants}
+    for source_seat, player in enumerate(
+        ["Nikola Jokic", "Anthony Edwards", "Tyrese Haliburton"],
+        start=1,
+    ):
+        draft_service.record_pick(
+            session,
+            draft,
+            participant_id=by_source[source_seat],
+            player_label=player,
+        )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="board:pick-four",
+            locator="board[3].2-1",
+            recogniser=BOARD_RECOGNISER,
+            observed_at=NOW,
+            kind="selection",
+            source_seat=3,
+            participant_id=by_source[3],
+            player_label="Shai Gilgeous-Alexander",
+            player_external_id="pick-four",
+            overall_pick=4,
+            round_number=2,
+            pick_in_round=1,
+        )
+    )
+    session.flush()
+
+    original_record_pick = draft_service.record_pick
+    raced = False
+
+    def record_pick_after_tail_void(
+        session_arg: Session,
+        draft_arg: Draft,
+        *,
+        participant_id: int,
+        player_label: str,
+        player_id: int | None = None,
+        occurred_at: datetime | None = None,
+        note: str | None = None,
+        expected_last_sequence: int | None = None,
+    ) -> object:
+        nonlocal raced
+        if not raced:
+            raced = True
+            assert expected_last_sequence == 3
+            draft_service.record_void(session_arg, draft_arg, supersedes_sequence=3)
+        return original_record_pick(
+            session_arg,
+            draft_arg,
+            participant_id=participant_id,
+            player_label=player_label,
+            player_id=player_id,
+            occurred_at=occurred_at,
+            note=note,
+            expected_last_sequence=expected_last_sequence,
+        )
+
+    monkeypatch.setattr(draft_service, "record_pick", record_pick_after_tail_void)
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert raced is True, "The test must enter the interval between coordinate check and append."
+    assert outcome.applied == ()
+    assert outcome.halted == "draft_sequence_conflict"
+    assert outcome.last_sequence == 4, "The concurrent void is the new log version."
+    assert [event.event_type.value for event in draft_service.load_events(session, draft)] == [
+        "pick",
+        "pick",
+        "pick",
+        "void",
+    ]
+    assert feed_service.feed_status(session, draft, now=NOW).pending_count == 1
+
+
 def test_an_auction_board_is_refused_by_name_rather_than_guessed_at() -> None:
     """Excludes: reasoning from one football snake draft onto an auction.
 

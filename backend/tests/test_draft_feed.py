@@ -4407,6 +4407,9 @@ def test_the_blocking_facts_are_exactly_what_the_board_is_told() -> None:
     #: base name is now part of what the test checks rather than part of what
     #: it assumes.
     payload_bases = {"row", "admitted"}
+    #: Local state passed only as optimistic-concurrency control. It is not a
+    #: source claim and therefore does not belong in ``_BOARD_FACTS``.
+    control_bases = {"state"}
 
     recorded_attrs: set[str] = set()
     seen_bases: set[str] = set()
@@ -4432,7 +4435,8 @@ def test_the_blocking_facts_are_exactly_what_the_board_is_told() -> None:
     assert recorded_attrs, "extractor found no payload arguments; the walk is broken, not the code"
     assert "participant_id" in recorded_attrs
 
-    undeclared_bases = seen_bases - payload_bases
+    assert "state" in seen_bases, "Feed appends must remain tied to the state version checked."
+    undeclared_bases = seen_bases - payload_bases - control_bases
     assert not undeclared_bases, (
         f"{sorted(undeclared_bases)} carry attributes into record_sale/record_pick but are not "
         "declared payload bases. Add them to payload_bases, or this test stops reading them."

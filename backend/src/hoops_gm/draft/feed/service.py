@@ -1801,6 +1801,7 @@ def apply_observations(
                     amount=row.amount,
                     player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
+                    expected_last_sequence=state.last_sequence,
                 )
             else:
                 state = draft_service.record_pick(
@@ -1809,10 +1810,11 @@ def apply_observations(
                     participant_id=admitted.participant_id,
                     player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
+                    expected_last_sequence=state.last_sequence,
                 )
         except DraftLogError as error:
             skipped.append((row.id, error.code))
-            if error.code == "draft_pick_out_of_turn":
+            if error.code in {"draft_pick_out_of_turn", "draft_sequence_conflict"}:
                 # Stop rather than skip. Skipping would silently desynchronise
                 # every pick after this one and the owner would find out much
                 # later, which is the worst possible time.
@@ -1823,6 +1825,8 @@ def apply_observations(
                 # earlier pick, re-runs, and this exact row remains pending.
                 halted = error.code
                 row.blocked_reason = error.code
+                if error.code == "draft_sequence_conflict":
+                    state = draft_service.load_state(session, draft)
                 break
             row.skipped_reason = f"{error.code}: {error}"
             continue
