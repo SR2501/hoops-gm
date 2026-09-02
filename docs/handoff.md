@@ -33143,3 +33143,51 @@ participation outcome marginal, or model output was produced.
 **Next:** Commit the repaired provenance documents, push the same PR branch,
 verify local/remote/PR head identity, wait for hosted checks, and obtain a fresh
 independent cumulative review of that exact head without merging.
+
+---
+
+## 2026-09-02 - data-engineer - Added exact guard-repair replay receipt
+
+**Changed:** Corrected the preceding handoff's incomplete provenance claim. It
+reported that exact guard-repair commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2` replayed the real corpus, but the
+only 33-table equality receipt it cited named predecessor implementation
+`b7f396514c67a2e23920da353dc1030a2264d101`. The run claim and receipt identity
+therefore did not match.
+
+After exclusive `FileShare.None` opens proved that neither preserved nor active
+ledger was held by another process, exact commit `863dffb` and script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
+were materialized in a detached worktree. A fresh disposable copy of the
+preserved 2023-26 store replayed manifest
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`
+twice. The first pass created 1,230 games, 25,894 production rows, and 40,932
+participation rows with zero skips; the second updated those exact counts with
+zero creates and zero skips. Set comparison found every non-timestamp column
+equal across all 33 tables against the active store.
+
+The new distinct receipt is
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`,
+SHA-256
+`f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`.
+It names the exact implementation, both run-log hashes, every table comparison,
+the unchanged active and preserved store identities, and both preserved
+predecessor receipts. Neither predecessor receipt was overwritten. The census
+and store runbook now point to this exact proof while retaining the identity
+restoration and quant-approved played-only source-row wording.
+
+Final local gates passed: targeted replay contracts, backend and script
+lint/format, strict mypy over 234 source files, 2,411 backend tests with one
+skip, 610 offline Adapter contracts, 37 live-smoke tests with four explicit
+skips, JSON/hash validation, backlog graph, tracked-file secret scan, document
+terminators, and commit-aware append-only validation.
+
+**Could not verify:** Hosted checks and fresh independent review had not run
+against the eventual receipt-documentation commit when this entry was appended.
+The databases, raw captures, logs, manifest, and three receipts remain
+off-repository operator-machine artifacts. No opportunity class, direct
+participation outcome marginal, or model output was produced.
+
+**Next:** Push and freeze the exact receipt-documentation head, verify
+local/remote/PR identity, obtain a fresh cumulative independent review, and
+leave PR #149 open and unmerged.

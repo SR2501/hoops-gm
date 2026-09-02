@@ -584,9 +584,9 @@ sets from both season sources and the database are exactly equal.
 The committed safe census is
 [`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
 Its LF content SHA-256 is
-`5d602fcecb8decafc4405c6350dff7bee1170848ff97bf3a0fabde20ceba1e3c`.
+`476221fcab4053832d0a62beeecbfec8b445082bb6baa9a238cba7ee363db070`.
 The generator's Windows working-tree bytes use CRLF and hash to
-`e550906608ce36668dc9f9da95f84649e1373ad9743f40fb270303d0ae4986b2`;
+`9f6151a271e9c2c17381cdd19aab167b55cc13024944d5082e77288f95940bf8`;
 that checkout-only identity is not the published artifact identity.
 It includes the four-season direct-label availability summary required by the
 accepted protocol. No direct `PlayerParticipation.outcome` marginal,
@@ -684,21 +684,28 @@ request is rejected before its capture bytes are returned:
 - manifest bytes / SHA-256: `788,178` /
   `e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`
 - end-to-end proof receipt:
-  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof.json`
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`
 - proof receipt SHA-256:
-  `47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`
+  `f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`
 
-The proof rebuilt a disposable copy of the preserved prior, then replayed it a
-second time at `0 created / 40,932 updated / 0 skipped`. Comparing every
-non-timestamp column in all 33 tables against the active store found zero
-differing tables. The SQLite files are not byte-identical because row timestamps
-and file history differ; the proof claims semantic state equality, not file
-identity. That receipt records predecessor replay commit
-`b7f396514c67a2e23920da353dc1030a2264d101` and script blob
-`3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`;
-it remains the semantic store-equality proof. The later guard repair changes no
-capture, parser, or database semantics and is covered by the offline contract
-at `backend/tests/test_replay_participation_ledger.py`.
+The proof ran exact implementation commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2` and script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
+against a disposable copy of the preserved prior. The rebuild created 1,230
+games, 25,894 production rows, and 40,932 participation rows with zero skips;
+the second replay updated the same counts with zero creates and zero skips.
+Comparing every non-timestamp column in all 33 tables against the active store
+found zero differing tables. The SQLite files are not byte-identical because
+row timestamps and file history differ; the proof claims semantic state
+equality, not file identity.
+
+The two earlier receipts remain byte-identical and distinct: predecessor
+`participation-ledger-2022-23-offline-replay-proof.json` retains SHA-256
+`47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`,
+and local review receipt
+`participation-ledger-2022-23-offline-replay-proof-local-a8d5780.json` retains
+SHA-256
+`1309575acbfc82a51241e004df229524842749c7e1d57c191c011ce634c77682`.
 
 To rebuild the four-season active store, first make the same preserved-prior
 copy, check out the pinned replay commit, and run:

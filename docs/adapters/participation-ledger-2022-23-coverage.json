@@ -91,12 +91,22 @@
       },
       "request_consumption": "exactly_once",
       "proof_receipt": {
-        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof.json",
-        "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32",
-        "replay_code_commit": "b7f396514c67a2e23920da353dc1030a2264d101",
-        "replay_script_git_blob_sha256": "3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4",
-        "scope": "Semantic store-equality proof produced before the manifest-trust and exact-once guard repair; the repaired guards have a separate offline contract."
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json",
+        "sha256": "f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00",
+        "replay_code_commit": "863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2",
+        "replay_script_git_blob_sha256": "d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb",
+        "scope": "Two-pass exact-implementation replay and set-equality comparison of every non-timestamp column across all 33 tables."
       },
+      "preserved_predecessor_proof_receipts": [
+        {
+          "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof.json",
+          "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32"
+        },
+        {
+          "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof-local-a8d5780.json",
+          "sha256": "1309575acbfc82a51241e004df229524842749c7e1d57c191c011ce634c77682"
+        }
+      ],
       "guard_contract": {
         "path": "backend/tests/test_replay_participation_ledger.py",
         "manifest_digest_before_parse": true,
