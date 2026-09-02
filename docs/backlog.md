@@ -4678,8 +4678,8 @@ The same response now carries `skipped_by_participant`, ordered by `team_slot`
 and keyed by stable `participant_id`, with exact totals and reason counts, plus
 `unattributed_skipped` for every permanent skip no participant can honestly own.
 Tests require those two surfaces to partition the aggregate exactly. This item
-remains pending because `/draft/:draftId/categories` still has to fetch and
-render that contract, including its no-feed/error states.
+is now closed: `/draft/:draftId/categories` fetches and renders that contract,
+including its no-feed, no-observation, mismatch and error states.
 
 ### `source-board-evidence-api` - Publishing the rendered board without inventing participant identity
 
