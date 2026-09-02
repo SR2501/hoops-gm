@@ -33149,3 +33149,19 @@ The backlog dependency graph now records the actual blocker: `draft-board-feed-i
 **Could not verify:** Hosted PostgreSQL, Adapter and Code gates have not run on the eventual commit containing these final corrections; all earlier hosted matrices belong to superseded heads. No real NBA auction or linear Fantrax capture exists. The immediate frontend `DraftParticipant.source_seat` type/guard and category completeness work remains outside this backend PR.
 
 **Next:** Commit this append with the final fixes, independently review the cumulative exact head, reconcile any concurrent remote-branch advance without overwriting it, push, and require a fresh hosted matrix. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Reconciled board provenance and bounded frozen coordinates
+
+**Changed:** Resumed from local `1c2912ba909cfd46ef58fc3b8adfe0acfc49ae20` after independently fetching PR #148 at `0f6fb35a40e6d08ac0562ce2cbab11289a0c5486`. The remote series added exact successful-reading provenance checks; the local series added supplied-coordinate, concurrency and contract corrections. The five local commits were replayed onto the remote head without force-overwriting it. The complete remote handoff blob is the byte-exact prefix of this file, and only LF bytes were appended.
+
+The reported frozen-format crash was present in the reconciled provenance predicate: a structurally complete profiled board row called `SnakeDraftFormat.pick_at(overall_pick)` before proving the value was inside the draft's total pick range. An out-of-range stored row therefore raised `DraftFormatError` from both apply-time and status-time eligibility checks instead of failing closed. `_board_row_is_eligible` now catches that refusal and returns false, so the row is classified `source_board_evidence_only`, cannot apply or reconcile, and leaves the valid RPC sibling free to append. The existing malformed-profile test now drives `overall_pick = total_picks + 1` through both `apply_observations` and `feed_status`.
+
+The reconciled local fixes also preserve the remote profile boundary while refusing supplied-but-unreadable bridge/official coordinates, validating supplied historical RPC coordinates when their participant recurs, coupling append to the checked log sequence, and preventing applied observations from publishing stale concurrency blocks.
+
+**Gates:** The complete draft-board, draft-feed, draft API and migration suites pass on the reconciled tree. Focused Ruff and strict mypy pass; backlog graph, terminators, diff checks and byte-prefix verification pass. Full local Code and Adapter gates, fresh cumulative review, hosted PostgreSQL and exact-head CI remain to run after this append is committed.
+
+**Could not verify:** No real NBA auction or linear Fantrax capture exists, so the recorded football mock snake profile remains the only admitted board application profile. The local PostgreSQL endpoint has not been re-established. Hosted checks on remote `0f6fb35` were green but do not cover these reconciled commits or the frozen-range refusal.
+
+**Next:** Commit this append, run full Code and Adapter gates, obtain fresh cumulative exact-head review, push normally after checking for another remote advance, wait for exact-head hosted checks, and merge only while the PR is clean and mergeable. Do not touch PR #150.
