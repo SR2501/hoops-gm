@@ -239,6 +239,24 @@ describe('draft feed endpoint contract', () => {
     expect(isFeedStatusResponse(wrongUnattributed)).toBe(false)
   })
 
+  it.each(['retryable', 'skipped', 'unattributed_skipped'] as const)(
+    'rejects an array masquerading as the %s count map',
+    (field) => {
+      const malformed = structuredClone(feed) as unknown as Record<string, unknown>
+      malformed[field] = []
+      expect(isFeedStatusResponse(malformed)).toBe(false)
+    },
+  )
+
+  it('rejects an array masquerading as participant reason counts', () => {
+    const malformed = structuredClone(feed) as unknown as Record<string, unknown>
+    const rows = malformed.skipped_by_participant as Record<string, unknown>[]
+    const first = rows[0]
+    if (first === undefined) throw new Error('recorded feed needs one participant')
+    first.reasons = []
+    expect(isFeedStatusResponse(malformed)).toBe(false)
+  })
+
   it('rejects a skip partition that does not reproduce the aggregate', () => {
     const malformed = structuredClone(feed)
     malformed.skipped = { reason_not_in_partition: 1 }

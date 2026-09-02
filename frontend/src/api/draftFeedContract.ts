@@ -39,7 +39,11 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function isCountMap(value: unknown): value is Record<string, number> {
-  return isRecord(value) && Object.values(value).every(isNonNegativeInteger)
+  return (
+    isRecord(value) &&
+    !Array.isArray(value) &&
+    Object.values(value).every(isNonNegativeInteger)
+  )
 }
 
 const FRESHNESS_KEYS = [

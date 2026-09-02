@@ -33616,7 +33616,7 @@ get a separate warning and are never added to a seat. No-observation,
 unavailable-context and unreadable-feed states remain distinct. Category
 aggregation, ranks and availability-blind semantics are unchanged.
 
-**Gates:** Frontend lint, strict type-check, all 408 frontend tests and the
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests and the
 production build pass. The recorded-contract tests cover shuffled diagnostics,
 participant and unattributed skips, valid zeroes, no observations, unavailable
 context, request and contract failure, independent projection/feed failures,
