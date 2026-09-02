@@ -33193,3 +33193,15 @@ The backlog wording now says the board recogniser persists observations regardle
 **Could not verify:** No populated live `getDraftPicks` payload exists, so accepted coordinate runtime types beyond the constructed integer and digit-string cases remain unobserved. The real endpoint's committed completed-draft fixture is still an empty list. No NBA auction or linear board capture exists.
 
 **Next:** Commit this append, rerun the full Code and Adapter gates, obtain clean cumulative review, reconcile any remote advance without force-overwriting, push normally, wait for hosted exact-head checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend - Narrowed observation creation to recognised boards
+
+**Changed:** Final exact-head review found one wording overreach: the backlog said rendered boards persist observations regardless of profile, but auction and `layout="other"` snapshots refuse before observations exist. The text now applies observation persistence only to successfully recognised snake/linear boards, distinguishes unprofiled evidence-only storage from unsupported-layout refusal, and changes no code or scope.
+
+**Gates:** The complete Code and Adapter gates passed at parent `cf9a0cfcd76023cadec139e147200d49e648d61d` with 2,438 default tests and 619 Adapter tests. Targeted backlog, terminator, append-only and diff checks must rerun on this documentation-only correction, followed by fresh cumulative exact-head review.
+
+**Could not verify:** Hosted PostgreSQL and CI remain outstanding on the eventual head. No NBA auction or linear Fantrax capture exists.
+
+**Next:** Commit, run targeted document gates, obtain final cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge only while clean. Do not touch PR #150.
