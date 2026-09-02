@@ -1,0 +1,182 @@
+{
+  "census_version": 2,
+  "scope": {
+    "season": "2025-26",
+    "season_type": "regular",
+    "data_layer": "direct_observations",
+    "coverage_unit": "final game with at least one direct participation row",
+    "opportunity_coverage": null
+  },
+  "provenance": {
+    "source": "stats.nba.com",
+    "source_library": "nba_api==1.11.4",
+    "source_endpoints": [
+      "LeagueGameFinder",
+      "PlayerGameLogs",
+      "BoxScoreTraditionalV3",
+      "BoxScoreSummaryV3"
+    ],
+    "ingest_command": "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation",
+    "ingest_code_commit": "50e44e5a78cb66842de699956c7ae147d1b0a85c",
+    "census_code_commit": "223febe521c4797105a8a7a84e44f2b3f57d3b31",
+    "census_generator_sha256": "84f204053afce492015f34c66efb2597fef5567ce4cc030b43c8a59587451cf0",
+    "database_sha256": "e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe",
+    "original_2025_26_store_sha256": "09ab985caa3ab5ffb3ae5546afb15a37b2e4d1f94e6dc762fb338faf2c63b181",
+    "raw_capture_manifest": {
+      "algorithm": "sha256 of endpoint, canonical request params, and uncompressed payload sha256, tab-separated and sorted",
+      "sha256": "1496dc6d8d7370750d977f869cecdd2f4ed25b8bd97d56f38bf4e1b9ca4bea6b",
+      "capture_count": 2460,
+      "captures_by_endpoint": {
+        "BoxScoreSummaryV3": 1227,
+        "BoxScoreTraditionalV3": 1230,
+        "CommonAllPlayers": 1,
+        "LeagueGameFinder": 1,
+        "PlayerGameLogs": 1
+      },
+      "first_fetched_at": "2026-08-22T05:22:44.187640+00:00",
+      "last_fetched_at": "2026-09-01T23:26:14.465085+00:00",
+      "missing_captures": [
+        {
+          "endpoint": "BoxScoreSummaryV3",
+          "params": {
+            "game_id": "0022500259"
+          }
+        },
+        {
+          "endpoint": "BoxScoreSummaryV3",
+          "params": {
+            "game_id": "0022500260"
+          }
+        },
+        {
+          "endpoint": "BoxScoreSummaryV3",
+          "params": {
+            "game_id": "0022500261"
+          }
+        }
+      ],
+      "off_repository_root": "C:\\Users\\steverones\\hoops-gm-data\\data\\raw"
+    },
+    "run_logs": [
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2025-26-clean-publication-20260901T205200.log",
+        "sha256": "72ae578cb30c5831d368e8d6bf09b67ab8c597a19c09022ed8279b4424c66f3f"
+      }
+    ],
+    "run_log_manifest_sha256": "d8a23c15edeb6f4c855cc7cf2f80df242c808482991b709cba19950ea69fa644"
+  },
+  "store": {
+    "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2023-26.db",
+    "dialect": "sqlite",
+    "local_path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2023-26.db",
+    "alembic_revision": "0016"
+  },
+  "source_reconciliation": {
+    "league_game_finder_games": 1230,
+    "league_game_finder_distinct_game_dates": 164,
+    "player_game_log_rows": 26651,
+    "player_game_log_distinct_games": 1230,
+    "database_games": 1230,
+    "stable_game_id_sets_agree": true,
+    "league_game_finder_only_game_ids": [],
+    "player_game_logs_only_game_ids": [],
+    "source_only_game_ids": [],
+    "database_only_game_ids": []
+  },
+  "unresolved_source_outages": [
+    {
+      "game_id": "0022500259",
+      "missing_endpoint": "BoxScoreSummaryV3",
+      "effect": "no participation rows; no outcome inferred"
+    },
+    {
+      "game_id": "0022500260",
+      "missing_endpoint": "BoxScoreSummaryV3",
+      "effect": "no participation rows; no outcome inferred"
+    },
+    {
+      "game_id": "0022500261",
+      "missing_endpoint": "BoxScoreSummaryV3",
+      "effect": "no participation rows; no outcome inferred"
+    }
+  ],
+  "production_log_audit": {
+    "policy": "PlayerGameLogs was used only to audit source-game identity and production-row presence. It supplied no participation fitting label.",
+    "supplied_participation_labels": false,
+    "game_log_rows_in_games_without_participation": 61,
+    "games_with_logs_but_no_participation": [
+      {
+        "game_id": "0022500259",
+        "rows": 19
+      },
+      {
+        "game_id": "0022500260",
+        "rows": 20
+      },
+      {
+        "game_id": "0022500261",
+        "rows": 22
+      }
+    ]
+  },
+  "identity_anchor_audit": {
+    "policy": "A source-named player omitted by CommonAllPlayers is anchored only by the hard NBA person id. No fuzzy match or current-team inference is made; a nameless unknown id fails loudly.",
+    "raw_to_ledger_missing_player_records": 0,
+    "raw_to_ledger_missing_team_records": 0,
+    "recovered_source_named_anchors": [
+      {
+        "nba_player_id": 1642365,
+        "name": "Nikola Djurisic",
+        "rows": 56
+      },
+      {
+        "nba_player_id": 1642947,
+        "name": "Eli John Ndiaye",
+        "rows": 34
+      },
+      {
+        "nba_player_id": 1642893,
+        "name": "Alex Toohey",
+        "rows": 25
+      },
+      {
+        "nba_player_id": 1630667,
+        "name": "Kyle Mangas",
+        "rows": 4
+      },
+      {
+        "nba_player_id": 1642440,
+        "name": "Gabe McGlothan",
+        "rows": 2
+      },
+      {
+        "nba_player_id": 1642615,
+        "name": "Tyreke Key",
+        "rows": 2
+      }
+    ]
+  },
+  "limitations": [
+    "Game coverage means only that at least one direct row exists for the game; it is not player-level opportunity coverage.",
+    "A missing player-game row is absent evidence, not an explicit unknown and not evidence of play or non-play.",
+    "The ledger cannot prove roster membership or enumerate who should have appeared; participation-opportunity-coverage requires independent evidence.",
+    "Normalized DNP reasons are convenience labels; raw comments remain the re-derivable source evidence."
+  ],
+  "season": {
+    "season": "2025-26",
+    "games_total": 1230,
+    "games_final": 1230,
+    "games_observed": 1227,
+    "games_unobserved": 3,
+    "unobserved_dates": [
+      "2025-11-19",
+      "2025-11-19",
+      "2025-11-19"
+    ],
+    "unobserved_dates_suppressed": 0,
+    "rows": 43160,
+    "distinct_players": 602,
+    "box_score_rows": 26651,
+    "rows_with_inactive_list": 43160
+  }
+}
