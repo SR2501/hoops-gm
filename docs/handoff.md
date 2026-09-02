@@ -33634,3 +33634,51 @@ reading against a live backend have not run in this lane.
 **Next:** Publish this as a frontend-only PR based on
 `sr2501-bind-rendered-draft-board`, require fresh exact-head review and hosted
 checks, and do not merge it before PR #148 lands.
+
+---
+
+## 2026-09-02 - frontend - Reconciled category completeness onto merged main
+
+**Changed:** Rebased the frontend-only category completeness work onto
+authoritative `origin/main` at
+`8c746282a982e4558a7f95d3dd6a18805224b685`, after PRs #148 and #149 merged.
+The complete merged handoff blob is preserved byte-for-byte as this file's
+prefix, including its 149 inherited CR bytes, with the two frontend entries
+appended in LF only. The main-relative diff contains docs and frontend files
+only; no backend implementation was replayed.
+
+The recorded OpenAPI contract still matches merged #148:
+`DraftParticipant.source_seat` is required and nullable,
+`source_board_profile` is exactly
+`fantrax_football_snake_v1 | null`, and feed status carries participant rows
+of `participant_id`, `team_slot`, `total`, and `reasons`, plus
+`unattributed_skipped`. Runtime guards require exact consumed shapes, reject
+arrays masquerading as count maps, verify row reason totals, and require the
+participant plus unattributed partition to reproduce aggregate `skipped`.
+
+**Browser-visible behavior:** The category table has a scan-friendly
+`Feed skipped` column with a visible zero for every valid zero. Non-zero seat
+counts say that the roster and ranking may be incomplete and list reason
+counts without naming a missing player. Unattributed skips receive a separate
+prominent warning and are not assigned to a seat. Failed or context-free feed
+reads leave seats and rankings visible while saying completeness is unknown;
+zero observations is stated separately. Projection and feed failures remain
+independent.
+
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests, and the
+production build pass on merged main. Backlog graph, document terminators,
+commit-aware append-only validation, tracked-file secret scan, cumulative
+whitespace checks, and the zero-backend-file comparison pass. Category
+arithmetic and ranking semantics are unchanged, so the Model gate remains
+inapplicable.
+
+**Could not verify:** No configured live Fantrax feed with real NBA auction
+observations or NBA auction source-board profile exists. The raw feed fixture
+proves the backend wire and context-unavailable state; non-zero skip,
+unattributed, mismatch, failure, polling, and abort behavior are exercised by
+contract-shaped browser tests. No manual visual browser session was run in
+this reconciliation.
+
+**Next:** Publish the reconciled exact head without overwriting concurrent
+remote work, retarget PR #150 to `main`, require fresh exact-head independent
+review and hosted checks, and merge only when GitHub reports the PR clean.
