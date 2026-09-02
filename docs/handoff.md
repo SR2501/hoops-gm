@@ -32901,3 +32901,30 @@ accepted or declined the protocol or outcome-marginal release.
 **Next:** Establish `participation-opportunity-coverage` without manufacturing
 labels from silence, preserve the fit veto until that evidence exists, and leave
 protocol acceptance and outcome-marginal release to the owner.
+
+---
+
+## 2026-09-01 - architect - Owner accepted availability preregistration v1
+
+**Changed:** Recorded the project owner's explicit response, `Yes, lock those
+rules`, as acceptance of the exact availability-model preregistration reviewed
+at PR #141 head `07d62da6616fa1248da6e046a8e95f250f945b4f`. That commit and merge
+commit `3dbeafa695387c9052e3ffcb33a24b14b1cc744f` both contain protocol blob
+`8f6514f04b834955f258a7ac838d1f79597b5d1f`, which remained byte-identical on
+rebased main `5d141b5f4672b0cd28db05f84817637c4df004d2`. The protocol filename remains
+unchanged so existing references continue to resolve.
+
+This acceptance changes status and lineage only. It leaves
+`FIT_VETOED_PREREQUISITES` in force, approves no fitted model, releases no
+outcome or keyed holdout class, does not waive
+`participation-opportunity-coverage`, and changes no threshold, cohort,
+candidate, estimator, gate, or model rule. `participation-opportunity-coverage`
+and `availability-model` remain pending.
+
+**Could not verify:** No fitted availability model, development or selection
+outcomes, keyed holdout classes, or runtime release exists to verify. Hosted CI
+and independent review had not run against the eventual acceptance commit when
+this entry was appended.
+
+**Next:** Independently review the exact acceptance head and merge only after
+the documentation, append-only, secret, backlog, and hosted checks pass.
