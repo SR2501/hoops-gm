@@ -33133,3 +33133,19 @@ The authoritative backlog now marks pre-integration statements as historical, st
 **Could not verify:** No real NBA auction or linear Fantrax draft-room capture exists. The only authoritative rendered-board application profile remains the recorded football mock snake corpus. The local PostgreSQL endpoint remains unavailable; hosted PostgreSQL must verify the eventual exact head. The immediate frontend follow-up remains unchanged: `frontend/src/api/draftTypes.ts` must add `DraftParticipant.source_seat`, and `frontend/src/api/draftEndpoints.ts` must require it as number-or-null while implementing `category-table-board-completeness`.
 
 **Next:** Commit this append and backlog correction, run the complete local gates and fresh cumulative exact-head review, push only after reconciling any concurrent PR-branch updates, and require a new hosted matrix. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Refused unreadable coordinates and stale concurrent blocks
+
+**Changed:** Fresh cumulative review found two final application-boundary defects. First, the official recogniser could receive an out-of-range supplied coordinate, coerce it to `None`, retain player identity, and leave the observation applicable. When that participant recurred in snake order, the unreadable historical claim could append at the current coordinate. Both bridge and official selection recognisers now mark any supplied-but-unreadable coordinate `draft_coordinate_unreadable`, withhold player identity, and store the row as a permanent attributed refusal rather than an application or reconciliation candidate.
+
+Second, a worker losing `draft_sequence_conflict` could stamp that reason on stale ORM state after another worker had already applied the same observation. The conflict path now refreshes the observation before deciding whether it remains blocked, and `FeedStatus.blocked` excludes every row that already has an applied sequence. A focused status test pins the latter invariant while the existing tail-void race continues to prove genuinely pending conflicts remain retryable.
+
+The backlog dependency graph now records the actual blocker: `draft-board-feed-integration` depends on pending `fantrax-auction-capture`, and the `draft-tracker` umbrella depends on that integration rather than claiming all dependencies are done. Its status note now names profile widening and real NBA auction evidence instead of the obsolete question of whether any automatic pick tracking is possible.
+
+**Gates:** On the complete integrated tree, Ruff and format-check passed over 239 files, strict mypy passed over 232 source files, and the full SQLite suite passed with **2,428 passed, 1 skipped and 41 live-smoke tests deselected**. The complete draft-feed, rendered-board and migration suites passed; the backlog graph, document terminators and diff checks passed.
+
+**Could not verify:** Hosted PostgreSQL, Adapter and Code gates have not run on the eventual commit containing these final corrections; all earlier hosted matrices belong to superseded heads. No real NBA auction or linear Fantrax capture exists. The immediate frontend `DraftParticipant.source_seat` type/guard and category completeness work remains outside this backend PR.
+
+**Next:** Commit this append with the final fixes, independently review the cumulative exact head, reconcile any concurrent remote-branch advance without overwriting it, push, and require a fresh hosted matrix. Do not merge or self-approve.

@@ -1612,6 +1612,46 @@ def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
     assert healthy.pending_count == 0
 
 
+def test_an_applied_observation_never_publishes_a_stale_sequence_block(
+    session: Session,
+) -> None:
+    """A concurrent apply loser cannot leave the polling status falsely blocked."""
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    state = draft_service.record_pick(
+        session,
+        draft,
+        participant_id=draft.participants[0].id,
+        player_label=JOKIC,
+    )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="concurrent-winner",
+            locator="responses[0].data.draftPicks[0]",
+            recogniser="test",
+            observed_at=NOW,
+            kind="selection",
+            team_external_id="t1",
+            participant_id=draft.participants[0].id,
+            player_label=JOKIC,
+            overall_pick=1,
+            applied_event_sequence=state.last_sequence,
+            applied_at=NOW,
+            blocked_reason="draft_sequence_conflict",
+        )
+    )
+    session.flush()
+
+    status = feed_service.feed_status(session, draft, now=NOW)
+
+    assert status.applied_count == 1
+    assert status.pending_count == 0
+    assert status.blocked == ()
+
+
 def test_a_closed_draft_with_a_backlog_says_so_rather_than_looking_queued(
     session: Session,
 ) -> None:
@@ -2486,6 +2526,11 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     # A coordinate too wide for the column no longer reaches the bind.
     result = official(overall_pick=int(1e100))
     assert [instant.overall_pick for instant in result.instants] == [None]
+    assert [instant.skipped_reason for instant in result.instants] == [
+        "draft_coordinate_unreadable"
+    ]
+    assert [instant.player_label for instant in result.instants] == [None]
+    assert [instant.player_external_id for instant in result.instants] == [None]
     assert [shape.reason for shape in result.unrecognised] == ["field_too_large_to_record"]
     assert result.unrecognised[0].keys == ("overall_pick",)
 
@@ -2537,6 +2582,37 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     assert [instant.overall_pick for instant in healthy.instants] == [1]
     assert [instant.player_label for instant in healthy.instants] == [JOKIC]
     assert healthy.unrecognised == ()
+
+
+def test_a_bridge_selection_with_an_unreadable_supplied_coordinate_is_permanent() -> None:
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": "t1",
+                    "playerId": "p-jokic",
+                    "playerName": JOKIC,
+                    "overallPick": MAX_COORDINATE + 1,
+                    "roundNumber": 1,
+                    "pickNumber": 1,
+                }
+            ]
+        ),
+        dedupe_key="coordinate-unreadable",
+        received_at=NOW,
+        captured_at=NOW,
+        context=_context(),
+    )
+
+    assert len(result.instants) == 1
+    instant = result.instants[0]
+    assert instant.skipped_reason == "draft_coordinate_unreadable"
+    assert instant.player_label is None
+    assert instant.player_external_id is None
+    assert instant.overall_pick is None
+    assert instant.round_number == 1
+    assert instant.pick_in_round == 1
 
 
 def test_a_capacity_refusal_survives_an_accepted_sibling_list(

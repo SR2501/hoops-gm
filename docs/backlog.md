@@ -1989,7 +1989,7 @@ nothing about the owner's NBA auction DOM, which has not been observed.
 ### `draft-board-feed-integration` - Joining a board reading to the draft feed
 
 - [ ] **pending**
-- **Depends on:** `draft-board-dom-parser`
+- **Depends on:** `draft-board-dom-parser`, `fantrax-auction-capture`
 
 `board_dom.parse_draft_board` returns picks; `draft/feed/` conditionally joins
 them to `ObservedInstant`s only for an explicit `fantrax_football_snake_v1`
@@ -2623,8 +2623,8 @@ dedupe coverage.
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *umbrella; **all nine dependencies are done as of 2026-08-28.** The `per-team-auction-budgets` edge was dropped by owner ruling that day. What remains is not a dependency but an open question: whether picks can be tracked automatically at all — see `official-getdraftpicks-live-verification`*
-- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
+- [ ] **pending** — *umbrella; automatic product tracking waits on `draft-board-feed-integration`, whose profile widening requires the real NBA auction evidence in `fantrax-auction-capture`. The `per-team-auction-budgets` edge was dropped by owner ruling on 2026-08-28.*
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `draft-board-feed-integration`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
 

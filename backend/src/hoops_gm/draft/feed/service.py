@@ -1994,9 +1994,12 @@ def apply_observations(
                 # than the recovery allowlist: the owner types the missing
                 # earlier pick, re-runs, and this exact row remains pending.
                 halted = error.code
-                row.blocked_reason = error.code
                 if error.code == "draft_sequence_conflict":
+                    # Another worker may have applied this exact observation.
+                    # Refresh before stamping a block onto stale ORM state.
+                    session.refresh(row)
                     state = draft_service.load_state(session, draft)
+                row.blocked_reason = error.code if row.applied_event_sequence is None else None
                 break
             row.skipped_reason = f"{error.code}: {error}"
             continue
@@ -2550,6 +2553,7 @@ def feed_status(
                 row.blocked_reason
                 for row in rows
                 if row.blocked_reason
+                and row.applied_event_sequence is None
                 and not (
                     row.blocked_reason == "draft_closed" and state.status is not DraftStatus.CLOSED
                 )

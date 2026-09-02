@@ -915,6 +915,16 @@ def _instant_from(
     overall_pick = _as_int(_first(record, "overall_pick"))
     round_number = _as_int(_first(record, "round_number"))
     pick_in_round = _as_int(_first(record, "pick_in_round"))
+    coordinate_unreadable = kind is InstantKind.SELECTION and any(
+        _first(record, field) is not None and value is None
+        for field, value in (
+            ("overall_pick", overall_pick),
+            ("round_number", round_number),
+            ("pick_in_round", pick_in_round),
+        )
+    )
+    if skipped_reason is None and coordinate_unreadable:
+        skipped_reason = "draft_coordinate_unreadable"
 
     if kind is InstantKind.SELECTION:
         amount = None
@@ -1433,6 +1443,11 @@ def recognise_official_draft_picks(
                 if pick.player_id is not None or pick.player_name is not None
                 else "record_names_no_player"
             )
+        elif kind is InstantKind.SELECTION and any(field in _ORDINAL_FIELDS for field in lost):
+            skipped_reason = "draft_coordinate_unreadable"
+            # A permanently refused record must not enter identity matching.
+            player_external_id = None
+            player_label = None
         # ``parse_draft_picks`` fills the ordinals *and* the amount from the
         # same row unconditionally, so an auction league's own results are the
         # expected shape that violates the storage CHECK. Conform to the kind
@@ -1507,9 +1522,11 @@ def recognise_official_draft_picks(
             )
         )
     if unreadable:
-        # Not ``rejected``: these picks were still recorded, minus a field. The
-        # count exists so "the board shows no price for that sale" has an
-        # answer other than "the source did not send one".
+        # Not an artifact-level ``rejected``: each record is still stored. A
+        # refused identity or coordinate is stored as a permanent skip with its
+        # player fields withheld; a nonessential field may instead be dropped.
+        # The count says the source supplied something this reader could not
+        # represent rather than pretending it was absent upstream.
         unrecognised.append(
             UnrecognisedShape(
                 keys=tuple(sorted(unreadable_fields)),
