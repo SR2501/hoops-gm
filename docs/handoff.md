@@ -32737,3 +32737,127 @@ not run when this entry was written; owner acceptance remains open.
 **Next:** Freeze one replacement head, obtain fresh independent cumulative quant
 review, publish it to existing PR #141 without force, and wait for exact-head CI.
 Do not merge or self-approve.
+
+---
+
+## 2026-09-01 - data-engineer - Genuine multi-season participation ledger
+
+**Changed:** Completed `participation-ledger-population` from clean main
+`3dbeafa695387c9052e3ffcb33a24b14b1cc744f`. The production
+`backfill season <season> --with-participation` path populated a new
+off-repository direct-observation store for 2023-24, 2024-25, and 2025-26. A
+source-named player omitted by `CommonAllPlayers` is now anchored only by the
+hard NBA person ID and stated per-game name; nameless unknown IDs fail loudly,
+and historical game teams are not projected onto `current_team_id`. Recorded
+fixtures and contract tests cover both acceptance and refusal. Public coverage
+text and JSON retain private in-memory measurements but serialize no outcome or
+reason marginal and expose no opt-in flag.
+
+The active store is
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`,
+40,513,536 bytes, schema `0016`, SHA-256
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
+It holds 43,395 direct rows / 595 players / 1,230 of 1,230 final games with any
+rows for 2023-24; 43,369 / 587 / 1,230 of 1,230 for 2024-25; and 43,160 / 602 /
+1,227 of 1,230 for 2025-26. Across seasons that is 129,924 rows, 826 distinct
+players, and 3,687 of 3,690 final games with any direct row. This is game-level
+source coverage, not player-level opportunity coverage. Missing player-game
+rows remain absent evidence and were never converted into a participation
+label. `PlayerGameLogs` was audit-only and supplied no fitting label.
+
+The outcome-safe current censuses and exact SHA-256 values are:
+
+- `docs/adapters/participation-ledger-2023-24-coverage.json`:
+  `13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0`
+- `docs/adapters/participation-ledger-2024-25-coverage.json`:
+  `f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69`
+- `docs/adapters/participation-ledger-2025-26-direct-coverage.json`:
+  `4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441`
+
+Each pins `nba_api==1.11.4`, endpoint and stable-game-ID reconciliation,
+database/schema/source revisions, raw-capture and run-log manifests, recovered
+hard-ID anchors, unresolved outages, and limitations. The inherited
+`participation-ledger-2025-26-coverage.json` is byte-identical to main. Exact
+outcome marginals were computed and withheld under quant arbitration. Review
+actors who saw the private aggregate marginals may not change protocol choices
+based on them. The marginal-bearing unpushed history is preserved locally as
+`sr2501-private-participation-marginals` at `7d91c00`; it is not publication
+ancestry.
+
+**Off-repository and resumable holdings:** The preserved original
+`C:\Users\steverones\hoops-gm-data\hoops_gm.db` remains 15,081,472 bytes with
+SHA-256
+`09ab985caa3ab5ffb3ae5546afb15a37b2e4d1f94e6dc762fb338faf2c63b181`.
+Backups before historical identity repair, inherited-2025 repair, and
+current-team correction hash respectively to
+`674a1ba4352a88ccb32c4f61db0b85f316bc42d59d398388accbd337922059dd`,
+`5d0f87035850c57c4ecaa3adc48d6301f373c8cfe620edc317f606b67dff26f3`,
+and `fc8d1b34f340011c0d3a59ef261265eacd1d4ae608c2af6a67b8d324475ed3e5`
+under `C:\Users\steverones\hoops-gm-data\backups`. Raw captures remain under
+`data\raw`; clean replay logs remain under `logs` with hashes
+`76ac267f22d978a4c6954d8cf4a3ec665211b8ff5d15e7860247e8c52c7533c7`,
+`47e44b1aef795886982da91c0a1259958c48202e029ef42794a2e1851deb34a9`,
+and `72ae578cb30c5831d368e8d6bf09b67ab8c597a19c09022ed8279b4424c66f3f`.
+The safe off-repository census generator hashes to
+`84f204053afce492015f34c66efb2597fef5567ce4cc030b43c8a59587451cf0`.
+Run the three production commands from
+`C:\Users\steverones\hoops-gm-data` with `PYTHONPATH` pointing to
+`backend\src` and `DATABASE_URL` pointing to the active store; cached per-game
+payloads replay at disk speed, while the two season-level endpoints may refresh
+after their 12-hour cache window. Full census regeneration arguments and paths
+are in `docs/adapters/participation-ledger-store.md`.
+
+**Gates:** Code and Adapter apply; Model and Automation do not. Ruff check,
+format check over 238 files, strict mypy over 232 source files, the complete
+default pytest suite, and all 604 recorded-fixture Adapter tests passed on the
+clean publication branch. The three production replays converged with zero
+skipped rows. No database, raw payload, run log, holdout, or commercial
+projection data is committed.
+
+**Could not verify:** `BoxScoreSummaryV3` still has no response for 2025-26
+games `0022500259`, `0022500260`, and `0022500261`; the census leaves them
+without participation rows and names the 61 production rows that were not
+converted into labels. The ledger cannot prove historical roster membership,
+enumerate every player-game opportunity, or establish why a missing row is
+missing; `participation-opportunity-coverage` remains pending. The spent injury
+holdout was neither consumed nor regenerated. At this revision,
+`scripts\fingerprint_closure.py` reports 31 transitive cohort dependencies
+outside its declared fingerprints, including the changed `importers.py`; the
+gap remains assigned to `cohort-fingerprint-closure-check` rather than being
+laundered by regenerating spent evidence. Hosted CI, native PostgreSQL, and an
+independent review of the eventual exact publication head had not run when
+this entry was appended.
+
+**Next:** Commit and independently review one clean exact head, push only
+`sr2501-publish-participation-ledger`, open the PR, and freeze it. Do not merge
+or self-approve.
+
+---
+
+## 2026-09-01 - data-engineer - Corrected census hash byte domains
+
+**Changed:** Corrected the census identities in
+`docs/adapters/participation-ledger-store.md` without changing any census,
+code, store value, or publication surface. The prior entry's three SHA-256
+values were computed from CRLF working-tree bytes on Windows. The authoritative
+hashes below were computed from raw, undecoded subprocess bytes returned by
+`git cat-file blob HEAD:<path>`, which are the LF bytes Git actually publishes:
+
+- `participation-ledger-2023-24-coverage.json`:
+  `b158eec09b6b16df9ef044bd25a22271871ccb79a8c783c2fe563239fb8beb5a`
+- `participation-ledger-2024-25-coverage.json`:
+  `111a6694e247895857e9f80dfd2e6cedcf4b2205017cd91857c17ab3d12a40cd`
+- `participation-ledger-2025-26-direct-coverage.json`:
+  `86b0533d31e9e1e8639127be4ced995a72382a41de069ac3581b7596592d339c`
+
+The earlier values remain valid only for this checkout's CRLF bytes and must
+not be used as committed-artifact identities. This entry is an append-only
+correction; the prior handoff bytes were not rewritten.
+
+**Could not verify:** A fresh independent review and hosted CI against the
+eventual correction head had not run when this entry was appended. This repair
+does not revisit the already-reviewed data, disclosure, ancestry, or source-row
+arbitration.
+
+**Next:** Freeze the correction commit, update PR #145, and require fresh
+exact-head review and hosted checks before merge. Do not self-approve.

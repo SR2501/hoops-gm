@@ -33,6 +33,7 @@ from hoops_gm.ingest.fantrax_official import (
     parse_league_info,
     parse_player_ids,
 )
+from hoops_gm.ingest.importers import _missing_participation_player_anchors
 from hoops_gm.ingest.nba import (
     MIN_POSITION_COVERAGE,
     PLAYER_INDEX_POSITIONS,
@@ -1258,6 +1259,23 @@ class TestBoxScoreV3:
         # One row per player, always.
         identifiers = [r.nba_player_id for r in combined.records]
         assert len(identifiers) == len(set(identifiers))
+        missing_id = identifiers[0]
+        anchors = _missing_participation_player_anchors(
+            combined,
+            known_player_ids={
+                str(player_id): index for index, player_id in enumerate(identifiers[1:])
+            },
+        )
+        assert [(anchor.nba_player_id, anchor.display_first_last) for anchor in anchors] == [
+            (
+                missing_id,
+                next(
+                    record.player_name
+                    for record in combined.records
+                    if record.nba_player_id == missing_id
+                ),
+            )
+        ]
 
     def test_the_game_date_is_the_local_date_not_the_utc_one(self) -> None:
         """A real bug, found after the PR was opened, by checking rather than assuming.

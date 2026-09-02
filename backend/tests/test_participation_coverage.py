@@ -139,6 +139,31 @@ def test_the_json_form_carries_the_store_too(session: Session) -> None:
     assert set(payload) == {"store", "seasons", "totals"}
     assert payload["store"]["dialect"]
     assert payload["totals"]["rows"] == 1
+    assert "outcomes" not in payload["seasons"][0]
+    assert "reasons" not in payload["seasons"][0]
+
+
+def test_public_text_withholds_outcome_and_reason_marginals(session: Session) -> None:
+    team, opponent = _teams(session)
+    player = _player(session, "Alpha Player")
+    game = _game(session, number=1, game_date=date(2025, 10, 21), team=team, opponent=opponent)
+    _participation(
+        session,
+        player=player,
+        game=game,
+        team=team,
+        outcome=ParticipationOutcome.DID_NOT_PLAY,
+        reason=DnpReason.COACHES_DECISION,
+    )
+
+    coverage = measure_coverage(session)
+    assert coverage.seasons[0].outcomes
+    assert coverage.seasons[0].reasons
+    rendered = coverage.render()
+    assert "outcomes" not in rendered
+    assert "reasons" not in rendered
+    assert ParticipationOutcome.DID_NOT_PLAY.value not in rendered
+    assert DnpReason.COACHES_DECISION.value not in rendered
 
 
 def test_two_stores_with_the_same_basename_each_report_their_own_path(

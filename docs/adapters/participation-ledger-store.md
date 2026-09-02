@@ -1,8 +1,11 @@
 # The participation ledger store
 
 **The ledger is populated. It is not in this repository, and it is not in any
-worktree.** It lives at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, a
-sibling of the main checkout.
+worktree.** The current multi-season direct-observation store lives at
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`, a
+sibling of the main checkout. The original one-season store remains unchanged at
+`C:\Users\steverones\hoops-gm-data\hoops_gm.db`; its SHA-256 is
+`09ab985caa3ab5ffb3ae5546afb15a37b2e4d1f94e6dc762fb338faf2c63b181`.
 
 This file exists because that sentence was not written down anywhere under
 version control, and on 2026-08-22 the cost of that came due.
@@ -44,7 +47,7 @@ path with every count.
 ```powershell
 cd backend
 $env:PYTHONPATH = "$PWD\src"
-$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/hoops_gm.db"
+$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2023-26.db"
 python -m hoops_gm.availability.coverage
 ```
 
@@ -88,10 +91,15 @@ message and no stray databases. The inventory of which commands refuse, which
 may create, and which are knowingly unguarded is pinned in
 `backend/tests/test_store_creating_readers.py`.
 
-Add `--json` for the machine-readable form. The committed census at
-[`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
-is exactly that output, and regenerating it is how you check this document
-rather than trusting it.
+Add `--json` for the machine-readable form. Both public forms withhold outcome
+and reason marginals while the injury-status-conversion protocol remains
+blinded; no flag exposes them. The committed current censuses start with that
+safe measured output, then add raw-capture and run-log digests, source-ID
+reconciliation, outages, and a production-only audit. The off-repository
+generator is
+`C:\Users\steverones\.copilot\session-state\8788c8d4-d28e-4bd0-aaee-0c2c3dc1da94\files\build_participation_census_safe.py`;
+regenerating with the database, raw root, season, code revisions, and named run
+logs is how you check this document rather than trusting it.
 
 ---
 
@@ -187,17 +195,21 @@ Driven 2026-08-22: **1,227 == 1,227, clean.**
 ## Rebuilding it
 
 A populated database nobody can rebuild is not an asset. Every response is
-already cached in `hoops-gm-data\data\raw`, keyed by URL, and a completed game's
-box score never changes — so **a re-run costs no requests** and replays at disk
-speed.
+cached in `hoops-gm-data\data\raw`, keyed by URL, and a completed game's per-game
+box scores never expire. A replay therefore makes no per-game requests and runs
+at disk speed. `LeagueGameFinder` and `PlayerGameLogs` use a 12-hour cache and
+may each make one fresh season-level request after that window; "a replay costs
+no requests" was too broad.
 
 ```powershell
-$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/hoops_gm.db"
+$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2023-26.db"
 cd C:\Users\steverones\hoops-gm-data          # raw store resolves to .\data\raw
 python -m hoops_gm.ingest.backfill season 2025-26 --with-participation
 ```
 
-**Run it from that directory.** `RawPayloadStore` resolves its path against the
+Never point this command at the preserved original `hoops_gm.db`; rebuild into
+the active multi-season copy or a new copy. **Run it from that directory.**
+`RawPayloadStore` resolves its path against the
 *current working directory*, not the repo root — the opposite of the database,
 which the validator anchors. Launching from anywhere else silently detaches the
 cache and re-fetches everything at ~1.1 s per request with nothing saying why.
@@ -336,3 +348,146 @@ never written down either, so the store's existence lived only in an
 un-versioned `README.md` inside the store's own directory — reachable only by
 someone who already knew where to look, and therefore invisible to exactly the
 search that needed it.
+
+---
+
+## Multi-season direct-observation population, 2026-09-01
+
+The production season command was run for 2023-24 and 2024-25 against a new
+off-repository copy of the preserved 2025-26 ledger. The source and copy both
+hashed to
+`09ab985caa3ab5ffb3ae5546afb15a37b2e4d1f94e6dc762fb338faf2c63b181`
+before the copy was changed. The original file still has that hash after the
+backfill. The populated copy now hashes to
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`
+and remains at schema `0016`.
+
+| season | direct rows | players | games with rows / final | source dates | production rows |
+|---|---:|---:|---:|---:|---:|
+| 2023-24 | 43,395 | 595 | 1,230 / 1,230 | 160 | 26,401 |
+| 2024-25 | 43,369 | 587 | 1,230 / 1,230 | 163 | 26,306 |
+| 2025-26 | 43,160 | 602 | 1,227 / 1,230 | 164 | 26,651 |
+
+Across the store that is 129,924 direct rows, 826 distinct players and 3,687 of
+3,690 final games with at least one row. **That last quantity is game-level
+source coverage, not player-level opportunity coverage.** A player-game with no
+row remains absent evidence, not an `unknown` row and not evidence of play or
+non-play. This store still cannot prove roster membership or enumerate who
+should have appeared; `participation-opportunity-coverage` owns that separate
+question.
+
+Each census is self-contained and pins the store path and hash, schema revision,
+`nba_api==1.11.4`, endpoint set, ingest/census code revision, off-repository run
+logs, and a digest over the exact raw-capture manifest:
+
+- [`participation-ledger-2023-24-coverage.json`](participation-ledger-2023-24-coverage.json)
+  — committed Git-blob content SHA-256
+  `b158eec09b6b16df9ef044bd25a22271871ccb79a8c783c2fe563239fb8beb5a`
+- [`participation-ledger-2024-25-coverage.json`](participation-ledger-2024-25-coverage.json)
+  — committed Git-blob content SHA-256
+  `111a6694e247895857e9f80dfd2e6cedcf4b2205017cd91857c17ab3d12a40cd`
+- [`participation-ledger-2025-26-direct-coverage.json`](participation-ledger-2025-26-direct-coverage.json)
+  — committed Git-blob content SHA-256
+  `86b0533d31e9e1e8639127be4ced995a72382a41de069ac3581b7596592d339c`
+
+These hashes are over the LF bytes stored by Git, read directly with
+`git cat-file blob HEAD:<path>`. The corresponding CRLF working-tree byte
+hashes on this Windows checkout are, in the same order,
+`13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0`,
+`f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69`,
+and `4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441`.
+They describe checkout bytes only and are not the authoritative publication
+identities.
+
+The original
+[`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
+is preserved unchanged as the already-accepted historical disclosure. The
+current three-season censuses publish no outcome-valued scalar and no new
+outcome-keyed map. Exact marginals were computed privately from the
+off-repository store and withheld under quant arbitration; reviewers who saw
+them are spent for choices that could respond to those values.
+
+The spent injury-conversion holdout was not regenerated or consumed. At the
+clean publication revision, `python scripts\fingerprint_closure.py` reports 31
+transitive cohort dependencies outside its declared fingerprint set, including
+the changed `backend/src/hoops_gm/ingest/importers.py`. This is a provenance gap,
+not evidence that the holdout changed. It remains assigned to
+`cohort-fingerprint-closure-check`; this lane does not update a spent manifest
+with code that did not produce it.
+
+### What the live run found
+
+Both new season runs fetched all 1,230 games and ended with zero source
+failures. The first persistence pass nevertheless skipped 53 direct rows in
+2023-24 and 55 in 2024-25. This was not a transport outage:
+`CommonAllPlayers` omitted five players whom the per-game NBA payloads named by
+hard NBA person ID — Charles Bediako (30 rows), Sir'Jabari Rice (23), DJ Steward
+(31), Boo Buie III (23), and Erik Stevenson (1). Running `nba-identity` for the
+historical seasons did not add them. The production participation importer
+therefore creates a canonical NBA anchor from a previously unknown per-game NBA
+person ID and stated name before writing participation. The cached replay
+created five anchors and all 108 rows. A subsequent raw-to-ledger audit found
+the inherited 2025-26 store had the same defect: 123 direct rows for Nikola
+Djurisic (56), Eli John Ndiaye (34), Alex Toohey (25), Kyle Mangas (4), Gabe
+McGlothan (2), and Tyreke Key (2). The clean publication implementation at
+`50e44e5a78cb66842de699956c7ae147d1b0a85c` created those anchors without
+projecting a historical game team onto `current_team_id`; the directly observed
+team remains only on each participation row. All three seasons were replayed
+again at that exact commit and converged with zero skipped rows. The three
+summary-endpoint outages remain loud failures.
+
+`PlayerGameLogs` remains audit evidence only and supplied no fitting label.
+Private auditing found one production-log disagreement in 2023-24; it supplied
+no fitting label and its outcome-valued detail is withheld. For 2025-26 the
+season-level logs name 61 production rows across
+`0022500259`/`260`/`261`, while
+`BoxScoreSummaryV3` remains unavailable and no participation rows exist. None of
+those production rows was converted into a participation label.
+The three source outages remain unresolved exactly as before.
+
+### Off-repository holdings and resumption
+
+- Database:
+  `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`
+- Reversible pre-repair backup:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2023-26-before-identity-repair-20260901T174354.db`
+  (SHA-256
+  `674a1ba4352a88ccb32c4f61db0b85f316bc42d59d398388accbd337922059dd`)
+- Reversible pre-2025-repair backup:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2023-26-before-2025-identity-repair-20260901T182610.db`
+  (SHA-256
+  `5d0f87035850c57c4ecaa3adc48d6301f373c8cfe620edc317f606b67dff26f3`)
+- Reversible pre-current-team-correction backup:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2023-26-before-current-team-correction-20260901T183500.db`
+  (SHA-256
+  `fc8d1b34f340011c0d3a59ef261265eacd1d4ae608c2af6a67b8d324475ed3e5`)
+- Raw captures: `C:\Users\steverones\hoops-gm-data\data\raw`
+- Run logs: `C:\Users\steverones\hoops-gm-data\logs`
+
+Resume or re-audit from the data directory so `data\raw` resolves to the same
+cache:
+
+```powershell
+$env:PYTHONPATH = "C:\path\to\hoops-gm\backend\src"
+$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2023-26.db"
+cd C:\Users\steverones\hoops-gm-data
+python -m hoops_gm.ingest.backfill season 2023-24 --with-participation
+python -m hoops_gm.ingest.backfill season 2024-25 --with-participation
+python -m hoops_gm.ingest.backfill season 2025-26 --with-participation
+python -m hoops_gm.availability.coverage --json
+```
+
+To regenerate a current census, invoke the safe generator path named above with
+positional arguments
+`DATABASE RAW_ROOT SEASON INGEST_COMMIT CENSUS_COMMIT OUTPUT`, pass each path
+already recorded in that census's `provenance.run_logs` as a repeated `--log`,
+and pass the recorded original-store hash through `--original-store-sha256`.
+The generator has no option to serialize marginals. Each census pins the
+generator's own SHA-256 as well as the repository code revision.
+
+The first two season manifests each hold 1,230 traditional box scores, 1,230
+summary box scores, one `CommonAllPlayers`, one `LeagueGameFinder`, and one
+`PlayerGameLogs` capture. The 2025-26 manifest holds 1,230 traditional and 1,227
+summary captures plus the three season-level captures; its missing summary
+requests are the three game IDs above. No raw payload, live database or run log
+is committed.

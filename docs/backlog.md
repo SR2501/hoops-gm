@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**70 done - 0 blocked - 121 pending - 191 total**
+**71 done - 0 blocked - 120 pending - 191 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2995,8 +2995,27 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
 
 ### `participation-ledger-population` - Populating the participation ledger at season scale
 
-- [ ] **pending** - **REOPENED 2026-08-31 by architect ruling, on independent
-  cumulative review of `participation-opportunity-coverage`.** This item's own
+- [x] **done** - **COMPLETED 2026-09-01 by `data-engineer`.** The production,
+  season-parameterized ingest now holds a genuine three-season direct-observation
+  cohort at
+  `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`:
+  43,395 rows for 2023-24, 43,369 for 2024-25, and 43,160 for
+  2025-26. Each season has its own provenance-pinned committed census under
+  `docs/adapters/`; no missing row was converted into play, non-play or
+  `unknown`, and game-level coverage is explicitly not called opportunity
+  coverage. The live passes found that `CommonAllPlayers` omitted eleven players
+  named by hard NBA ID in per-game payloads: five across the two new seasons and
+  six in the inherited 2025-26 store. The production `import_participation` seam
+  anchors those source-named players before writing their direct observations;
+  cached replays recovered all 231 skipped direct rows and the final convergent
+  imports report zero skips. The applicable Code and Adapter gates passed, including
+  recorded fixtures and loud live smokes. Full paths, hashes, counts, outages,
+  audit disagreements, limitations and resumption commands are in
+  `docs/adapters/participation-ledger-store.md`.
+
+  **Prior reopening history, preserved. REOPENED 2026-08-31 by architect ruling,
+  on independent cumulative review of `participation-opportunity-coverage`.**
+  This item's own
   "Done when" clause below requires "the ledger holds a **genuine multi-season
   cohort**" and that "gaps are explicit rows rather than absent ones." What was
   driven and is recorded below is **one season** (2025-26), and it names three
