@@ -1,0 +1,291 @@
+{
+  "census_version": 2,
+  "scope": {
+    "season": "2022-23",
+    "season_type": "regular",
+    "data_layer": "direct_observations",
+    "coverage_unit": "final game with at least one direct participation row",
+    "opportunity_coverage": null
+  },
+  "provenance": {
+    "source": "stats.nba.com",
+    "source_library": "nba_api==1.11.4",
+    "source_endpoints": [
+      "CommonAllPlayers",
+      "LeagueGameFinder",
+      "PlayerGameLogs",
+      "BoxScoreTraditionalV3",
+      "BoxScoreSummaryV3"
+    ],
+    "ingest_command": "python -m hoops_gm.ingest.backfill season 2022-23 --with-participation",
+    "ingest_code_commit": "ad9b461a0ca080c96d600909c9f5d586f4916c61",
+    "census_code_commit": "b7f396514c67a2e23920da353dc1030a2264d101",
+    "census_generator_sha256": "591f98ccaba8a45460adc75763165d6576cedc7f35f30365390c44e8ca2eab89",
+    "database_sha256": "93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a",
+    "preserved_prior_store": {
+      "path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2023-26.db",
+      "bytes": 40513536,
+      "sha256": "e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe"
+    },
+    "identity_state_reconciliation": {
+      "policy": "CommonAllPlayers is identity-reconciliation evidence only. Historical team metadata is not retained as current identity state.",
+      "matches_preserved_prior": true,
+      "tables": {
+        "players": {
+          "active": {
+            "rows": 5224,
+            "sha256": "210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda"
+          },
+          "preserved_prior": {
+            "rows": 5224,
+            "sha256": "210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda"
+          }
+        },
+        "player_external_ids": {
+          "active": {
+            "rows": 5224,
+            "sha256": "185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660"
+          },
+          "preserved_prior": {
+            "rows": 5224,
+            "sha256": "185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660"
+          }
+        },
+        "nba_teams": {
+          "active": {
+            "rows": 30,
+            "sha256": "f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200"
+          },
+          "preserved_prior": {
+            "rows": 30,
+            "sha256": "f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200"
+          }
+        }
+      },
+      "restore_script": {
+        "path": "C:\\Users\\steverones\\.copilot\\session-state\\a4e600b1-a630-4087-aaca-1efdfde01e8c\\files\\restore_participation_ledger_identity.py",
+        "sha256": "da87f9e0ca5cdd8ff79f77a0b6b97f2fa9acfa72b41f0092c8e12ea9d295352e"
+      },
+      "restore_receipt": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-direct-2022-26-identity-restore-20260902T055244Z.json",
+        "sha256": "59c3db1b77f3941478595f47a48f003a94d994b976dfff6d41dc99aa83eaae17"
+      }
+    },
+    "offline_replay": {
+      "network_access": false,
+      "script": {
+        "path": "scripts/replay_participation_ledger.py",
+        "git_blob_sha256": "d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb",
+        "code_commit": "863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2"
+      },
+      "pinned_capture_manifest": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-pinned-replay-manifest.json",
+        "bytes": 788178,
+        "sha256": "e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a"
+      },
+      "manifest_trust": {
+        "interface": "required --manifest-sha256 argument",
+        "expected_sha256": "e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a",
+        "verified_before_parse": true,
+        "self_declared_digest_allowed": false
+      },
+      "request_consumption": "exactly_once",
+      "proof_receipt": {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json",
+        "sha256": "f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00",
+        "replay_code_commit": "863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2",
+        "replay_script_git_blob_sha256": "d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb",
+        "scope": "Two-pass exact-implementation replay and set-equality comparison of every non-timestamp column across all 33 tables."
+      },
+      "preserved_predecessor_proof_receipts": [
+        {
+          "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof.json",
+          "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32"
+        },
+        {
+          "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof-local-a8d5780.json",
+          "sha256": "1309575acbfc82a51241e004df229524842749c7e1d57c191c011ce634c77682"
+        }
+      ],
+      "guard_contract": {
+        "path": "backend/tests/test_replay_participation_ledger.py",
+        "manifest_digest_before_parse": true,
+        "duplicate_runtime_request_rejected": true
+      }
+    },
+    "raw_capture_manifest": {
+      "algorithm": "sha256 of endpoint, canonical request params, and uncompressed payload sha256, tab-separated and sorted",
+      "sha256": "6179399e75f955f2a23c546cdcdce2640fde1b718322f318fad805da4eb2f27d",
+      "capture_count": 2463,
+      "captures_by_endpoint": {
+        "BoxScoreSummaryV3": 1230,
+        "BoxScoreTraditionalV3": 1230,
+        "CommonAllPlayers": 1,
+        "LeagueGameFinder": 1,
+        "PlayerGameLogs": 1
+      },
+      "first_fetched_at": "2026-09-02T04:03:20.564682+00:00",
+      "last_fetched_at": "2026-09-02T04:52:26.626965+00:00",
+      "missing_captures": [],
+      "off_repository_root": "C:\\Users\\steverones\\hoops-gm-data\\data\\raw"
+    },
+    "run_logs": [
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-production-20260902T040318Z.log",
+        "sha256": "895feabcd5313831fab72e2b7cbd57228a0fd0b854ab2fc342a6964d1a8d2352"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-identity-2022-23-20260902T045223Z.log",
+        "sha256": "29b2fadbf42977eedf2522ca065a70fd6ba9a445e901f753c50f852d1551300a"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-26-identity-restore-20260902T055244Z.log",
+        "sha256": "d5fb9cab869a4bf866855965f7d136aa3a42db9c7fd7168a025b0f87deda6683"
+      },
+      {
+        "path": "C:\\Users\\steverones\\hoops-gm-data\\logs\\participation-ledger-2022-23-post-identity-restore-replay-20260902T055301Z.log",
+        "sha256": "b5c3d66a0def822fe0d632752fccaffbbaad41e7f9a54cde2306e8a37c968680"
+      }
+    ],
+    "run_log_manifest_sha256": "30e102d3a186565b1c5cd8fb4eae64c472bb466d60b74319ac830522ced6fa4f"
+  },
+  "store": {
+    "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db",
+    "dialect": "sqlite",
+    "local_path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2022-26.db",
+    "alembic_revision": "0016"
+  },
+  "source_reconciliation": {
+    "league_game_finder_games": 1230,
+    "league_game_finder_distinct_game_dates": 164,
+    "player_game_log_rows": 25894,
+    "player_game_log_distinct_games": 1230,
+    "database_games": 1230,
+    "stable_game_id_sets_agree": true,
+    "league_game_finder_only_game_ids": [],
+    "player_game_logs_only_game_ids": [],
+    "source_only_game_ids": [],
+    "database_only_game_ids": []
+  },
+  "unresolved_source_outages": [],
+  "production_log_audit": {
+    "policy": "PlayerGameLogs contains played-game appearances only. Its row total is kept as source-reconciliation evidence; it is not a direct PlayerParticipation outcome marginal, fitting label, or opportunity denominator.",
+    "supplied_participation_labels": false,
+    "game_log_rows_in_games_without_participation": 0,
+    "games_with_logs_but_no_participation": []
+  },
+  "identity_anchor_audit": {
+    "policy": "A source-named player omitted by CommonAllPlayers is anchored only by the hard NBA person id. No fuzzy match or current-team inference is made; a nameless unknown id fails loudly.",
+    "raw_to_ledger_missing_player_records": 0,
+    "raw_to_ledger_missing_team_records": 0,
+    "recovered_source_named_anchors": []
+  },
+  "limitations": [
+    "Game coverage means only that at least one direct row exists for the game; it is not player-level opportunity coverage.",
+    "A missing player-game row is absent evidence, not an explicit unknown and not evidence of play or non-play.",
+    "The ledger cannot prove roster membership or enumerate who should have appeared; participation-opportunity-coverage requires independent evidence.",
+    "Normalized DNP reasons are convenience labels; raw comments remain the re-derivable source evidence."
+  ],
+  "protocol_support": {
+    "required_direct_census_seasons": [
+      "2022-23",
+      "2023-24",
+      "2024-25",
+      "2025-26"
+    ],
+    "season_roles": {
+      "2022-23": "historical_marcel_support_only",
+      "2023-24": "development",
+      "2024-25": "selection",
+      "2025-26": "held_out"
+    },
+    "direct_label_availability": {
+      "store": {
+        "url": "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db",
+        "dialect": "sqlite",
+        "local_path": "C:\\Users\\steverones\\hoops-gm-data\\participation-ledger-direct-2022-26.db",
+        "alembic_revision": "0016"
+      },
+      "seasons": [
+        {
+          "season": "2022-23",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 40932,
+          "distinct_players": 554,
+          "box_score_rows": 25894,
+          "rows_with_inactive_list": 40932
+        },
+        {
+          "season": "2023-24",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43395,
+          "distinct_players": 595,
+          "box_score_rows": 26401,
+          "rows_with_inactive_list": 43395
+        },
+        {
+          "season": "2024-25",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1230,
+          "games_unobserved": 0,
+          "unobserved_dates": [],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43369,
+          "distinct_players": 587,
+          "box_score_rows": 26306,
+          "rows_with_inactive_list": 43369
+        },
+        {
+          "season": "2025-26",
+          "games_total": 1230,
+          "games_final": 1230,
+          "games_observed": 1227,
+          "games_unobserved": 3,
+          "unobserved_dates": [
+            "2025-11-19",
+            "2025-11-19",
+            "2025-11-19"
+          ],
+          "unobserved_dates_suppressed": 0,
+          "rows": 43160,
+          "distinct_players": 602,
+          "box_score_rows": 26651,
+          "rows_with_inactive_list": 43160
+        }
+      ],
+      "totals": {
+        "rows": 170856,
+        "distinct_players": 899,
+        "games_final": 4920,
+        "games_observed": 4917,
+        "games_unobserved": 3,
+        "is_populated": true
+      }
+    },
+    "direct_participation_outcome_marginals_published": false
+  },
+  "season": {
+    "season": "2022-23",
+    "games_total": 1230,
+    "games_final": 1230,
+    "games_observed": 1230,
+    "games_unobserved": 0,
+    "unobserved_dates": [],
+    "unobserved_dates_suppressed": 0,
+    "rows": 40932,
+    "distinct_players": 554,
+    "box_score_rows": 25894,
+    "rows_with_inactive_list": 40932
+  }
+}

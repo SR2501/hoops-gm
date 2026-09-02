@@ -33233,3 +33233,317 @@ The official recogniser docstring no longer repeats the repaired bare-`int()` co
 **Could not verify:** No populated live `getDraftPicks` payload establishes its coordinate runtime type. Hosted PostgreSQL remains outstanding. Auction amount alias normalization is unchanged and remains outside this coordinate-focused correction.
 
 **Next:** Commit this append, rerun complete gates, obtain clean cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - data-engineer - Populated the 2022-23 direct-ledger support season
+
+**Changed:** Populated the one direct-observation support season missing from
+the owner-accepted availability preregistration, without beginning opportunity
+classification or model fitting. Verified `origin/main` at
+`ad9b461a0ca080c96d600909c9f5d586f4916c61` before work. Preserved
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`
+byte-for-byte at 40,513,536 bytes and SHA-256
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`;
+copied it to the new active
+`participation-ledger-direct-2022-26.db`, and backed that copy up before the
+first write.
+
+The existing production command ingested 2022-23 from `stats.nba.com`: 1,230
+games, 25,894 production rows, and 40,932 direct participation rows over 554
+players, with zero skips and zero source failures. A cached replay converged at
+`0 created / 40,932 updated / 0 skipped`. The separate existing NBA identity
+command captured `CommonAllPlayers`, updated 5,212 known identities, created
+none, and a final cached replay converged identically. The stable game-ID sets
+from `LeagueGameFinder`, `PlayerGameLogs`, and the store agree exactly; all
+1,230 final games have direct rows, all 40,932 rows carry source inactive-list
+availability, and no hard-ID recovery was needed because all 554 direct players
+are present in the season's `CommonAllPlayers` capture.
+
+The expanded schema-0016 store is 52,928,512 bytes at SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+Logical primary-key-ordered hashes for `nba_games`, `player_game_logs`, and
+`player_participation` prove every 2023-26 row unchanged; the three prior
+committed census blobs are unchanged too. The only four-season source gaps
+remain the three 2025-26 `BoxScoreSummaryV3` outages
+`0022500259`/`260`/`261`; no label was inferred from their silence.
+
+Published the outcome-safe
+`docs/adapters/participation-ledger-2022-23-coverage.json`, which fingerprints
+all 2,463 source captures, the active and preserved stores, the exact ingest
+code, three run logs, stable-ID reconciliation, and four-season direct-label
+availability. It exposes no outcome-valued count, keyed outcome, holdout class,
+play rate, or per-status/reason marginal. Added the completed narrow backlog
+item `participation-ledger-2022-23-support`, depending on the already-completed
+`participation-ledger-population`; `participation-opportunity-coverage` now
+depends on the support item. The original completed item was not reopened or
+rewritten.
+
+**Could not verify:** No player-level opportunity denominator, historical
+roster interval, or reason for a missing player-game was established; those
+remain explicitly outside this direct ledger and belong to
+`participation-opportunity-coverage`. No outcome value, opportunity class, or
+model output was computed. Hosted CI, the opt-in live-smoke suite, and
+independent review of the eventual PR head had not run when this entry was
+appended. The database, raw captures, backups, logs, and safe generator are
+off-repository and were verified on this machine only; their exact paths,
+hashes, and recovery commands are in
+`docs/adapters/participation-ledger-store.md`.
+
+**Next:** Run the complete Code and Adapter gates, including loud live smoke;
+independently review the exact frozen head; then open the focused PR without
+self-approval or merge.
+
+---
+
+## 2026-09-02 - data-engineer - Corrected support-ledger identity and disclosure claims
+
+**Changed:** Corrected two blocked findings on the support-ledger publication
+candidate. The prior entry remains byte-identical because this file is
+append-only; this entry supersedes its active-store hash and its blanket
+outcome-neutral claim.
+
+First, the historical `nba-identity --season 2022-23` capture was not harmless.
+`import_nba_players` wrote historical `TEAM_ID`/`TEAM_ABBREVIATION` values into
+shared current metadata, changing 371 `players.current_team_id` rows and 631
+NBA `player_external_ids.external_team` rows. The earlier non-regression audit
+did not hash those tables and therefore could not see the defect. The mutated
+active store was backed up at SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+The active store was repaired by restoring `players`, `player_external_ids`,
+and `nba_teams` exactly by primary key from the preserved 2023-26 database,
+not by guessing that another season replay meant "current." A final cached
+participation replay converged at `0 created / 40,932 updated / 0 skipped` and
+left all three identity-table hashes equal to the preserved prior. The repaired
+active store is 52,932,608 bytes, SHA-256
+`93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a`.
+The rebuild workflow no longer runs historical identity ingestion against the
+active store; the already-recorded `CommonAllPlayers` payload supplies
+identity reconciliation directly.
+
+Second, quant arbitration kept `player_game_log_rows` and `box_score_rows` but
+rejected the prior wording that called the census entirely outcome-neutral.
+`PlayerGameLogs` contains played-game appearances only, so its source-row total
+is outcome-valued upstream evidence. It is not the direct
+`PlayerParticipation.outcome == played` marginal, not a fitting label, and not
+an opportunity denominator; known cross-source disagreements and outages
+prevent treating the quantities as interchangeable. The census now states the
+narrow invariant:
+`direct_participation_outcome_marginals_published=false`. No direct
+`PlayerParticipation.outcome` marginal, opportunity-class marginal, keyed
+outcome, or play rate is published. The inherited 2023-26 censuses contain the
+same allowed source-row totals but no falsely broad metadata field, so their
+bytes and published blob identities remain unchanged; the adapter page now
+states their semantics precisely.
+
+**Could not verify:** The repair restores identity state exactly to the
+preserved PR #145 artifact; it does not claim that artifact reflects
+post-2025-26 roster movement. No player-level opportunity denominator,
+historical roster interval, direct outcome marginal, opportunity class, or
+model output was produced. Hosted checks and fresh cumulative independent
+review had not run against the eventual repaired head when this correction was
+appended.
+
+**Next:** Regenerate and reproduce the safe census from the repaired store,
+run the complete applicable gates, obtain fresh cumulative exact-head review,
+and update the open PR without merging it.
+
+---
+
+## 2026-09-02 - data-engineer - Pinned support-ledger recovery to exact captures
+
+**Changed:** Corrected the remaining cumulative-review finding: the ordinary
+season command was not a reproducible recovery path. Its per-game captures are
+effectively permanent, but `LeagueGameFinder` and `PlayerGameLogs` expire after
+12 hours, so a later "cached" rebuild can silently refetch mutable upstream
+data.
+
+Added `scripts/replay_participation_ledger.py` and an offline Adapter contract.
+The script supplies `NbaStatsClient` with a manifest-backed endpoint factory
+and a zero-delay limiter; there is no default or network-capable endpoint path.
+Every requested endpoint/parameter pair must be present, its relative gzip path
+must remain under the raw root, and its uncompressed SHA-256 must match. The
+run also refuses any unused manifest entry, source failure, or skipped row.
+Contract tests drive exact replay, an unpinned request, changed capture bytes,
+an escaping path, and an unconsumed entry.
+
+The off-repository manifest pins all 2,462 ingest requests at
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json`,
+788,178 bytes, SHA-256
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`.
+The replay code is pinned at commit
+`b7f396514c67a2e23920da353dc1030a2264d101`, script Git-blob SHA-256
+`3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`.
+
+End-to-end proof rebuilt a disposable copy of the preserved 2023-26 store,
+then replayed it again at `0 created / 40,932 updated / 0 skipped`. All 33
+tables are set-equal to the active store after excluding only
+`created_at`/`updated_at`; zero tables differ. The database files are not
+byte-identical because row timestamps and SQLite file history differ, so this
+is explicitly semantic replay equality rather than a false file-identity
+claim. The proof receipt SHA-256 is
+`47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`.
+
+**Could not verify:** The exact-capture replay proves the recorded 2022-23
+source set and database semantics. It does not prove that a future live source
+still returns the same payload; the loud live smoke remains the separate drift
+detector. Timestamp columns are intentionally excluded from cross-rebuild
+equality because a rebuild occurs at a different time. No opportunity class,
+direct outcome marginal, or model output was produced.
+
+**Next:** Regenerate the safe census with the offline replay provenance, run
+all applicable gates, obtain another cumulative review of the final head, and
+leave the PR open and unmerged.
+
+---
+
+## 2026-09-02 - data-engineer - Bound replay manifest trust and exact-once consumption
+
+**Changed:** Repaired the two coordinator-review blockers on PR #149 without
+changing a capture, parser, ledger row, identity state, or disclosure semantic.
+`PinnedCaptureFactory` now reads the manifest as raw bytes, compares those bytes
+to the required externally supplied `--manifest-sha256`, and refuses a mismatch
+before JSON parsing. The manifest remains unable to declare its own trusted
+digest. The command documented for this corpus pins
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`,
+which was reproduced directly from the 788,178-byte off-repository manifest.
+
+Runtime request consumption is now exact-once. An endpoint/parameter key already
+served is rejected before capture bytes are returned, and final validation
+requires every manifest key to have consumption count one rather than merely
+membership in a set. The offline contract mutates an internally coherent
+manifest while retaining the trusted original digest and proves parsing is not
+reached; a second contract calls the same request twice and proves the duplicate
+is rejected. Removing either new guard makes its named test red for that guard's
+failure, and restoring the guard returns the complete contract to green.
+
+The implementation is pinned at commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`, script Git-blob SHA-256
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`.
+A disposable copy of the preserved 2023-26 ledger replayed the real 2,462-entry
+manifest through that implementation: 1,230 games, 25,894 production rows, and
+40,932 participation rows were created with zero skips or failures. This
+exercised the external manifest digest and exact-once requirements over the
+published corpus. The prior proof receipt remains the semantic 33-table
+store-equality proof and truthfully names predecessor commit
+`b7f396514c67a2e23920da353dc1030a2264d101`; the census and store documentation
+now distinguish that receipt from the later guard contract.
+
+Local gates passed: backend and repository-script lint/format checks, strict
+mypy over 234 source files, 2,411 backend tests with one skip, 610 offline
+Adapter contracts, and 37 live-smoke tests with four explicit skips. The
+backlog, census, recovery command, and receipt wording now state the externally
+pinned manifest trust and exact-once runtime contract while retaining the
+identity restoration and quant-approved played-only source-row semantics.
+
+**Could not verify:** Hosted checks and fresh independent cumulative review had
+not run against the eventual documentation commit when this entry was appended.
+The off-repository manifest, raw captures, databases, and proof receipt remain
+operator-machine artifacts. The disposable repaired-code run reproduced the
+published row counts and all replay guards but did not replace the earlier
+33-table semantic-equality receipt; no capture, parser, or database semantic
+changed to require a new data receipt. No opportunity class, direct
+participation outcome marginal, or model output was produced.
+
+**Next:** Commit the repaired provenance documents, push the same PR branch,
+verify local/remote/PR head identity, wait for hosted checks, and obtain a fresh
+independent cumulative review of that exact head without merging.
+
+---
+
+## 2026-09-02 - data-engineer - Added exact guard-repair replay receipt
+
+**Changed:** Corrected the preceding handoff's incomplete provenance claim. It
+reported that exact guard-repair commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2` replayed the real corpus, but the
+only 33-table equality receipt it cited named predecessor implementation
+`b7f396514c67a2e23920da353dc1030a2264d101`. The run claim and receipt identity
+therefore did not match.
+
+After exclusive `FileShare.None` opens proved that neither preserved nor active
+ledger was held by another process, exact commit `863dffb` and script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
+were materialized in a detached worktree. A fresh disposable copy of the
+preserved 2023-26 store replayed manifest
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`
+twice. The first pass created 1,230 games, 25,894 production rows, and 40,932
+participation rows with zero skips; the second updated those exact counts with
+zero creates and zero skips. Set comparison found every non-timestamp column
+equal across all 33 tables against the active store.
+
+The new distinct receipt is
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`,
+SHA-256
+`f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`.
+It names the exact implementation, both run-log hashes, every table comparison,
+the unchanged active and preserved store identities, and both preserved
+predecessor receipts. Neither predecessor receipt was overwritten. The census
+and store runbook now point to this exact proof while retaining the identity
+restoration and quant-approved played-only source-row wording.
+
+Final local gates passed: targeted replay contracts, backend and script
+lint/format, strict mypy over 234 source files, 2,411 backend tests with one
+skip, 610 offline Adapter contracts, 37 live-smoke tests with four explicit
+skips, JSON/hash validation, backlog graph, tracked-file secret scan, document
+terminators, and commit-aware append-only validation.
+
+**Could not verify:** Hosted checks and fresh independent review had not run
+against the eventual receipt-documentation commit when this entry was appended.
+The databases, raw captures, logs, manifest, and three receipts remain
+off-repository operator-machine artifacts. No opportunity class, direct
+participation outcome marginal, or model output was produced.
+
+**Next:** Push and freeze the exact receipt-documentation head, verify
+local/remote/PR identity, obtain a fresh cumulative independent review, and
+leave PR #149 open and unmerged.
+
+
+---
+
+## 2026-09-02 - data-engineer - Reconciled support-ledger proof after PR #148
+
+**Changed:** Merged new `origin/main` at exact PR #148 merge commit
+`a540ee1d0351ad8a9d2fe01684ae1fd74b3dcc15` into PR #149 without rebasing or
+force-updating its published history. The only content conflict was the expected
+append-only `docs/handoff.md` collision. The resolution uses the complete new
+main blob as a byte-for-byte prefix, including its 149 inherited CR bytes, then
+appends PR #149's complete 15,127-byte suffix from pre-merge head
+`e29330266823bc0944b948032d427100b8339b75`. The merged PR #148 entry and every
+PR #149 data-engineer entry occur exactly once.
+
+`docs/backlog.md` merged semantically rather than by choosing either stale
+header: the finished file recounts 192 items as 72 done, zero blocked, and 120
+pending. PR #148's merged draft-board truth remains intact. The narrow
+`participation-ledger-2022-23-support` item remains done and
+`participation-opportunity-coverage` still depends on it; no opportunity
+classification, direct outcome marginal, or model work was introduced.
+
+The replay implementation, committed census, and off-repository artifacts are
+unchanged. Exact proof receipt
+`participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`
+remains 10,854 bytes at SHA-256
+`f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`,
+naming implementation `863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`, script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`,
+and manifest
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`.
+The active and preserved stores retain SHA-256
+`93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a` and
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
+
+Local post-reconciliation gates passed: backend and repository-script
+lint/format, strict mypy over 234 source files, 2,448 backend tests with one
+skip, 629 offline Adapter contracts, 37 live-smoke tests with four explicit
+skips, an empty SQLite migration through revision `0023`, backlog graph,
+tracked-file secret scan, document terminators, and conflict-marker checks.
+
+**Could not verify:** Hosted checks and fresh independent cumulative review had
+not run against the eventual merge-reconciliation commit when this entry was
+written. The database, raw captures, logs, manifest, and receipts remain
+off-repository operator-machine artifacts. PR #150 was not modified or
+reconciled; its stacked branch must absorb merged main independently after this
+PR lands.
+
+**Next:** Commit and push the non-rewriting reconciliation only if the remote PR
+head still equals `e29330266823bc0944b948032d427100b8339b75`, then obtain fresh
+cumulative exact-head review and hosted checks before delivery.

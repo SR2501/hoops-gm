@@ -1,9 +1,12 @@
 # The participation ledger store
 
 **The ledger is populated. It is not in this repository, and it is not in any
-worktree.** The current multi-season direct-observation store lives at
-`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`, a
-sibling of the main checkout. The original one-season store remains unchanged at
+worktree.** The active four-season direct-observation store lives at
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db`, a
+sibling of the main checkout. The prior three-season store is preserved
+byte-for-byte at
+`C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`.
+The original one-season store remains unchanged at
 `C:\Users\steverones\hoops-gm-data\hoops_gm.db`; its SHA-256 is
 `09ab985caa3ab5ffb3ae5546afb15a37b2e4d1f94e6dc762fb338faf2c63b181`.
 
@@ -47,7 +50,7 @@ path with every count.
 ```powershell
 cd backend
 $env:PYTHONPATH = "$PWD\src"
-$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2023-26.db"
+$env:DATABASE_URL = "sqlite:///C:/Users/steverones/hoops-gm-data/participation-ledger-direct-2022-26.db"
 python -m hoops_gm.availability.coverage
 ```
 
@@ -402,8 +405,11 @@ identities.
 The original
 [`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
 is preserved unchanged as the already-accepted historical disclosure. The
-current three-season censuses publish no outcome-valued scalar and no new
-outcome-keyed map. Exact marginals were computed privately from the
+current three-season censuses publish no direct `PlayerParticipation.outcome`
+marginal and no new outcome-keyed map. Their played-only `PlayerGameLogs` row
+totals remain source-reconciliation evidence; those totals are outcome-valued,
+but are neither participation fitting labels nor opportunity denominators.
+Exact direct-participation marginals were computed privately from the
 off-repository store and withheld under quant arbitration; reviewers who saw
 them are spent for choices that could respond to those values.
 
@@ -491,3 +497,236 @@ summary box scores, one `CommonAllPlayers`, one `LeagueGameFinder`, and one
 summary captures plus the three season-level captures; its missing summary
 requests are the three game IDs above. No raw payload, live database or run log
 is committed.
+
+---
+
+## Four-season preregistration support expansion, 2026-09-02
+
+The owner-accepted availability preregistration requires a direct-ledger census
+for 2022-23 through 2025-26. The 2022-23 season is historical Marcel support
+only; this unit did not enumerate opportunities, classify silence, or fit a
+model.
+
+The completed 2023-26 artifact was measured before work and remains unchanged:
+
+- path:
+  `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db`
+- bytes: `40,513,536`
+- SHA-256:
+  `e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`
+
+It was copied to the truthfully named active store and backed up before the
+first write:
+
+- active store:
+  `C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db`
+- active bytes: `52,932,608`
+- active SHA-256:
+  `93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a`
+- schema: `0016`
+- pre-write backup:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.pre-2022-23-20260902T040259Z.db`
+- backup SHA-256:
+  `e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`
+- pre-work manifest:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.prework-20260902T040259Z.json`
+
+No migration ran. Exactly one writer used the active store at a time.
+
+### 2022-23 measured result
+
+| season | direct rows | players | games with rows / final | source dates | production rows |
+|---|---:|---:|---:|---:|---:|
+| 2022-23 | 40,932 | 554 | 1,230 / 1,230 | 164 | 25,894 |
+
+The production pass created those rows with zero skips and zero source
+failures. The final cached replay reported `0 created / 40,932 updated / 0
+skipped`; game and production rows likewise converged at `1,230` and `25,894`.
+All 554 direct-ledger players are present in the recorded `CommonAllPlayers`
+source capture, so `recovered_source_named_anchors` is empty for this season.
+The existing fixture contracts still pin the hard-ID-only recovery path and the
+fail-loud nameless-ID refusal; no external-call or parser contract changed in
+this unit.
+
+The first census pass ran `nba-identity --season 2022-23` against the active
+store to obtain that capture. That was wrong: `import_nba_players` treats the
+source's historical `TEAM_ID`/`TEAM_ABBREVIATION` as current metadata and
+changed 371 `players.current_team_id` rows plus 631 NBA
+`player_external_ids.external_team` rows. A pre-repair backup preserves that
+state at
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26-before-identity-restore-20260902T055244Z.db`,
+SHA-256
+`5468882709a59e50335cd45e0aef05a8e7d8ee39a04af72462499e25ebf7a19d`.
+
+The active store was repaired by restoring `players`, `player_external_ids`,
+and `nba_teams` exactly from the preserved 2023-26 database, by primary key,
+without touching any game, production, or participation row. The repair
+receipt is
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26-identity-restore-20260902T055244Z.json`,
+SHA-256
+`59c3db1b77f3941478595f47a48f003a94d994b976dfff6d41dc99aa83eaae17`.
+The repair script is
+`C:\Users\steverones\.copilot\session-state\a4e600b1-a630-4087-aaca-1efdfde01e8c\files\restore_participation_ledger_identity.py`,
+SHA-256
+`da87f9e0ca5cdd8ff79f77a0b6b97f2fa9acfa72b41f0092c8e12ea9d295352e`.
+A final cached season replay still converged at `0 created / 40,932 updated /
+0 skipped` and left all three identity tables exactly equal to the preserved
+prior.
+
+The source manifest contains 2,463 captures: 1,230
+`BoxScoreTraditionalV3`, 1,230 `BoxScoreSummaryV3`, and one each of
+`CommonAllPlayers`, `LeagueGameFinder`, and `PlayerGameLogs`. Its canonical
+manifest SHA-256 is
+`6179399e75f955f2a23c546cdcdce2640fde1b718322f318fad805da4eb2f27d`;
+there are no missing captures or unresolved source outages. The stable game-ID
+sets from both season sources and the database are exactly equal.
+
+The committed safe census is
+[`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
+Its LF content SHA-256 is
+`476221fcab4053832d0a62beeecbfec8b445082bb6baa9a238cba7ee363db070`.
+The generator's Windows working-tree bytes use CRLF and hash to
+`9f6151a271e9c2c17381cdd19aab167b55cc13024944d5082e77288f95940bf8`;
+that checkout-only identity is not the published artifact identity.
+It includes the four-season direct-label availability summary required by the
+accepted protocol. No direct `PlayerParticipation.outcome` marginal,
+opportunity-class marginal, keyed outcome, or play rate is published.
+Played-only `PlayerGameLogs` source-row totals remain source-reconciliation
+evidence; they are neither fitting labels nor opportunity denominators. The
+pinned safe generator is
+`C:\Users\steverones\.copilot\session-state\a4e600b1-a630-4087-aaca-1efdfde01e8c\files\build_participation_census_2022_23_safe.py`,
+SHA-256
+`591f98ccaba8a45460adc75763165d6576cedc7f35f30365390c44e8ca2eab89`.
+
+Across the active store, the outcome-safe coverage report now measures 170,856
+direct rows, 899 distinct players, and 4,917 of 4,920 final games observed. The
+three unchanged exceptions remain 2025-26 games `0022500259`,
+`0022500260`, and `0022500261`; silence still produces no row and no inferred
+label.
+
+### Existing-season non-regression
+
+Before the copy was changed, all rows for each existing season were serialized
+in primary-key order and hashed by table. Repeating that procedure after the
+final replay produced exact equality. The direct-row SHA-256 values are:
+
+| season | rows | logical SHA-256 |
+|---|---:|---|
+| 2023-24 | 43,395 | `7a95357a3ec9113255e05c410208c42c6c7fb3eae06d3f945c86aa774659b81f` |
+| 2024-25 | 43,369 | `073ad5d85ac42f40bb1343477b14bd83512287c75051c84fca91047f64c6e102` |
+| 2025-26 | 43,160 | `c8ff9cb04d7765e0beb8770e3904c8185bcb0ee00644b9fa310127a61d2b1ff2` |
+
+The corresponding `nba_games` and `player_game_logs` logical hashes also match;
+the complete comparison is retained at
+`C:\Users\steverones\hoops-gm-data\backups\participation-ledger-direct-2022-26.post-2022-23-audit.json`,
+SHA-256
+`a1a256e4790d5aa933c8c45b923b5c31c61bb00c63651fd076d88e805cc30443`.
+The three prior committed census files are unchanged from the Git blobs named
+above.
+
+Identity state is now covered by the same non-regression rule. The complete
+table digests match the preserved prior exactly:
+
+| table | rows | logical SHA-256 |
+|---|---:|---|
+| `players` | 5,224 | `210408f6e56c315c270155aa5a150c45f3ef9bbfbd7036001688b888f5d43eda` |
+| `player_external_ids` | 5,224 | `185a8ed2535082c1a080729ae23100ed6fae6e67ada691c38a6ced2140166660` |
+| `nba_teams` | 30 | `f117b3948146b89c7dd256eefd4767d4ed046359ca69b1032e5e8a513025d200` |
+
+### Logs and recovery
+
+The census pins these off-repository logs and their SHA-256 values:
+
+- production:
+  `participation-ledger-2022-23-production-20260902T040318Z.log`,
+  `895feabcd5313831fab72e2b7cbd57228a0fd0b854ab2fc342a6964d1a8d2352`
+- identity:
+  `participation-ledger-identity-2022-23-20260902T045223Z.log`,
+  `29b2fadbf42977eedf2522ca065a70fd6ba9a445e901f753c50f852d1551300a`
+- final cached replay:
+  `participation-ledger-2022-23-post-identity-restore-replay-20260902T055301Z.log`,
+  `b5c3d66a0def822fe0d632752fccaffbbaad41e7f9a54cde2306e8a37c968680`
+- identity restoration:
+  `participation-ledger-2022-26-identity-restore-20260902T055244Z.log`,
+  `d5fb9cab869a4bf866855965f7d136aa3a42db9c7fd7168a025b0f87deda6683`
+
+The earlier convergent cached replay is also retained in the same directory
+under `participation-ledger-2022-23-cached-replay-20260902T044845Z.log`;
+its content is byte-identical to the final replay log.
+
+To discard the expansion and recover the exact completed PR #145 artifact:
+
+```powershell
+Copy-Item `
+  C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2023-26.db `
+  C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db `
+  -Force
+```
+
+The ordinary production command is not a reproducible recovery command:
+`LeagueGameFinder` and `PlayerGameLogs` expire after 12 hours and may refetch
+changed upstream data. The pinned offline replayer has no network-capable
+endpoint factory. Its manifest names the exact relative gzip path and
+uncompressed SHA-256 for each of the 2,462 requests the season ingest consumes.
+The raw manifest bytes must first match the trusted SHA-256 supplied through
+the required `--manifest-sha256` argument; that comparison occurs before JSON
+parsing, and the manifest does not declare its own trusted digest. Every pinned
+endpoint/parameter pair must then be consumed exactly once; a repeated runtime
+request is rejected before its capture bytes are returned:
+
+- script: `scripts/replay_participation_ledger.py`
+- guard-repair code commit:
+  `863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`
+- committed script blob SHA-256:
+  `d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
+- pinned manifest:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json`
+- manifest bytes / SHA-256: `788,178` /
+  `e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`
+- end-to-end proof receipt:
+  `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`
+- proof receipt SHA-256:
+  `f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`
+
+The proof ran exact implementation commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2` and script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
+against a disposable copy of the preserved prior. The rebuild created 1,230
+games, 25,894 production rows, and 40,932 participation rows with zero skips;
+the second replay updated the same counts with zero creates and zero skips.
+Comparing every non-timestamp column in all 33 tables against the active store
+found zero differing tables. The SQLite files are not byte-identical because
+row timestamps and file history differ; the proof claims semantic state
+equality, not file identity.
+
+The two earlier receipts remain byte-identical and distinct: predecessor
+`participation-ledger-2022-23-offline-replay-proof.json` retains SHA-256
+`47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32`,
+and local review receipt
+`participation-ledger-2022-23-offline-replay-proof-local-a8d5780.json` retains
+SHA-256
+`1309575acbfc82a51241e004df229524842749c7e1d57c191c011ce634c77682`.
+
+To rebuild the four-season active store, first make the same preserved-prior
+copy, check out the pinned replay commit, and run:
+
+```powershell
+$env:PYTHONPATH = "C:\path\to\hoops-gm\backend\src"
+python scripts\replay_participation_ledger.py `
+  C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db `
+  C:\Users\steverones\hoops-gm-data\data\raw `
+  C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json `
+  2022-23 `
+  --manifest-sha256 e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a
+```
+
+`CommonAllPlayers` is already preserved in `data\raw`; the census generator
+reads it directly for stable-ID reconciliation. **Do not run a historical
+`nba-identity` command against the active store.** If that capture is ever
+missing, run the command against a disposable copy of the preserved prior,
+verify the raw capture, and delete the disposable database before rebuilding
+the active store.
+
+Never run either recovery while another writer has either ledger open. The
+pre-write backup is the independent fallback if the preserved prior path is
+ever moved.
