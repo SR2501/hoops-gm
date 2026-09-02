@@ -1916,7 +1916,11 @@ def apply_observations(
             row.skipped_reason = "already_in_log"
             skipped.append((row.id, "already_in_log"))
             continue
-        if row.source_seat is not None and state.next_pick is not None:
+        if (
+            row.kind is InstantKind.SELECTION
+            and state.next_pick is not None
+            and row.participant_id == state.next_pick_participant_id
+        ):
             observed_coordinate = (
                 row.overall_pick,
                 row.round_number,
@@ -1929,13 +1933,24 @@ def apply_observations(
                 state.next_pick.pick_in_round,
                 state.next_pick.team_slot,
             )
-            if observed_coordinate != expected_coordinate:
+            supplied_coordinate_disagrees = any(
+                observed is not None and observed != expected
+                for observed, expected in zip(
+                    observed_coordinate,
+                    expected_coordinate,
+                    strict=True,
+                )
+            )
+            bound_board_coordinate_is_incomplete = row.source_seat is not None and (
+                row.overall_pick is None or row.round_number is None or row.pick_in_round is None
+            )
+            if supplied_coordinate_disagrees or bound_board_coordinate_is_incomplete:
                 # A cumulative board republishes historical cells. A novel
                 # player in one of those cells is a correction or source
-                # defect, not the selection due now. ``record_pick`` accepts a
-                # participant rather than a source coordinate, so without this
-                # gate a rotated participant who happens to be on the clock can
-                # turn that historical row into the next event.
+                # defect, not the selection due now. RPC and official reads can
+                # publish the same stale coordinate without a ``source_seat``,
+                # so every supplied selection coordinate is checked; a bound
+                # board additionally requires all four fields.
                 halted = "draft_pick_coordinate_mismatch"
                 row.blocked_reason = (
                     f"{halted}:expected={expected_coordinate}:observed={observed_coordinate}"

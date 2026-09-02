@@ -1402,6 +1402,57 @@ def test_applying_appends_through_the_ordinary_draft_log(session: Session) -> No
     assert all((event.note or "").startswith("feed:bridge_capture:") for event in events)
 
 
+def test_an_rpc_correction_at_a_historical_coordinate_cannot_become_the_next_pick(
+    session: Session,
+) -> None:
+    """A recurring snake participant does not make an old RPC coordinate current."""
+    league = _league(session, team_count=3, roster_size=2)
+    teams = _teams(session, league, ["t1", "t2", "t3"])
+    draft = _draft(session, league, teams)
+    by_slot = {participant.team_slot: participant.id for participant in draft.participants}
+    for team_slot, player_label in enumerate(
+        [JOKIC, EDWARDS, HALIBURTON],
+        start=1,
+    ):
+        draft_service.record_pick(
+            session,
+            draft,
+            participant_id=by_slot[team_slot],
+            player_label=player_label,
+        )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="rpc-corrected-pick-three",
+            locator="responses[0].data.draftPicks[2]",
+            recogniser="test-rpc",
+            observed_at=NOW,
+            kind="selection",
+            team_external_id="t3",
+            participant_id=by_slot[3],
+            player_label="Shai Gilgeous-Alexander",
+            player_external_id="corrected-pick-three",
+            overall_pick=3,
+            round_number=1,
+            pick_in_round=3,
+        )
+    )
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert outcome.halted == "draft_pick_coordinate_mismatch"
+    assert outcome.last_sequence == 3
+    assert feed_service.feed_status(session, draft, now=NOW).pending_count == 1
+    assert [event.player_label for event in draft_service.load_events(session, draft)] == [
+        JOKIC,
+        EDWARDS,
+        HALIBURTON,
+    ]
+
+
 def test_picks_are_applied_in_the_order_the_draft_happened(session: Session) -> None:
     """Excludes: arrival order being mistaken for draft order.
 
@@ -1488,7 +1539,7 @@ def test_the_observation_that_halted_the_run_is_still_pending_afterwards(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 2}],
         dedupe_key="capture-one",
     )
     feed_service.ingest(session, draft)
@@ -1536,7 +1587,7 @@ def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 2}],
         dedupe_key="capture-one",
     )
     feed_service.ingest(session, draft)

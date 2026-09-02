@@ -2024,11 +2024,11 @@ as `board_regression` and retracts nothing.
 **Two acceptance criteria that exist because the ADR asserts them and nothing
 else would carry them:**
 
-- The divergence in ADR-020 decision 2 **must be written into
-  `observations.py`'s `InstantProvenance` docstring**, which today says
-  `artifact_key` "identifies the **bytes**" without qualification. An ADR that
-  contradicts a docstring and leaves the docstring standing has produced the
-  false-guarantee shape this repository keeps finding.
+- The divergence in ADR-020 decision 2 **had to be written into
+  `observations.py`'s `InstantProvenance` docstring**. It now distinguishes RPC
+  byte identity from rendered-board content identity. An ADR that contradicted
+  a surviving docstring would have produced the false-guarantee shape this
+  repository keeps finding.
 - A test must **fail on the old behaviour**, not merely pass on the new: two
   snapshots of one unchanged board, differing in HTML, must produce one
   observation and one `artifact_key`. Byte-keying passes any test that only
@@ -4600,15 +4600,14 @@ because the same guard-after-the-hook shape will be copied again.
 observations were skipped rather than applied, so a ranking over an incomplete
 roster is visibly incomplete rather than merely wrong.
 
-**The coupling, stated so it can be checked.** The category table ranks each
-seat on the players it holds. `draft/state.py:449-463` derives every seat's
-remaining bank from one draft-wide scalar, and the call site at 564 sits three
-lines before `board.add(...)` on the **sale** path - so a legitimate winning
-bid above the assumed figure is refused and the player never reaches the board.
-`apply_observations` then files that refusal in `skipped_reason` and
-`draft/feed/service.py:1223` records that nothing in the package ever clears
-it, so re-ingesting the same capture dedupes against the burned row instead of
-retrying.
+**Historical coupling that opened this item, now repaired.** The category table
+ranks each seat on the players it holds. The draft state once refused a sale
+above the single draft-wide assumed budget before `board.add(...)`, and the feed
+burned that refusal into `skipped_reason`. The sale path now admits the observed
+sale and flags `over_assumed_budget`; retryable apply conflicts can also recover
+after an append-only correction. Permanent recognition, admission and dedupe
+skips still exist, which is why board completeness remains a separate visible
+contract rather than being inferred from a well-formed roster.
 
 **A seat can therefore be missing a player it actually won, and the ranking will
 look perfectly well-formed.** Every guarantee the screen makes is about the join
