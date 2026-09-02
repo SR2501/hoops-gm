@@ -17,15 +17,16 @@ Fantrax anything but a GET.
 provenance of.
 
 **The one decision made here, stated so it can be argued with.** An observed
-RPC selection with an independently anchored team id, or a supported rendered
-selection resolved through the draft's frozen complete source-seat binding, is
-appended to the log automatically. It is not held for confirmation. The unit
-exists because the owner cannot both think about value and be a keyboard at
-7:14pm, and a feed that requires a click per pick is a keyboard with extra
-steps. The safety of that is not "we trust the recogniser"; it is that the log
-is append-only and correctable by ``void``, that every appended event is
-traceable back to the exact source artifact that caused it, and that a wrong
-claim is refused by ``draft.state``'s derivation before it is written.
+RPC selection with an independently anchored team id, or a rendered selection
+whose mock snake draft freezes the exact established evidence profile and a
+complete source-seat binding, is appended to the log automatically. It is not
+held for confirmation. The unit exists because the owner cannot both think
+about value and be a keyboard at 7:14pm, and a feed that requires a click per
+pick is a keyboard with extra steps. The safety of that is not "we trust the
+recogniser"; it is that the log is append-only and correctable by ``void``, that
+every appended event is traceable back to the exact source artifact that caused
+it, and that a wrong claim is refused by ``draft.state``'s derivation before it
+is written.
 
 **What is deliberately not automatic.** A sale is appended too, but a
 *disagreement* between the two sources never is: it is reported and left. And
@@ -34,9 +35,10 @@ skipping it, because skipping desynchronises every subsequent pick and the
 owner would find out at pick 30 rather than pick 8.
 
 Rendered-board selections enter the same application queue only when the draft
-froze a complete source-seat binding at creation. Drafts without one retain the
-``source_board_evidence_only`` behavior, and auction or unrecognised layouts are
-still refused before observations exist.
+froze ``fantrax_football_snake_v1`` and a complete source-seat binding at
+creation. Binding alone is never applicability evidence. Every other draft
+retains ``source_board_evidence_only`` behavior after parsing; auction or
+unrecognised layouts are still refused before observations exist.
 """
 
 from __future__ import annotations
@@ -59,9 +61,11 @@ from hoops_gm.db.models import (
     DraftFeedObservation,
     DraftFeedTransport,
     DraftParticipant,
+    DraftSourceBoardProfile,
     DraftSourceBoardReading,
     DraftSourceBoardState,
     DraftStatus,
+    DraftType,
     FantasyTeam,
     League,
     RefreshArtifactType,
@@ -372,8 +376,8 @@ def build_context(session: Session, draft: Draft) -> RecognitionContext | str:
     Everything here is read from our own tables. ``team_external_ids`` comes
     from ``fantasy_teams.fantrax_team_id`` for the seats *this draft* declared.
     RPC recognition refuses when that set is empty; rendered-board recognition
-    does not need it because participant attribution, when enabled, comes from
-    the draft's frozen source-seat binding.
+    does not need it because participant attribution, when applicable, comes
+    from the draft's exact frozen evidence profile and source-seat binding.
     """
     league = session.get(League, draft.league_id)
     if league is None:  # pragma: no cover - FK makes this unreachable
@@ -432,6 +436,17 @@ def _participant_by_source_seat(session: Session, draft: Draft) -> dict[int, int
         for source_seat, participant_id in rows
         if source_seat is not None
     }
+
+
+def _source_board_application_participants(session: Session, draft: Draft) -> dict[int, int] | None:
+    """Participants only when the draft exactly matches the established corpus."""
+    if (
+        draft.source_board_profile is not DraftSourceBoardProfile.FANTRAX_FOOTBALL_SNAKE_V1
+        or not draft.is_mock
+        or draft.draft_type is not DraftType.SNAKE
+    ):
+        return None
+    return _participant_by_source_seat(session, draft)
 
 
 def _existing_keys(session: Session, draft: Draft) -> set[tuple[str, str, str]]:
@@ -797,7 +812,7 @@ def ingest_bridge(
     # order is that, but only if it is actually recorded in arrival order.
     rows.reverse()
     participants = _participant_by_external_id(session, draft)
-    source_participants = _participant_by_source_seat(session, draft)
+    source_participants = _source_board_application_participants(session, draft)
     draft_format = draft_service.format_from_snapshot(draft)
     existing = _existing_keys(session, draft)
 
@@ -927,8 +942,8 @@ def ingest_bridge(
                 instant.provenance.artifact_key: row.id for instant in result.instants
             },
             source_participants=source_participants,
-            # Legacy/manual drafts have no frozen source-column binding. Keep
-            # their evidence visible and permanently outside the apply queue.
+            # A binding identifies participants but is not applicability
+            # evidence. Only the exact frozen profile may enter the apply queue.
             stored_skip_reason=(
                 None if source_participants is not None else "source_board_evidence_only"
             ),
@@ -966,9 +981,11 @@ def ingest_bridge(
         )
     elif snapshots:
         attribution = (
-            "each column was attributed only through the draft's frozen source-seat binding."
+            "each column was attributed only through the draft's frozen evidence profile "
+            "and source-seat binding."
             if source_participants is not None
-            else "no frozen source-seat binding exists, so its columns remain evidence-only."
+            else "no applicable frozen evidence profile and binding exists, so its columns "
+            "remain evidence-only."
         )
         notes.append(
             f"{boards_read} of {snapshots} page snapshot(s) for this league parsed as "
@@ -1722,8 +1739,23 @@ def apply_observations(
     skipped: list[tuple[int, str]] = []
     halted: str | None = None
     seen_this_run: set[str] = set()
+    source_participants = _source_board_application_participants(session, draft)
 
     for row in pending:
+        if row.recogniser == BOARD_RECOGNISER or row.source_seat is not None:
+            bound_participant_id = (
+                None
+                if source_participants is None or row.source_seat is None
+                else source_participants.get(row.source_seat)
+            )
+            if bound_participant_id is None or row.participant_id != bound_participant_id:
+                # Ingest normally stamps this immediately. Recheck here so a
+                # legacy pending row or a hand-edited database cannot bypass
+                # the frozen applicability profile and complete binding.
+                row.participant_id = None
+                row.skipped_reason = "source_board_evidence_only"
+                skipped.append((row.id, "source_board_evidence_only"))
+                continue
         admitted = _admit(row)
         if isinstance(admitted, str):
             skipped.append((row.id, admitted))

@@ -47,7 +47,12 @@ from hoops_gm.db.models.draft_feed import (
     DraftSourceBoardReading,
     DraftSourceBoardState,
 )
-from hoops_gm.db.models.enums import DraftFeedTransport, DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftFeedTransport,
+    DraftSourceBoardProfile,
+    DraftToolUsage,
+    DraftType,
+)
 from hoops_gm.db.models.league import FantasyTeam, League
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed import service as feed_service
@@ -79,6 +84,7 @@ NOW = datetime(2026, 10, 18, 23, 14, tzinfo=UTC)
 
 SEATS = 12
 ROUNDS = 18
+PROFILE = DraftSourceBoardProfile.FANTRAX_FOOTBALL_SNAKE_V1
 TOTAL_PICKS = SEATS * ROUNDS  # 216
 EARLY_PICKS = 7
 SHORT_ROUNDS = 14
@@ -185,6 +191,7 @@ def _draft(
     league: League,
     *,
     source_seats: tuple[int, ...] | None = None,
+    source_board_profile: DraftSourceBoardProfile | None = None,
 ) -> Draft:
     teams = []
     for index in range(1, SEATS + 1):
@@ -198,6 +205,7 @@ def _draft(
         league=league,
         name="board feed",
         tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=source_board_profile,
         participants=[
             draft_service.ParticipantSpec(
                 team_slot=index,
@@ -551,6 +559,58 @@ def test_a_board_pick_preserves_source_seat_without_participant_attribution(
     assert status.last_sequence == 0
 
 
+def test_a_bound_null_profile_snake_stays_source_evidence_only(
+    session: Session,
+) -> None:
+    """A participant binding is not evidence that this source applies."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    _snapshot(session, html=load_early_with_distinct_names(), dedupe_key="GET:bound-null:1")
+
+    feed_service.ingest_bridge(session, draft, _context())
+
+    rows = _board_rows(session, draft)
+    assert all(row.participant_id is None for row in rows)
+    assert {row.skipped_reason for row in rows} == {"source_board_evidence_only"}
+    assert feed_service.apply_observations(session, draft, now=NOW).applied == ()
+    assert draft_service.load_events(session, draft) == []
+
+
+def test_a_pending_board_row_cannot_bypass_a_null_profile(
+    session: Session,
+) -> None:
+    """Apply rechecks applicability instead of trusting an already-stored row."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    row = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:pre-profile",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind="selection",
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="pre-profile-player",
+        overall_pick=1,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add(row)
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert outcome.skipped == ((row.id, "source_board_evidence_only"),)
+    assert row.participant_id is None
+    assert row.skipped_reason == "source_board_evidence_only"
+    assert draft_service.load_events(session, draft) == []
+
+
 def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
     client: TestClient,
     session: Session,
@@ -558,7 +618,12 @@ def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
     """The old source-seat-equals-team-slot assumption sends pick one to the wrong team."""
     league = _league(session)
     source_seats = (*range(2, SEATS + 1), 1)
-    draft = _draft(session, league, source_seats=source_seats)
+    draft = _draft(
+        session,
+        league,
+        source_seats=source_seats,
+        source_board_profile=PROFILE,
+    )
     _snapshot(session, html=load_early_with_distinct_names(), dedupe_key="GET:rotated:1")
     session.commit()
 
@@ -591,7 +656,7 @@ def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
     assert client.get(f"/api/v1/drafts/{draft.id}/events").json()["last_sequence"] == EARLY_PICKS
 
 
-def test_a_linear_recorded_board_uses_the_same_complete_binding_boundary(
+def test_a_bound_linear_board_stays_evidence_only_without_an_applicable_profile(
     client: TestClient,
     session: Session,
 ) -> None:
@@ -608,10 +673,10 @@ def test_a_linear_recorded_board_uses_the_same_complete_binding_boundary(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert len(body["applied"]["events"]) == EARLY_PICKS
+    assert body["applied"]["events"] == []
     assert body["applied"]["halted"] is None
-    assert body["status"]["applied_count"] == EARLY_PICKS
-    assert body["status"]["skipped"] == {}
+    assert body["status"]["applied_count"] == 0
+    assert body["status"]["skipped"] == {"source_board_evidence_only": EARLY_PICKS}
 
 
 def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
@@ -635,6 +700,7 @@ def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
         league=league,
         name="three-seat recurrence",
         tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=PROFILE,
         participants=[
             draft_service.ParticipantSpec(
                 team_slot=team_slot,
@@ -731,6 +797,7 @@ def test_a_tail_void_between_coordinate_check_and_append_forces_revalidation(
         league=league,
         name="coordinate race",
         tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=PROFILE,
         participants=[
             draft_service.ParticipantSpec(
                 team_slot=team_slot,

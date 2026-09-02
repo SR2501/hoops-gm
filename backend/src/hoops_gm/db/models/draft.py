@@ -71,7 +71,12 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
-from hoops_gm.db.models.enums import DraftEventType, DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftEventType,
+    DraftSourceBoardProfile,
+    DraftToolUsage,
+    DraftType,
+)
 
 if TYPE_CHECKING:
     from hoops_gm.db.models.identity import Player
@@ -103,6 +108,10 @@ class Draft(IntPk, TimestampMixin, Base):
         ),
         CheckConstraint("auction_budget IS NULL OR auction_budget > 0", name="budget_positive"),
         CheckConstraint("draft_type <> 'unknown'", name="draft_type_known"),
+        CheckConstraint(
+            "source_board_profile IS NULL OR (is_mock AND draft_type = 'snake')",
+            name="source_board_profile_compatible",
+        ),
     )
 
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
@@ -116,6 +125,12 @@ class Draft(IntPk, TimestampMixin, Base):
     )
     #: The frozen format snapshot. Written once at creation, never updated.
     draft_type: Mapped[DraftType] = mapped_column(portable_enum(DraftType, "draft_type"))
+    #: Exact evidence corpus authorising rendered-board observations to enter
+    #: the event pipeline. Null means evidence-only, even when source seats are
+    #: bound. This is immutable configuration and has no update surface.
+    source_board_profile: Mapped[DraftSourceBoardProfile | None] = mapped_column(
+        portable_enum(DraftSourceBoardProfile, "draft_source_board_profile")
+    )
     team_count: Mapped[int] = mapped_column()
     roster_size: Mapped[int] = mapped_column()
     auction_budget: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))

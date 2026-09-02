@@ -33033,3 +33033,49 @@ outside this backend PR by architect ruling.
 **Next:** Commit this review fix and append, preserve the `ad9b461` handoff
 prefix exactly, run independent exact-head review, force-push with lease, and
 require fresh hosted checks. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Froze rendered-board applicability to its evidence
+
+**Changed:** Independent review of PR #148 found that a complete participant
+binding answered *who* a rendered column meant but not *whether* the recorded
+football board evidence applied to this basketball product. Migration `0023`
+now also adds nullable immutable `Draft.source_board_profile`, closed to exactly
+`fantrax_football_snake_v1`. Creation accepts that profile only for a mock snake
+with a complete one-to-one source-seat binding; real, auction, linear, unknown
+and incomplete shapes refuse. Legacy and default drafts receive null.
+
+Board ingest resolves source participants only when that exact profile,
+`is_mock`, snake format and complete binding all agree. Binding alone remains
+evidence-only. The apply pass independently repeats the gate before admission,
+so a pending row written before the profile existed or by a hand-edited database
+cannot append. Existing coordinate, dimension, dedupe, ordering and
+`expected_last_sequence` checks remain downstream and unchanged. Tests drive an
+unbound null profile, a bound null-profile snake, a bound unprofiled linear, a
+pre-profile pending row, the explicit profiled recorded fixture, rotated
+binding, historical-coordinate refusal and the append race.
+
+The create/read/OpenAPI contracts publish the profile as a one-value closed
+enum. No frontend selector or inference was added. The immediate frontend
+follow-up must type both `DraftParticipant.source_seat` and
+`Draft.source_board_profile` while leaving profile selection outside the browser.
+`draft-board-feed-integration` returns to pending: product completion requires a
+real NBA auction capture, committed fixture and contract tests, followed by a
+separately reviewed profile value. `draft-tracker` remains pending.
+
+**Gates:** The complete draft-board, draft-feed, drafts-API and migration suites
+pass locally. Focused Ruff and strict mypy pass. Full Code and Adapter gates,
+the backlog/document checks, PostgreSQL execution, hosted CI and independent
+review still need to run on the eventual publication head.
+
+**Could not verify:** No NBA auction board capture exists, so nomination, price
+and sale semantics remain unestablished and no NBA profile can be defined. The
+local machine has no running PostgreSQL service established for this unit; the
+configured hosted PostgreSQL job remains authoritative. The exact-content undo
+blind spot in ADR-020 is unchanged.
+
+**Next:** Run the full local gates, commit and push one exact head, require the
+fresh hosted matrix, and independently review that no unprofiled, real, NBA,
+auction or linear path can append a board-derived event. Do not merge or
+self-approve.

@@ -64,7 +64,13 @@ from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.db.models.draft import Draft, DraftEvent
-from hoops_gm.db.models.enums import DraftEventType, DraftStatus, DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftEventType,
+    DraftSourceBoardProfile,
+    DraftStatus,
+    DraftToolUsage,
+    DraftType,
+)
 from hoops_gm.db.models.league import League
 from hoops_gm.draft import service
 from hoops_gm.draft.formats import AuctionDraftFormat
@@ -145,6 +151,13 @@ class CreateDraftRequest(BaseModel):
     #: whether the draft is evidence about human behaviour or about this tool's
     #: own advice, and guessing it either way is unrecoverable later.
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None = Field(
+        default=None,
+        description=(
+            "Exact recorded evidence corpus authorising board-derived events. Null keeps "
+            "rendered boards evidence-only even when source seats are bound."
+        ),
+    )
     notes: str | None = None
     participants: list[ParticipantRequest]
 
@@ -355,6 +368,7 @@ class DraftSummary(BaseModel):
     name: str
     is_mock: bool
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None
     status: DraftStatus
     format: FormatOut
     last_sequence: int
@@ -375,6 +389,7 @@ class DraftStateResponse(BaseModel):
     name: str
     is_mock: bool
     tool_usage: DraftToolUsage
+    source_board_profile: DraftSourceBoardProfile | None
     notes: str | None
     status: DraftStatus
     format: FormatOut
@@ -449,6 +464,7 @@ def _state_response(
         name=draft.name,
         is_mock=draft.is_mock,
         tool_usage=draft.tool_usage,
+        source_board_profile=draft.source_board_profile,
         notes=draft.notes,
         status=state.status,
         format=_format_out(state),
@@ -551,6 +567,7 @@ def list_drafts(session: SessionDep, request: Request) -> DraftListResponse:
                 name=draft.name,
                 is_mock=draft.is_mock,
                 tool_usage=draft.tool_usage,
+                source_board_profile=draft.source_board_profile,
                 status=state.status,
                 format=_format_out(state),
                 last_sequence=state.last_sequence,
@@ -591,6 +608,7 @@ def create_draft(
             name=payload.name,
             tool_usage=payload.tool_usage,
             is_mock=payload.is_mock,
+            source_board_profile=payload.source_board_profile,
             notes=payload.notes,
             participants=[
                 service.ParticipantSpec(

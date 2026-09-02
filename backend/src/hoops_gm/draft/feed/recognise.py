@@ -1596,7 +1596,7 @@ def board_locator(seat: int, round_number: int, pick_in_round: int) -> str:
     locator remains a path into the artifact; ``source_seat`` also stores the
     column explicitly so API consumers do not have to parse this string. The
     recogniser itself makes no participant mapping; the feed may resolve a
-    complete binding frozen on the draft.
+    complete binding only under the exact evidence profile frozen on the draft.
 
     Comfortably inside ``MAX_LOCATOR_CHARS``: a 99-seat, 999-round board renders
     to 27 characters.
@@ -1642,7 +1642,8 @@ def recognise_board_snapshot(
       vocabulary and appear nowhere in the markup. The column ordinal is stored
       as ``source_seat`` and is not assumed to equal
       :class:`DraftParticipant.team_slot`. A later feed pass may resolve an
-      explicit frozen source-seat binding; this recogniser never infers one.
+      explicit frozen source-seat binding only when the draft also freezes the
+      exact applicable evidence profile; this recogniser infers neither.
       ``seat_name`` is retained only as a mutable source label.
 
     **An auction board is refused by name rather than guessed at.** Every byte
@@ -1736,8 +1737,8 @@ def recognise_board_snapshot(
         "cannot look like two pipes; the distinction is the recogniser name.",
         "The board carries no Fantrax team id. Its column is stored as source_seat; "
         "the mutable seat_name is display evidence and is never matched to a "
-        "DraftParticipant. Participant attribution, when available, uses only the "
-        "draft's explicit frozen source-seat binding.",
+        "DraftParticipant. Participant attribution, when available, requires both "
+        "the draft's exact frozen evidence profile and its explicit source-seat binding.",
     ]
     if reading.truncated:
         # A cut that lands past the grid yields a perfectly good board, which is

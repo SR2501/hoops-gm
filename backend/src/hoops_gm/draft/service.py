@@ -37,7 +37,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.draft import Draft, DraftEvent, DraftParticipant
-from hoops_gm.db.models.enums import DraftEventType, DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftEventType,
+    DraftSourceBoardProfile,
+    DraftToolUsage,
+    DraftType,
+)
 from hoops_gm.db.models.league import League
 from hoops_gm.draft.formats import (
     AuctionDraftFormat,
@@ -147,6 +152,7 @@ def create_draft(
     tool_usage: DraftToolUsage,
     participants: Sequence[ParticipantSpec],
     is_mock: bool = True,
+    source_board_profile: DraftSourceBoardProfile | None = None,
     notes: str | None = None,
 ) -> Draft:
     """Open a draft whose configuration is frozen at this moment.
@@ -175,6 +181,7 @@ def create_draft(
             f"1..{fmt.team_count}; got {slots}.",
         )
     source_seats = [spec.source_seat for spec in participants]
+    source_binding_complete = False
     if any(source_seat is not None for source_seat in source_seats):
         expected_source_seats = list(range(1, fmt.team_count + 1))
         present_source_seats = sorted(
@@ -189,6 +196,18 @@ def create_draft(
                 f"A source-seat binding must map every participant one-to-one onto "
                 f"1..{fmt.team_count}; got {source_seats}.",
             )
+        source_binding_complete = True
+    if source_board_profile is not None and (
+        source_board_profile is not DraftSourceBoardProfile.FANTRAX_FOOTBALL_SNAKE_V1
+        or not is_mock
+        or fmt.draft_type is not DraftType.SNAKE
+        or not source_binding_complete
+    ):
+        raise DraftLogError(
+            "draft_source_board_profile_invalid",
+            "fantrax_football_snake_v1 requires a mock snake draft with a complete "
+            "one-to-one source-seat binding.",
+        )
     owners = [spec for spec in participants if spec.is_owner]
     if len(owners) > 1:
         raise DraftLogError(
@@ -208,6 +227,7 @@ def create_draft(
         is_mock=is_mock,
         tool_usage=tool_usage,
         draft_type=fmt.draft_type,
+        source_board_profile=source_board_profile,
         team_count=fmt.team_count,
         roster_size=fmt.roster_size,
         auction_budget=(fmt.auction_budget if isinstance(fmt, AuctionDraftFormat) else None),

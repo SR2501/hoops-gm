@@ -95,6 +95,7 @@ def test_creating_a_draft_returns_the_whole_derived_state(
     }
     assert [seat["team_slot"] for seat in state["participants"]] == [1, 2, 3, 4]
     assert [seat["source_seat"] for seat in state["participants"]] == [None, None, None, None]
+    assert state["source_board_profile"] is None
     assert [seat["is_owner"] for seat in state["participants"]] == [True, False, False, False]
     assert state["open_lot"] is None
     assert state["next_pick"] is None, "An auction has no turn order to publish."
@@ -494,6 +495,7 @@ def test_the_list_reports_enough_to_choose_a_draft(client: TestClient, session: 
     assert [row["id"] for row in listed] == [second["id"], first["id"]], "Newest first."
     assert [row["name"] for row in listed] == ["second mock", "first mock"]
     assert all(row["tool_usage"] == "blind" for row in listed)
+    assert all(row["source_board_profile"] is None for row in listed)
     assert all(row["format"]["draft_type"] == "auction" for row in listed)
     assert all(row["last_sequence"] == 0 for row in listed)
 
@@ -581,6 +583,7 @@ def test_a_rotated_source_binding_resolves_the_turn_without_redefining_team_slot
     state = _create(
         client,
         league,
+        source_board_profile="fantrax_football_snake_v1",
         participants=[
             {"team_slot": 1, "source_seat": 2, "display_name": "Team 1", "is_owner": True},
             {"team_slot": 2, "source_seat": 3, "display_name": "Team 2"},
@@ -590,6 +593,7 @@ def test_a_rotated_source_binding_resolves_the_turn_without_redefining_team_slot
     by_slot = {seat["team_slot"]: seat for seat in state["participants"]}
 
     assert [by_slot[slot]["source_seat"] for slot in (1, 2, 3)] == [2, 3, 1]
+    assert state["source_board_profile"] == "fantrax_football_snake_v1"
     assert state["next_pick"]["team_slot"] == 3
     assert state["next_pick"]["participant_id"] == by_slot[3]["id"]
 
@@ -609,6 +613,96 @@ def test_a_rotated_source_binding_resolves_the_turn_without_redefining_team_slot
     )
     assert recorded.status_code == 201, recorded.text
     assert recorded.json()["participants"][2]["holdings"][0]["player_label"] == "Nikola Jokic"
+    assert client.get(f"/api/v1/drafts/{state['id']}").json()["source_board_profile"] == (
+        "fantrax_football_snake_v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft_type", "is_mock", "budget", "expected_error"),
+    [
+        (DraftType.SNAKE, False, None, "draft_source_board_profile_invalid"),
+        (DraftType.AUCTION, True, Decimal("200.00"), "draft_source_board_profile_invalid"),
+        (DraftType.LINEAR, True, None, "draft_source_board_profile_invalid"),
+        (DraftType.UNKNOWN, True, None, "draft_format_invalid"),
+    ],
+    ids=["real", "auction", "linear", "unknown"],
+)
+def test_source_board_profile_rejects_every_unestablished_draft_shape(
+    client: TestClient,
+    session: Session,
+    draft_type: DraftType,
+    is_mock: bool,
+    budget: Decimal | None,
+    expected_error: str,
+) -> None:
+    league = _league(
+        session,
+        draft_type=draft_type,
+        team_count=3,
+        roster_size=2,
+        budget=budget,
+        name=f"inapplicable {draft_type.value}",
+    )
+    response = client.post(
+        "/api/v1/drafts",
+        json={
+            "league_id": league.id,
+            "name": "inapplicable profile",
+            "is_mock": is_mock,
+            "tool_usage": "blind",
+            "source_board_profile": "fantrax_football_snake_v1",
+            "participants": [
+                {
+                    "team_slot": team_slot,
+                    "source_seat": team_slot,
+                    "display_name": f"Team {team_slot}",
+                }
+                for team_slot in range(1, 4)
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == expected_error
+    assert client.get("/api/v1/drafts").json()["drafts"] == []
+
+
+def test_source_board_profile_requires_a_complete_binding(
+    client: TestClient, session: Session
+) -> None:
+    league = _league(
+        session,
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        budget=None,
+        name="profile without binding",
+    )
+    response = client.post(
+        "/api/v1/drafts",
+        json={
+            "league_id": league.id,
+            "name": "profile without binding",
+            "tool_usage": "blind",
+            "source_board_profile": "fantrax_football_snake_v1",
+            "participants": [
+                {"team_slot": team_slot, "display_name": f"Team {team_slot}"}
+                for team_slot in range(1, 4)
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "draft_source_board_profile_invalid"
+
+
+def test_source_board_profile_is_a_closed_openapi_contract(client: TestClient) -> None:
+    schemas = cast("FastAPI", client.app).openapi()["components"]["schemas"]
+    assert schemas["DraftSourceBoardProfile"]["enum"] == ["fantrax_football_snake_v1"]
+    assert "source_board_profile" in schemas["CreateDraftRequest"]["properties"]
+    assert "source_board_profile" in schemas["DraftStateResponse"]["properties"]
+    assert "source_board_profile" in schemas["DraftSummary"]["properties"]
 
 
 @pytest.mark.parametrize(

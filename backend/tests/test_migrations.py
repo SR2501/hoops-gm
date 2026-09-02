@@ -1162,7 +1162,7 @@ def test_models_and_migrations_agree(alembic_config: Config, migration_url: str)
 def test_0023_upgrades_existing_drafts_without_manufacturing_a_source_binding(
     alembic_config: Config, migration_url: str
 ) -> None:
-    """Current-schema drafts stay unbound while new bindings are constrained."""
+    """Existing drafts stay unprofiled; new profile and binding facts are constrained."""
     command.upgrade(alembic_config, "0022")
     engine = create_engine(migration_url)
     try:
@@ -1182,6 +1182,10 @@ def test_0023_upgrades_existing_drafts_without_manufacturing_a_source_binding(
     engine = create_engine(migration_url)
     try:
         with engine.begin() as connection:
+            profile = connection.execute(
+                text("SELECT source_board_profile FROM drafts WHERE id = 1")
+            ).scalar_one()
+            assert profile is None
             source_seats = connection.execute(
                 text("SELECT source_seat FROM draft_participants ORDER BY team_slot")
             ).scalars()
@@ -1189,12 +1193,29 @@ def test_0023_upgrades_existing_drafts_without_manufacturing_a_source_binding(
             connection.execute(
                 text("UPDATE draft_participants SET source_seat = team_slot WHERE draft_id = 1")
             )
+            connection.execute(
+                text(
+                    "UPDATE drafts SET source_board_profile = "
+                    "'fantrax_football_snake_v1' WHERE id = 1"
+                )
+            )
 
         with pytest.raises(IntegrityError), engine.begin() as connection:
             connection.execute(text("UPDATE draft_participants SET source_seat = 1 WHERE id = 2"))
 
         with pytest.raises(IntegrityError), engine.begin() as connection:
             connection.execute(text("UPDATE draft_participants SET source_seat = 0 WHERE id = 2"))
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text("UPDATE drafts SET source_board_profile = 'unknown' WHERE id = 1")
+            )
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE drafts SET is_mock = FALSE WHERE id = 1"))
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE drafts SET draft_type = 'linear' WHERE id = 1"))
     finally:
         engine.dispose()
 

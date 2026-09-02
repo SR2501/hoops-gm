@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**72 done - 0 blocked - 119 pending - 191 total**
+**71 done - 0 blocked - 120 pending - 191 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1988,7 +1988,7 @@ nothing about the owner's NBA auction DOM, which has not been observed.
 
 ### `draft-board-feed-integration` - Joining a board reading to the draft feed
 
-- [x] **done**
+- [ ] **pending**
 - **Depends on:** `draft-board-dom-parser`
 
 `board_dom.parse_draft_board` returns picks; `draft/feed/` records
@@ -2047,33 +2047,33 @@ else would carry them:**
   break the other. **A test asserting only "it refuses" passes while pinning the
   wrong mechanism**, and the mechanism is what the next reader relies on.
 
-**Supported-format boundary landed.** Migration `0023` adds an optional
-`DraftParticipant.source_seat`, exposed on draft creation and reads. Creation
-accepts either no binding or a complete one-to-one mapping of participants onto
-`1..team_count`; partial, duplicate and out-of-range mappings are refused, and
-there is no repair endpoint. Existing/manual drafts remain unbound and their
-rendered observations stay permanently `source_board_evidence_only`.
+**Binding and evidence-profile plumbing landed; product integration remains
+open.** Migration `0023` adds optional immutable
+`DraftParticipant.source_seat` and `Draft.source_board_profile`, both exposed at
+creation and read. A binding is absent or a complete one-to-one mapping onto
+`1..team_count`; it never establishes source applicability by itself. The
+profile is closed to exactly `fantrax_football_snake_v1`, naming the recorded
+fixture evidence rather than a generic enabled flag, and creation accepts it
+only for a mock snake with a complete binding. Real, auction, linear and unknown
+formats cannot activate it. Existing drafts migrate to null.
 
-For a completely bound snake or linear draft, a rendered observation keeps its
-content-keyed board identity and source coordinates, resolves `source_seat`
-through the frozen binding, and enters the existing ordered pending/apply path.
-The mapping is not `team_slot`: a rotated binding is driven end to end, including
-public next-pick participant resolution. Before append, the observation's
-`(overall, round, pick_in_round, source_seat)` must equal the current frozen
-format coordinate. A changed historical cell therefore blocks as
-`draft_pick_coordinate_mismatch` instead of becoming the next pick when the same
-source seat recurs in a snake turn. The append also carries the exact
-`expected_last_sequence` whose coordinate was checked; a concurrent tail void
-therefore raises retryable `draft_sequence_conflict` and forces coordinate
-revalidation rather than letting the recurring source seat hide a stale pick.
+Only that explicit mock-football-snake profile may resolve a rendered
+observation through the binding and enter the ordered pending/apply path. The
+mapping is not `team_slot`: a rotated binding is driven end to end. Before
+append, `(overall, round, pick_in_round, source_seat)` must equal the current
+frozen format coordinate, and the append carries the exact
+`expected_last_sequence` whose coordinate was checked. The apply pass rechecks
+the profile and binding, so a legacy pending row cannot bypass the ingest gate.
+Unprofiled drafts, including completely bound snakes and linears, remain
+`source_board_evidence_only`.
 
-The existing board-content dedupe, replay, dimension history, regression
-publication, append-only event semantics and unbound evidence API remain in
-place. Auction still refuses as `board_reading_unestablished_for_auction` and
-`layout="other"` still refuses as `board_layout_unrecognised`; this item
-establishes no NBA-auction nomination or price semantics. The separate
-`fantrax-auction-capture` item now carries the falsifiable evidence condition for
-widening that boundary.
+Board-content dedupe, replay, dimension history, regression publication and
+append-only event semantics remain in place. Auction still refuses as
+`board_reading_unestablished_for_auction`; `layout="other"` still refuses as
+`board_layout_unrecognised`. No NBA profile exists. Completing this item for the
+product waits on `fantrax-auction-capture`: a real NBA auction capture, committed
+fixture and contract tests must establish nomination, price and sale semantics
+before a separately reviewed profile value can widen the boundary.
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 
@@ -2640,10 +2640,12 @@ a mock snake draft are recorded end to end by `hoops_gm.dev.seed_draft`.
 Three things this does **not** do, each of which is why the marker is still
 `pending` rather than `done`. There is no screen - that is the stacked
 `frontend` lane, and this item's own description asks for a board and a roster
-construction view. Bound snake/linear drafts can now feed the log automatically
-from supported rendered-board observations, but auction capture and semantics
-remain unestablished under `fantrax-auction-capture`; the official API still
-returns no usable picks. And the log stores only what happened - no price
+construction view. Only a mock explicitly frozen to the recorded
+`fantrax_football_snake_v1` evidence profile can feed the log from a rendered
+board; bound but unprofiled drafts remain evidence-only, and the product's NBA
+auction capture and semantics remain unestablished under
+`fantrax-auction-capture`. The official API still returns no usable picks. And
+the log stores only what happened - no price
 estimate, no inflation, no recommendation, no `p(play)` - which is correct scope
 here but means the item's downstream readers (`auction-budget-manager`,
 `auction-inflation`, `draft-recommender`, `live-draft-availability`) are
@@ -4635,10 +4637,11 @@ Added `GET /api/v1/drafts/{draft_id}/source-board`. It returns an explicit
 grouped by `source_seat`; mutable source labels; server-clock board and contact
 freshness; regressions; and the exact-content undo blind spot. It returns no
 participant ids or budgets. Board observations preserve source
-round/pick/overall/player fields and a dedicated `source_seat` column. Without a
-complete explicit binding they remain `source_board_evidence_only` and never
-append `draft_events`; with one, supported snake/linear observations may enter
-the existing append-only pipeline after exact coordinate/order validation.
+round/pick/overall/player fields and a dedicated `source_seat` column. They
+remain `source_board_evidence_only` unless a mock snake freezes both a complete
+explicit binding and the exact `fantrax_football_snake_v1` evidence profile.
+Only that recorded-fixture profile may enter the existing append-only pipeline,
+after exact coordinate/order/sequence validation.
 
 The state row is separate from pick observations because a refusal and a
 zero-pick board otherwise both have zero pick rows. Keeping only observations
@@ -4646,10 +4649,10 @@ would reproduce the failure this endpoint exists to prevent: "could not read
 the board" rendered as "the source board has no picks".
 
 The source endpoint remains deliberately participant-free even though
-`draft-board-feed-integration` now supports an explicit by-construction binding
-for the authoritative event path. `/draft/{id}` stays event-backed, while this
-endpoint continues to publish only source coordinates and mutable labels.
-Auction and NBA board applicability remain unestablished.
+`draft-board-feed-integration` now carries binding and evidence-profile plumbing
+for the fixture-backed mock football snake path. `/draft/{id}` stays
+event-backed, while this endpoint continues to publish only source coordinates
+and mutable labels. Auction and NBA board applicability remain unestablished.
 
 ### `source-board-evidence-panel` - Showing source columns beside the authoritative draft board
 
