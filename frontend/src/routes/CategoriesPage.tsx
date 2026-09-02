@@ -156,11 +156,16 @@ function CategoriesLoader({ draftId }: { draftId: number }) {
   )
 
   useEffect(() => {
-    const timer = setInterval(refresh, POLL_INTERVAL_MS)
+    // Start the next cycle only after this one settles. A fixed interval shorter
+    // than the client's timeout would abort a slow optional feed on every tick,
+    // so the page could remain loading forever without ever publishing unknown
+    // completeness.
+    if (bundle.status === 'loading') return
+    const timer = setTimeout(refresh, POLL_INTERVAL_MS)
     return () => {
-      clearInterval(timer)
+      clearTimeout(timer)
     }
-  }, [refresh])
+  }, [bundle.status, refresh])
 
   return (
     <article className="page page--categories">

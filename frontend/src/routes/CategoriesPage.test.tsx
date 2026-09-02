@@ -522,6 +522,73 @@ describe('the league category route', () => {
   )
 
   it(
+    'lets a slow feed read settle instead of aborting it at the poll interval',
+    async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const feedSignals: AbortSignal[] = []
+      let feedRequests = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = requestUrl(input)
+          if (url.includes('/health')) {
+            return Promise.resolve(
+              new Response(JSON.stringify(HEALTH), {
+                headers: { 'Content-Type': 'application/json' },
+              }),
+            )
+          }
+          if (url.endsWith('/api/v1/drafts/4')) {
+            return Promise.resolve(
+              new Response(JSON.stringify(draft), {
+                headers: { 'Content-Type': 'application/json' },
+              }),
+            )
+          }
+          if (url.includes('/projections/current')) {
+            return Promise.resolve(
+              new Response(JSON.stringify(recordedProjections), {
+                headers: { 'Content-Type': 'application/json' },
+              }),
+            )
+          }
+          if (url.includes('/api/v1/drafts/4/feed')) {
+            feedRequests += 1
+            if (init?.signal !== null && init?.signal !== undefined) {
+              feedSignals.push(init.signal)
+            }
+            return new Promise<Response>((resolve) => {
+              setTimeout(() => {
+                resolve(
+                  new Response(JSON.stringify(feedFor(draft)), {
+                    headers: { 'Content-Type': 'application/json' },
+                  }),
+                )
+              }, 7000)
+            })
+          }
+          return Promise.reject(new Error(`unexpected request ${url}`))
+        }),
+      )
+
+      renderAt('/draft/4/categories')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6500)
+      })
+      expect(feedRequests).toBe(1)
+      expect(feedSignals[0]?.aborted).toBe(false)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500)
+      })
+      expect(
+        await screen.findByTestId('league-category-table', {}, { timeout: 5000 }),
+      ).toBeInTheDocument()
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
     'aborts in-flight feed and projection reads on unmount',
     async () => {
       const pendingSignals: AbortSignal[] = []

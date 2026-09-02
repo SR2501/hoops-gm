@@ -33616,11 +33616,11 @@ get a separate warning and are never added to a seat. No-observation,
 unavailable-context and unreadable-feed states remain distinct. Category
 aggregation, ranks and availability-blind semantics are unchanged.
 
-**Gates:** Frontend lint, strict type-check, all 407 frontend tests and the
+**Gates:** Frontend lint, strict type-check, all 408 frontend tests and the
 production build pass. The recorded-contract tests cover shuffled diagnostics,
 participant and unattributed skips, valid zeroes, no observations, unavailable
 context, request and contract failure, independent projection/feed failures,
-invalid route ids, polling, abort, mismatch refusal, aggregate partitioning,
+invalid route ids, settled-cycle polling, slow-feed starvation, abort, mismatch refusal, aggregate partitioning,
 and absent or wrong additive fields. The Model gate does not apply because no
 decision arithmetic or ranking semantics changed.
 
