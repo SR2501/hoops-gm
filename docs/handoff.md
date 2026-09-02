@@ -33547,3 +33547,43 @@ PR lands.
 **Next:** Commit and push the non-rewriting reconciliation only if the remote PR
 head still equals `e29330266823bc0944b948032d427100b8339b75`, then obtain fresh
 cumulative exact-head review and hosted checks before delivery.
+
+---
+
+## 2026-09-02 — backend — Restore CI after AnyIO 4.15 resolution
+
+**Changed:** Added the narrow development-stack compatibility bound
+`anyio<4.15` in `backend/pyproject.toml`. Public PyPI uploaded AnyIO 4.15.0
+shortly before main run `33689676934`; FastAPI 0.141.1 resolved Starlette 1.6.0,
+whose `TestClient` still imports `anyio.abc.BlockingPortal`, while AnyIO 4.15.0
+newly warns that alias is deprecated. The repository treats every warning as an
+error, so `tests/conftest.py` aborted before collection in the backend, Adapter,
+Model, and PostgreSQL jobs. Starlette declares only `anyio<5,>=3.6.2`, so pip
+could not infer this narrower incompatibility. No warning was suppressed and no
+unrelated package was pinned. No separate regression test was added: the bound
+is exercised by every clean `pip install -e ".[dev]"`, and the existing
+warnings-as-errors import of `fastapi.testclient.TestClient` is the exact runtime
+assertion that failed on 4.15.0.
+
+**Now true:** A clean Python 3.12 install resolves FastAPI 0.141.1, Starlette
+1.6.0, httpx2 2.12.0, and AnyIO 4.14.2; `pip check` and a `-W error`
+`TestClient` import pass. The complete local gates pass: Ruff, format, strict
+mypy over 234 source files, 2,448 default backend tests with one skip, 629
+Adapter contracts, 28 Model backtests, SQLite upgrade/check/downgrade through
+revision `0023`, 380 frontend tests and production build, 95 userscript tests
+and build, repository-script lint/format, secret scan, backlog graph, and
+document terminators. A preliminary independent dependency-fix review found no
+significant issue.
+
+**Could not verify:** Direct access from this machine to public PyPI's file host
+failed during TLS negotiation, so the clean local install used the configured
+package-feed mirror, whose newest AnyIO candidate was still 4.14.2. GitHub
+Actions remains the required proof that the public resolver, which can see
+4.15.0, honors the new bound. Docker and `psql` are unavailable locally, so no
+native PostgreSQL run was possible; the hosted PostgreSQL job remains the
+cross-dialect authority. Hosted exact-head checks and final cumulative review
+had not run when this entry was written.
+
+**Next:** Obtain a fresh cumulative exact-head review, publish the focused PR,
+and require all hosted backend, migration, Adapter, Model, and PostgreSQL jobs
+to resolve AnyIO 4.14.2 and pass before autonomous ordinary-code merge.
