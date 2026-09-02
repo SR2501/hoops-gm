@@ -32831,3 +32831,33 @@ this entry was appended.
 **Next:** Commit and independently review one clean exact head, push only
 `sr2501-publish-participation-ledger`, open the PR, and freeze it. Do not merge
 or self-approve.
+
+---
+
+## 2026-09-01 - data-engineer - Corrected census hash byte domains
+
+**Changed:** Corrected the census identities in
+`docs/adapters/participation-ledger-store.md` without changing any census,
+code, store value, or publication surface. The prior entry's three SHA-256
+values were computed from CRLF working-tree bytes on Windows. The authoritative
+hashes below were computed from raw, undecoded subprocess bytes returned by
+`git cat-file blob HEAD:<path>`, which are the LF bytes Git actually publishes:
+
+- `participation-ledger-2023-24-coverage.json`:
+  `b158eec09b6b16df9ef044bd25a22271871ccb79a8c783c2fe563239fb8beb5a`
+- `participation-ledger-2024-25-coverage.json`:
+  `111a6694e247895857e9f80dfd2e6cedcf4b2205017cd91857c17ab3d12a40cd`
+- `participation-ledger-2025-26-direct-coverage.json`:
+  `86b0533d31e9e1e8639127be4ced995a72382a41de069ac3581b7596592d339c`
+
+The earlier values remain valid only for this checkout's CRLF bytes and must
+not be used as committed-artifact identities. This entry is an append-only
+correction; the prior handoff bytes were not rewritten.
+
+**Could not verify:** A fresh independent review and hosted CI against the
+eventual correction head had not run when this entry was appended. This repair
+does not revisit the already-reviewed data, disclosure, ancestry, or source-row
+arbitration.
+
+**Next:** Freeze the correction commit, update PR #145, and require fresh
+exact-head review and hosted checks before merge. Do not self-approve.

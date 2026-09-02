@@ -381,14 +381,23 @@ Each census is self-contained and pins the store path and hash, schema revision,
 logs, and a digest over the exact raw-capture manifest:
 
 - [`participation-ledger-2023-24-coverage.json`](participation-ledger-2023-24-coverage.json)
-  — SHA-256
-  `13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0`
+  — committed Git-blob content SHA-256
+  `b158eec09b6b16df9ef044bd25a22271871ccb79a8c783c2fe563239fb8beb5a`
 - [`participation-ledger-2024-25-coverage.json`](participation-ledger-2024-25-coverage.json)
-  — SHA-256
-  `f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69`
+  — committed Git-blob content SHA-256
+  `111a6694e247895857e9f80dfd2e6cedcf4b2205017cd91857c17ab3d12a40cd`
 - [`participation-ledger-2025-26-direct-coverage.json`](participation-ledger-2025-26-direct-coverage.json)
-  — SHA-256
-  `4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441`
+  — committed Git-blob content SHA-256
+  `86b0533d31e9e1e8639127be4ced995a72382a41de069ac3581b7596592d339c`
+
+These hashes are over the LF bytes stored by Git, read directly with
+`git cat-file blob HEAD:<path>`. The corresponding CRLF working-tree byte
+hashes on this Windows checkout are, in the same order,
+`13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0`,
+`f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69`,
+and `4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441`.
+They describe checkout bytes only and are not the authoritative publication
+identities.
 
 The original
 [`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
