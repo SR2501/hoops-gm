@@ -75,17 +75,32 @@
       "network_access": false,
       "script": {
         "path": "scripts/replay_participation_ledger.py",
-        "git_blob_sha256": "3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4",
-        "code_commit": "b7f396514c67a2e23920da353dc1030a2264d101"
+        "git_blob_sha256": "d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb",
+        "code_commit": "863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2"
       },
       "pinned_capture_manifest": {
         "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-pinned-replay-manifest.json",
         "bytes": 788178,
         "sha256": "e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a"
       },
+      "manifest_trust": {
+        "interface": "required --manifest-sha256 argument",
+        "expected_sha256": "e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a",
+        "verified_before_parse": true,
+        "self_declared_digest_allowed": false
+      },
+      "request_consumption": "exactly_once",
       "proof_receipt": {
         "path": "C:\\Users\\steverones\\hoops-gm-data\\backups\\participation-ledger-2022-23-offline-replay-proof.json",
-        "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32"
+        "sha256": "47a9f752dfb60339c6aa85248f720955d2ac4ef318c9dd28eda7c68652734d32",
+        "replay_code_commit": "b7f396514c67a2e23920da353dc1030a2264d101",
+        "replay_script_git_blob_sha256": "3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4",
+        "scope": "Semantic store-equality proof produced before the manifest-trust and exact-once guard repair; the repaired guards have a separate offline contract."
+      },
+      "guard_contract": {
+        "path": "backend/tests/test_replay_participation_ledger.py",
+        "manifest_digest_before_parse": true,
+        "duplicate_runtime_request_rejected": true
       }
     },
     "raw_capture_manifest": {

@@ -33089,3 +33089,57 @@ direct outcome marginal, or model output was produced.
 **Next:** Regenerate the safe census with the offline replay provenance, run
 all applicable gates, obtain another cumulative review of the final head, and
 leave the PR open and unmerged.
+
+---
+
+## 2026-09-02 - data-engineer - Bound replay manifest trust and exact-once consumption
+
+**Changed:** Repaired the two coordinator-review blockers on PR #149 without
+changing a capture, parser, ledger row, identity state, or disclosure semantic.
+`PinnedCaptureFactory` now reads the manifest as raw bytes, compares those bytes
+to the required externally supplied `--manifest-sha256`, and refuses a mismatch
+before JSON parsing. The manifest remains unable to declare its own trusted
+digest. The command documented for this corpus pins
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`,
+which was reproduced directly from the 788,178-byte off-repository manifest.
+
+Runtime request consumption is now exact-once. An endpoint/parameter key already
+served is rejected before capture bytes are returned, and final validation
+requires every manifest key to have consumption count one rather than merely
+membership in a set. The offline contract mutates an internally coherent
+manifest while retaining the trusted original digest and proves parsing is not
+reached; a second contract calls the same request twice and proves the duplicate
+is rejected. Removing either new guard makes its named test red for that guard's
+failure, and restoring the guard returns the complete contract to green.
+
+The implementation is pinned at commit
+`863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`, script Git-blob SHA-256
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`.
+A disposable copy of the preserved 2023-26 ledger replayed the real 2,462-entry
+manifest through that implementation: 1,230 games, 25,894 production rows, and
+40,932 participation rows were created with zero skips or failures. This
+exercised the external manifest digest and exact-once requirements over the
+published corpus. The prior proof receipt remains the semantic 33-table
+store-equality proof and truthfully names predecessor commit
+`b7f396514c67a2e23920da353dc1030a2264d101`; the census and store documentation
+now distinguish that receipt from the later guard contract.
+
+Local gates passed: backend and repository-script lint/format checks, strict
+mypy over 234 source files, 2,411 backend tests with one skip, 610 offline
+Adapter contracts, and 37 live-smoke tests with four explicit skips. The
+backlog, census, recovery command, and receipt wording now state the externally
+pinned manifest trust and exact-once runtime contract while retaining the
+identity restoration and quant-approved played-only source-row semantics.
+
+**Could not verify:** Hosted checks and fresh independent cumulative review had
+not run against the eventual documentation commit when this entry was appended.
+The off-repository manifest, raw captures, databases, and proof receipt remain
+operator-machine artifacts. The disposable repaired-code run reproduced the
+published row counts and all replay guards but did not replace the earlier
+33-table semantic-equality receipt; no capture, parser, or database semantic
+changed to require a new data receipt. No opportunity class, direct
+participation outcome marginal, or model output was produced.
+
+**Next:** Commit the repaired provenance documents, push the same PR branch,
+verify local/remote/PR head identity, wait for hosted checks, and obtain a fresh
+independent cumulative review of that exact head without merging.

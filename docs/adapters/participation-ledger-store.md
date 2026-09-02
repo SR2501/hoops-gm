@@ -584,9 +584,9 @@ sets from both season sources and the database are exactly equal.
 The committed safe census is
 [`participation-ledger-2022-23-coverage.json`](participation-ledger-2022-23-coverage.json).
 Its LF content SHA-256 is
-`d163f03ac256654a15476b5c9bf6bee953e4e470b937913535c7d7c5f3704fae`.
+`5d602fcecb8decafc4405c6350dff7bee1170848ff97bf3a0fabde20ceba1e3c`.
 The generator's Windows working-tree bytes use CRLF and hash to
-`af0902fcf04c557ca41d1f1c06bc11b1709628d252149b3f7d63da6a0ab502f2`;
+`e550906608ce36668dc9f9da95f84649e1373ad9743f40fb270303d0ae4986b2`;
 that checkout-only identity is not the published artifact identity.
 It includes the four-season direct-label availability summary required by the
 accepted protocol. No direct `PlayerParticipation.outcome` marginal,
@@ -667,12 +667,18 @@ The ordinary production command is not a reproducible recovery command:
 `LeagueGameFinder` and `PlayerGameLogs` expire after 12 hours and may refetch
 changed upstream data. The pinned offline replayer has no network-capable
 endpoint factory. Its manifest names the exact relative gzip path and
-uncompressed SHA-256 for each of the 2,462 requests the season ingest consumes:
+uncompressed SHA-256 for each of the 2,462 requests the season ingest consumes.
+The raw manifest bytes must first match the trusted SHA-256 supplied through
+the required `--manifest-sha256` argument; that comparison occurs before JSON
+parsing, and the manifest does not declare its own trusted digest. Every pinned
+endpoint/parameter pair must then be consumed exactly once; a repeated runtime
+request is rejected before its capture bytes are returned:
 
 - script: `scripts/replay_participation_ledger.py`
-- code commit: `b7f396514c67a2e23920da353dc1030a2264d101`
+- guard-repair code commit:
+  `863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`
 - committed script blob SHA-256:
-  `3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`
+  `d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`
 - pinned manifest:
   `C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json`
 - manifest bytes / SHA-256: `788,178` /
@@ -687,7 +693,12 @@ second time at `0 created / 40,932 updated / 0 skipped`. Comparing every
 non-timestamp column in all 33 tables against the active store found zero
 differing tables. The SQLite files are not byte-identical because row timestamps
 and file history differ; the proof claims semantic state equality, not file
-identity.
+identity. That receipt records predecessor replay commit
+`b7f396514c67a2e23920da353dc1030a2264d101` and script blob
+`3732b6f7482bdf980daa78696d32162398f43b33ddd4305ad70c1ca3cd7035b4`;
+it remains the semantic store-equality proof. The later guard repair changes no
+capture, parser, or database semantics and is covered by the offline contract
+at `backend/tests/test_replay_participation_ledger.py`.
 
 To rebuild the four-season active store, first make the same preserved-prior
 copy, check out the pinned replay commit, and run:
@@ -698,7 +709,8 @@ python scripts\replay_participation_ledger.py `
   C:\Users\steverones\hoops-gm-data\participation-ledger-direct-2022-26.db `
   C:\Users\steverones\hoops-gm-data\data\raw `
   C:\Users\steverones\hoops-gm-data\backups\participation-ledger-2022-23-pinned-replay-manifest.json `
-  2022-23
+  2022-23 `
+  --manifest-sha256 e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a
 ```
 
 `CommonAllPlayers` is already preserved in `data\raw`; the census generator
