@@ -255,6 +255,7 @@ describe('the dashboard shell', () => {
           name: '[demo] Auction',
           is_mock: true,
           tool_usage: 'assisted',
+          source_board_profile: null,
           notes: null,
           status: 'in_progress',
           format: {
@@ -285,6 +286,7 @@ describe('the dashboard shell', () => {
               name: '[demo] Auction',
               is_mock: true,
               tool_usage: 'assisted',
+              source_board_profile: null,
               status: 'in_progress',
               format: {
                 draft_type: 'auction',

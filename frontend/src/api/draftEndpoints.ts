@@ -15,6 +15,7 @@
  */
 
 import { apiFetch, type RequestOptions, type ResponseContract } from './client'
+import { isFeedStatusResponse } from './draftFeedContract'
 import type {
   DraftEvent,
   DraftEventRequest,
@@ -27,13 +28,14 @@ import type {
   DraftParticipant,
   DraftState,
   DraftSummary,
+  FeedStatusResponse,
   SourceBoardColumn,
   SourceBoardPick,
   SourceBoardRegression,
   SourceBoardResponse,
   SourceBoardSnapshot,
 } from './draftTypes'
-import { SOURCE_BOARD_STATUSES } from './draftTypes'
+import { DRAFT_SOURCE_BOARD_PROFILES, SOURCE_BOARD_STATUSES } from './draftTypes'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -48,8 +50,19 @@ function isNumberOrNull(value: unknown): value is number | null {
   return typeof value === 'number' || value === null
 }
 
+function isPositiveIntegerOrNull(value: unknown): value is number | null {
+  return value === null || (typeof value === 'number' && Number.isInteger(value) && value > 0)
+}
+
 function isStringOrNull(value: unknown): value is string | null {
   return typeof value === 'string' || value === null
+}
+
+function isDraftSourceBoardProfileOrNull(value: unknown): boolean {
+  return (
+    value === null ||
+    DRAFT_SOURCE_BOARD_PROFILES.some((profile) => profile === value)
+  )
 }
 
 function isDraftFormat(value: unknown): value is DraftFormat {
@@ -80,6 +93,7 @@ function isDraftParticipant(value: unknown): value is DraftParticipant {
     isRecord(value) &&
     typeof value.id === 'number' &&
     typeof value.team_slot === 'number' &&
+    isPositiveIntegerOrNull(value.source_seat) &&
     typeof value.display_name === 'string' &&
     typeof value.is_owner === 'boolean' &&
     isNumberOrNull(value.fantasy_team_id) &&
@@ -142,6 +156,7 @@ export function isDraftState(value: unknown): value is DraftState {
     typeof value.name === 'string' &&
     typeof value.is_mock === 'boolean' &&
     typeof value.tool_usage === 'string' &&
+    isDraftSourceBoardProfileOrNull(value.source_board_profile) &&
     isStringOrNull(value.notes) &&
     typeof value.status === 'string' &&
     isDraftFormat(value.format) &&
@@ -168,6 +183,7 @@ function isDraftSummary(value: unknown): value is DraftSummary {
     typeof value.name === 'string' &&
     typeof value.is_mock === 'boolean' &&
     typeof value.tool_usage === 'string' &&
+    isDraftSourceBoardProfileOrNull(value.source_board_profile) &&
     typeof value.status === 'string' &&
     isDraftFormat(value.format) &&
     typeof value.last_sequence === 'number' &&
@@ -300,6 +316,11 @@ const SOURCE_BOARD_CONTRACT = {
     'The source-board response did not match the expected backend contract.',
 } satisfies ResponseContract<SourceBoardResponse>
 
+const FEED_STATUS_CONTRACT = {
+  isSuccess: isFeedStatusResponse,
+  invalidResponseDetail: 'The draft feed response did not match the expected backend contract.',
+} satisfies ResponseContract<FeedStatusResponse>
+
 export function getDrafts(options?: RequestOptions): Promise<DraftList> {
   return apiFetch('/api/v1/drafts', DRAFT_LIST_CONTRACT, options)
 }
@@ -325,6 +346,15 @@ export function getSourceBoard(
     options,
   )
 }
+
+export function getDraftFeed(
+  draftId: number,
+  options?: RequestOptions,
+): Promise<FeedStatusResponse> {
+  return apiFetch(`/api/v1/drafts/${String(draftId)}/feed`, FEED_STATUS_CONTRACT, options)
+}
+
+export { isFeedStatusResponse }
 
 /**
  * Append one event and receive the whole new state.

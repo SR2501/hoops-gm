@@ -33587,3 +33587,50 @@ had not run when this entry was written.
 **Next:** Obtain a fresh cumulative exact-head review, publish the focused PR,
 and require all hosted backend, migration, Adapter, Model, and PostgreSQL jobs
 to resolve AnyIO 4.14.2 and pass before autonomous ordinary-code merge.
+
+---
+
+## 2026-09-02 - frontend - Exposed category-board feed gaps per seat
+
+**Changed:** `/draft/:draftId/categories` now reads
+`GET /api/v1/drafts/{id}/feed` on the existing poll after the draft state is
+known. Projection and feed reads fail independently: either failure leaves the
+recorded seats visible, and a feed failure marks board completeness unknown
+instead of presenting zero skips as completeness.
+
+The client contract now transcribes `DraftParticipant.source_seat`,
+`source_board_profile = fantrax_football_snake_v1 | null`, and the complete
+feed-status response. Feed guards require exact top-level and nested shapes,
+non-negative integer counts, per-participant reason totals, unique participant
+ids, and an attributed-plus-unattributed partition that exactly reproduces the
+aggregate `skipped` map. The recorded OpenAPI document and draft fixtures were
+refreshed or additively migrated for those backend fields, and a raw no-context
+feed response was recorded from the repaired PR #148 head.
+
+The category table adds one `Feed skipped` column. Counts are joined only by
+stable participant id after draft id, log sequence, participant coverage and
+reported team-slot metadata all agree. A mismatch refuses the whole assignment
+and is published. Valid zeroes render as `0`; participant skips render their
+reason counts and state that the roster may be incomplete; unattributed skips
+get a separate warning and are never added to a seat. No-observation,
+unavailable-context and unreadable-feed states remain distinct. Category
+aggregation, ranks and availability-blind semantics are unchanged.
+
+**Gates:** Frontend lint, strict type-check, all 407 frontend tests and the
+production build pass. The recorded-contract tests cover shuffled diagnostics,
+participant and unattributed skips, valid zeroes, no observations, unavailable
+context, request and contract failure, independent projection/feed failures,
+invalid route ids, polling, abort, mismatch refusal, aggregate partitioning,
+and absent or wrong additive fields. The Model gate does not apply because no
+decision arithmetic or ranking semantics changed.
+
+**Could not verify:** No configured live Fantrax feed with real NBA auction
+observations exists, and PR #148 deliberately defines no NBA auction
+source-board profile. The raw feed recording therefore proves the repaired
+wire shape and no-context state, while non-zero skip and mismatch behaviours
+are driven from contract-shaped test payloads. Hosted checks and a browser
+reading against a live backend have not run in this lane.
+
+**Next:** Publish this as a frontend-only PR based on
+`sr2501-bind-rendered-draft-board`, require fresh exact-head review and hosted
+checks, and do not merge it before PR #148 lands.

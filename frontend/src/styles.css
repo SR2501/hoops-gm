@@ -2452,6 +2452,44 @@ a:focus-visible {
   color: var(--text-muted);
 }
 
+.catgrid__feed-head,
+.catgrid__feed {
+  min-width: 7.5rem;
+  color: var(--text-muted);
+}
+
+.catgrid__feed-total {
+  display: block;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.catgrid__feed-warning,
+.catgrid__feed-reasons,
+.catgrid__feed-unknown {
+  display: block;
+  font-size: 0.62rem;
+}
+
+.catgrid__feed--incomplete {
+  background: rgb(242 104 95 / 12%);
+}
+
+.catgrid__feed-warning {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.catgrid__feed-reasons {
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.catgrid__feed-unknown {
+  color: var(--warn);
+  font-style: italic;
+}
+
 .catgrid__count-joined {
   color: var(--text);
   font-weight: 600;

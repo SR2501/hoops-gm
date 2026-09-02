@@ -28,8 +28,15 @@ import {
   type SeatCategoryCell,
   type SeatRow,
 } from './leagueCategoryModel'
+import type { CategoryBoardCompleteness } from './categoryBoardCompleteness'
 
-export function LeagueCategoryTable({ model }: { model: LeagueCategoryModel }) {
+export function LeagueCategoryTable({
+  model,
+  completeness,
+}: {
+  model: LeagueCategoryModel
+  completeness?: CategoryBoardCompleteness | undefined
+}) {
   return (
     // The same scroll wrapper the schedule grid uses. A `display: block` table
     // would scroll too, and would also stop being a table: the column widths
@@ -52,6 +59,13 @@ export function LeagueCategoryTable({ model }: { model: LeagueCategoryModel }) {
           <th scope="col" className="catgrid__count-head" title="Holdings joined to a projection row">
             Players
           </th>
+          <th
+            scope="col"
+            className="catgrid__feed-head"
+            title="Feed observations permanently skipped rather than applied"
+          >
+            Feed skipped
+          </th>
           {CATEGORIES.map((category) => (
             <th key={category.key} scope="col" title={category.description}>
               {category.label}
@@ -62,7 +76,7 @@ export function LeagueCategoryTable({ model }: { model: LeagueCategoryModel }) {
       </thead>
       <tbody>
         {model.seats.map((seat) => (
-          <SeatLine key={seat.participant.id} seat={seat} />
+          <SeatLine key={seat.participant.id} seat={seat} completeness={completeness} />
         ))}
       </tbody>
       </table>
@@ -70,8 +84,18 @@ export function LeagueCategoryTable({ model }: { model: LeagueCategoryModel }) {
   )
 }
 
-function SeatLine({ seat }: { seat: SeatRow }) {
+function SeatLine({
+  seat,
+  completeness,
+}: {
+  seat: SeatRow
+  completeness?: CategoryBoardCompleteness | undefined
+}) {
   const { participant, join } = seat
+  const feedSkips =
+    completeness?.kind === 'available'
+      ? completeness.byParticipantId.get(participant.id)
+      : undefined
   return (
     <tr
       className={participant.is_owner ? 'catgrid__row catgrid__row--owner' : 'catgrid__row'}
@@ -95,6 +119,37 @@ function SeatLine({ seat }: { seat: SeatRow }) {
             of {join.totalHoldings}
           </span>
         ) : null}
+      </td>
+      <td
+        className={
+          feedSkips !== undefined && feedSkips.total > 0
+            ? 'catgrid__feed catgrid__feed--incomplete'
+            : 'catgrid__feed'
+        }
+        data-testid={`category-feed-skips-${String(participant.id)}`}
+      >
+        {feedSkips === undefined ? (
+          <span className="catgrid__feed-unknown">unknown</span>
+        ) : (
+          <>
+            <span className="catgrid__feed-total">{feedSkips.total}</span>
+            {feedSkips.total > 0 ? (
+              <>
+                <span className="catgrid__feed-warning">roster may be incomplete</span>
+                <span className="catgrid__feed-reasons">
+                  {Object.entries(feedSkips.reasons)
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([reason, count], index) => (
+                      <span key={reason}>
+                        {index > 0 ? ' · ' : ''}
+                        <code>{reason}</code> × {count}
+                      </span>
+                    ))}
+                </span>
+              </>
+            ) : null}
+          </>
+        )}
       </td>
       {seat.cells.map((cell) => (
         <CategoryCell key={cell.category.key} cell={cell} />

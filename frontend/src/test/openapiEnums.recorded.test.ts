@@ -47,6 +47,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DRAFT_EVENT_TYPES,
+  DRAFT_SOURCE_BOARD_PROFILES,
   DRAFT_STATUSES,
   DRAFT_TOOL_USAGES,
   DRAFT_TYPES,
@@ -58,7 +59,17 @@ const TIMEOUT_MS = 10_000
 
 interface OpenApiDocument {
   openapi: string
-  components: { schemas: Record<string, { enum?: unknown[] }> }
+  components: {
+    schemas: Record<
+      string,
+      {
+        enum?: unknown[]
+        properties?: Record<string, unknown>
+        required?: string[]
+        additionalProperties?: boolean
+      }
+    >
+  }
 }
 
 const document = openapi as unknown as OpenApiDocument
@@ -69,6 +80,7 @@ const MIRRORED: Record<string, readonly string[]> = {
   DraftStatus: DRAFT_STATUSES,
   DraftToolUsage: DRAFT_TOOL_USAGES,
   DraftEventType: DRAFT_EVENT_TYPES,
+  DraftSourceBoardProfile: DRAFT_SOURCE_BOARD_PROFILES,
 }
 
 /**
@@ -135,6 +147,44 @@ describe('the recorded OpenAPI document', () => {
       for (const [name, reason] of Object.entries(NOT_MODELLED)) {
         expect(reason.length, `${name} has no reason`).toBeGreaterThan(40)
       }
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'publishes the additive draft and feed fields with closed skip-detail objects',
+    () => {
+      const schemas = document.components.schemas
+      expect(schemas.DraftStateResponse?.required).toContain('source_board_profile')
+      expect(schemas.DraftSummary?.required).toContain('source_board_profile')
+      expect(schemas.ParticipantOut?.required).toContain('source_seat')
+
+      expect(Object.keys(schemas.ParticipantSkippedOut?.properties ?? {}).sort()).toEqual([
+        'participant_id',
+        'reasons',
+        'team_slot',
+        'total',
+      ])
+      expect(schemas.ParticipantSkippedOut?.additionalProperties).toBe(false)
+
+      expect(Object.keys(schemas.FeedStatusResponse?.properties ?? {}).sort()).toEqual([
+        'applied_count',
+        'as_of',
+        'blocked',
+        'board_regressions',
+        'context_unavailable',
+        'draft_id',
+        'freshness',
+        'last_sequence',
+        'observation_count',
+        'pending_count',
+        'reconciliation',
+        'retryable',
+        'skipped',
+        'skipped_by_participant',
+        'unattributed_skipped',
+      ])
+      expect(schemas.FeedStatusResponse?.additionalProperties).toBe(false)
     },
     TIMEOUT_MS,
   )

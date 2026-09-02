@@ -74,6 +74,10 @@ export const DRAFT_TOOL_USAGES = ['blind', 'partial', 'instrumented'] as const
 
 export type DraftToolUsage = (typeof DRAFT_TOOL_USAGES)[number]
 
+export const DRAFT_SOURCE_BOARD_PROFILES = ['fantrax_football_snake_v1'] as const
+
+export type DraftSourceBoardProfile = (typeof DRAFT_SOURCE_BOARD_PROFILES)[number]
+
 export const DRAFT_EVENT_TYPES = [
   'pick',
   'nomination',
@@ -122,6 +126,8 @@ export interface DraftHolding {
 export interface DraftParticipant {
   id: number
   team_slot: number
+  /** Frozen rendered-board column. Distinct from `team_slot` and nullable. */
+  source_seat: number | null
   display_name: string
   is_owner: boolean
   fantasy_team_id: number | null
@@ -205,6 +211,7 @@ export interface DraftSummary {
   name: string
   is_mock: boolean
   tool_usage: DraftToolUsage
+  source_board_profile: DraftSourceBoardProfile | null
   status: DraftStatus
   format: DraftFormat
   last_sequence: number
@@ -224,6 +231,7 @@ export interface DraftState {
   name: string
   is_mock: boolean
   tool_usage: DraftToolUsage
+  source_board_profile: DraftSourceBoardProfile | null
   notes: string | null
   status: DraftStatus
   format: DraftFormat
@@ -315,6 +323,89 @@ export interface SourceBoardResponse {
   board_age_seconds: number | null
   regressions: SourceBoardRegression[]
   caveats: string[]
+}
+
+export interface FeedFreshness {
+  transport: string
+  last_seen_at: string | null
+  age_seconds: number | null
+  instant_count: number
+  silent: boolean
+  silence_threshold_seconds: number
+  source_claimed_at: string | null
+  claim_skew_seconds: number | null
+  contact_at: string | null
+  contact_age_seconds: number | null
+  contact_is_known: boolean
+}
+
+export interface FeedIndependence {
+  independent: boolean
+  reason: string
+  left_transports: string[]
+  right_transports: string[]
+  shared_artifacts: string[]
+  shared_transports: string[]
+}
+
+export interface FeedMatch {
+  player_label: string | null
+  key: string
+  bridge_artifact: string
+  official_artifact: string
+}
+
+export interface FeedDisagreement {
+  player_label: string | null
+  field_name: string
+  bridge_value: string | null
+  official_value: string | null
+  bridge_artifact: string
+  official_artifact: string
+}
+
+export interface FeedReconciliation {
+  independence: FeedIndependence
+  witnessed_by_two_transports: number
+  agreements: FeedMatch[]
+  unwitnessed_matches: FeedMatch[]
+  disagreements: FeedDisagreement[]
+  only_bridge: string[]
+  only_official: string[]
+  caveats: string[]
+}
+
+/** Permanent feed skips attributable to one stable draft participant. */
+export interface ParticipantFeedSkips {
+  participant_id: number
+  team_slot: number
+  total: number
+  reasons: Record<string, number>
+}
+
+/**
+ * Feed diagnostics for one draft-log version.
+ *
+ * `skipped_by_participant` and `unattributed_skipped` partition `skipped`.
+ * A client must join participant rows by `participant_id`, never array order,
+ * `team_slot`, mutable label, or `source_seat`.
+ */
+export interface FeedStatusResponse {
+  draft_id: number
+  as_of: string
+  context_unavailable: string | null
+  freshness: FeedFreshness[]
+  reconciliation: FeedReconciliation | null
+  observation_count: number
+  applied_count: number
+  pending_count: number
+  blocked: string[]
+  retryable: Record<string, number>
+  skipped: Record<string, number>
+  skipped_by_participant: ParticipantFeedSkips[]
+  unattributed_skipped: Record<string, number>
+  last_sequence: number
+  board_regressions: SourceBoardRegression[]
 }
 
 /**

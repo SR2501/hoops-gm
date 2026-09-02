@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**72 done - 0 blocked - 120 pending - 192 total**
+**73 done - 0 blocked - 119 pending - 192 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4639,7 +4639,11 @@ because the same guard-after-the-hook shape will be copied again.
 
 ### `category-table-board-completeness` - Saying when a category ranking is computed over an incomplete board
 
-- [ ] **pending**
+- [x] **done** - Completed 2026-09-02 on the frontend stack above PR #148.
+  The category route now polls the feed independently of projections, joins
+  permanent skips only by stable participant id, refuses mismatched diagnostics,
+  and distinguishes valid zeroes, no observations, unavailable context, request
+  failure, participant-attributed skips and unattributed skips.
 - **Depends on:** `league-category-rate-table`, `draft-tracker-bridge-feed`
 
 **Acceptance:** `/draft/:draftId/categories` states, per seat, how many feed
