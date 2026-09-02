@@ -36,9 +36,24 @@ class _RecordedEndpoint:
 class PinnedCaptureFactory:
     """Serve exactly the captures named by a frozen manifest."""
 
-    def __init__(self, raw_root: Path, manifest_path: Path, *, season: str) -> None:
+    def __init__(
+        self,
+        raw_root: Path,
+        manifest_path: Path,
+        *,
+        manifest_sha256: str,
+        season: str,
+    ) -> None:
         self.raw_root = raw_root.resolve()
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_bytes = manifest_path.read_bytes()
+        observed_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        if observed_manifest_sha256 != manifest_sha256:
+            raise ValueError(
+                "manifest digest mismatch: "
+                f"expected {manifest_sha256}, observed {observed_manifest_sha256}"
+            )
+
+        payload = json.loads(manifest_bytes)
         if payload.get("schema_version") != 1:
             raise ValueError("pinned replay manifest schema_version must be 1")
         if payload.get("season") != season:
@@ -55,7 +70,7 @@ class PinnedCaptureFactory:
         if not entries:
             raise ValueError("pinned replay manifest contains no entries")
         self.entries = entries
-        self.consumed: set[tuple[str, str]] = set()
+        self.consumed: dict[tuple[str, str], int] = {}
 
     def __call__(self, endpoint: str, **kwargs: Any) -> _RecordedEndpoint:
         kwargs.pop("timeout", None)
@@ -64,6 +79,8 @@ class PinnedCaptureFactory:
         entry = self.entries.get(key)
         if entry is None:
             raise ValueError(f"request is not pinned: {endpoint} {params}")
+        if key in self.consumed:
+            raise ValueError(f"pinned request already consumed: {endpoint} {params}")
 
         capture = (self.raw_root / str(entry["path"])).resolve()
         if not capture.is_relative_to(self.raw_root):
@@ -81,14 +98,20 @@ class PinnedCaptureFactory:
                 f"expected {expected}, observed {observed}"
             )
 
-        self.consumed.add(key)
-        return _RecordedEndpoint(json.loads(body))
+        payload = json.loads(body)
+        self.consumed[key] = 1
+        return _RecordedEndpoint(payload)
 
     def require_all_consumed(self) -> None:
-        unused = sorted(set(self.entries) - self.consumed)
-        if unused:
+        violations = sorted(
+            (key, self.consumed.get(key, 0))
+            for key in self.entries
+            if self.consumed.get(key, 0) != 1
+        )
+        if violations:
             raise RuntimeError(
-                f"{len(unused)} pinned replay requests were not consumed: {unused[:5]}"
+                f"{len(violations)} pinned replay requests were not consumed exactly once: "
+                f"{violations[:5]}"
             )
 
 
@@ -98,9 +121,19 @@ def main() -> int:
     parser.add_argument("raw_root", type=Path)
     parser.add_argument("manifest", type=Path)
     parser.add_argument("season")
+    parser.add_argument(
+        "--manifest-sha256",
+        required=True,
+        help="trusted SHA-256 of the raw manifest bytes, supplied outside the manifest",
+    )
     args = parser.parse_args()
 
-    factory = PinnedCaptureFactory(args.raw_root, args.manifest, season=args.season)
+    factory = PinnedCaptureFactory(
+        args.raw_root,
+        args.manifest,
+        manifest_sha256=args.manifest_sha256,
+        season=args.season,
+    )
     client = NbaStatsClient(
         store=None,
         limiter=RateLimiter(0),

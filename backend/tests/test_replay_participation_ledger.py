@@ -31,7 +31,7 @@ def _manifest(
     body: bytes = b'{"resultSets": []}',
     digest: str | None = None,
     relative_path: str = "nba_stats/Test/abc/capture.json.gz",
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, str]:
     raw_root = tmp_path / "raw"
     capture = raw_root / relative_path
     capture.parent.mkdir(parents=True)
@@ -55,13 +55,19 @@ def _manifest(
         ),
         encoding="utf-8",
     )
-    return raw_root, manifest
+    manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    return raw_root, manifest, manifest_sha256
 
 
 def test_pinned_factory_returns_only_the_exact_recorded_request(tmp_path: Path) -> None:
     module = _load_script()
-    raw_root, manifest = _manifest(tmp_path)
-    factory = module.PinnedCaptureFactory(raw_root, manifest, season="2022-23")
+    raw_root, manifest, manifest_sha256 = _manifest(tmp_path)
+    factory = module.PinnedCaptureFactory(
+        raw_root,
+        manifest,
+        manifest_sha256=manifest_sha256,
+        season="2022-23",
+    )
 
     endpoint = factory("Test", timeout=60, season="2022-23")
 
@@ -73,8 +79,13 @@ def test_pinned_factory_returns_only_the_exact_recorded_request(tmp_path: Path) 
 
 def test_pinned_factory_refuses_changed_capture_bytes(tmp_path: Path) -> None:
     module = _load_script()
-    raw_root, manifest = _manifest(tmp_path, digest="0" * 64)
-    factory = module.PinnedCaptureFactory(raw_root, manifest, season="2022-23")
+    raw_root, manifest, manifest_sha256 = _manifest(tmp_path, digest="0" * 64)
+    factory = module.PinnedCaptureFactory(
+        raw_root,
+        manifest,
+        manifest_sha256=manifest_sha256,
+        season="2022-23",
+    )
 
     with pytest.raises(ValueError, match="capture digest mismatch"):
         factory("Test", season="2022-23")
@@ -82,20 +93,74 @@ def test_pinned_factory_refuses_changed_capture_bytes(tmp_path: Path) -> None:
 
 def test_pinned_factory_refuses_an_unconsumed_manifest_entry(tmp_path: Path) -> None:
     module = _load_script()
-    raw_root, manifest = _manifest(tmp_path)
-    factory = module.PinnedCaptureFactory(raw_root, manifest, season="2022-23")
+    raw_root, manifest, manifest_sha256 = _manifest(tmp_path)
+    factory = module.PinnedCaptureFactory(
+        raw_root,
+        manifest,
+        manifest_sha256=manifest_sha256,
+        season="2022-23",
+    )
 
-    with pytest.raises(RuntimeError, match="1 pinned replay requests were not consumed"):
+    with pytest.raises(
+        RuntimeError,
+        match="1 pinned replay requests were not consumed exactly once",
+    ):
         factory.require_all_consumed()
 
 
 def test_pinned_factory_refuses_a_capture_outside_the_raw_root(tmp_path: Path) -> None:
     module = _load_script()
-    raw_root, manifest = _manifest(tmp_path)
+    raw_root, manifest, _ = _manifest(tmp_path)
     payload: dict[str, Any] = json.loads(manifest.read_text(encoding="utf-8"))
     payload["entries"][0]["path"] = "../capture.json.gz"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
-    factory = module.PinnedCaptureFactory(raw_root, manifest, season="2022-23")
+    manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    factory = module.PinnedCaptureFactory(
+        raw_root,
+        manifest,
+        manifest_sha256=manifest_sha256,
+        season="2022-23",
+    )
 
     with pytest.raises(ValueError, match="escapes raw root"):
         factory("Test", season="2022-23")
+
+
+def test_pinned_factory_refuses_a_changed_manifest_before_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script()
+    raw_root, manifest, manifest_sha256 = _manifest(tmp_path)
+    payload: dict[str, Any] = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["entries"][0]["content_sha256"] = "0" * 64
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    def fail_if_parsed(_: bytes) -> Any:
+        pytest.fail("changed manifest was parsed before its trusted digest was checked")
+
+    monkeypatch.setattr(module.json, "loads", fail_if_parsed)
+    with pytest.raises(ValueError, match="manifest digest mismatch"):
+        module.PinnedCaptureFactory(
+            raw_root,
+            manifest,
+            manifest_sha256=manifest_sha256,
+            season="2022-23",
+        )
+
+
+def test_pinned_factory_refuses_a_duplicate_runtime_request(tmp_path: Path) -> None:
+    module = _load_script()
+    raw_root, manifest, manifest_sha256 = _manifest(tmp_path)
+    factory = module.PinnedCaptureFactory(
+        raw_root,
+        manifest,
+        manifest_sha256=manifest_sha256,
+        season="2022-23",
+    )
+    factory("Test", season="2022-23")
+
+    with pytest.raises(ValueError, match="pinned request already consumed"):
+        factory("Test", season="2022-23")
+
+    factory.require_all_consumed()
