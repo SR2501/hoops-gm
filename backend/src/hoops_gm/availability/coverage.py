@@ -224,12 +224,6 @@ class LedgerCoverage:
                 f"{season.distinct_players} players "
                 f"({season.box_score_rows} box scores)"
             )
-            if season.outcomes:
-                rendered = "  ".join(f"{k}={v}" for k, v in season.outcomes.items())
-                lines.append(f"    outcomes     : {rendered}")
-            if season.reasons:
-                rendered = "  ".join(f"{k}={v}" for k, v in season.reasons.items())
-                lines.append(f"    reasons      : {rendered}")
             lines.append(
                 f"    inactive list: offered by the source for "
                 f"{season.rows_with_inactive_list} of {season.rows} rows"
@@ -243,10 +237,31 @@ class LedgerCoverage:
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-shaped form, store included, for attaching as evidence."""
+        """Outcome-safe JSON form, store included, for attaching as evidence.
+
+        Outcome and reason marginals remain available on the in-memory
+        :class:`SeasonCoverage` for private audits. They are deliberately absent
+        from public serialization while the injury-status conversion protocol
+        remains blinded. There is no opt-in flag.
+        """
         return {
             "store": asdict(self.store),
-            "seasons": [asdict(season) for season in self.seasons],
+            "seasons": [
+                {
+                    "season": season.season,
+                    "games_total": season.games_total,
+                    "games_final": season.games_final,
+                    "games_observed": season.games_observed,
+                    "games_unobserved": season.games_unobserved,
+                    "unobserved_dates": list(season.unobserved_dates),
+                    "unobserved_dates_suppressed": season.unobserved_dates_suppressed,
+                    "rows": season.rows,
+                    "distinct_players": season.distinct_players,
+                    "box_score_rows": season.box_score_rows,
+                    "rows_with_inactive_list": season.rows_with_inactive_list,
+                }
+                for season in self.seasons
+            ],
             "totals": {
                 "rows": self.rows,
                 "distinct_players": self.distinct_players,
