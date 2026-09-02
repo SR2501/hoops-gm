@@ -100,7 +100,7 @@ from hoops_gm.draft.feed.reconcile import (
     reconcile,
     values_disagree,
 )
-from hoops_gm.draft.formats import SnakeDraftFormat
+from hoops_gm.draft.formats import DraftFormatError, SnakeDraftFormat
 from hoops_gm.draft.state import DraftLogError
 from hoops_gm.identity.names import normalize_key
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
@@ -525,7 +525,10 @@ def _board_row_is_eligible(
     draft_format = draft_service.format_from_snapshot(draft)
     if not isinstance(draft_format, SnakeDraftFormat):
         return False
-    expected = draft_format.pick_at(row.overall_pick)
+    try:
+        expected = draft_format.pick_at(row.overall_pick)
+    except DraftFormatError:
+        return False
     if (
         row.round_number,
         row.pick_in_round,

@@ -688,8 +688,9 @@ def test_a_profiled_board_row_requires_successful_reading_provenance(
     [
         (DraftFeedTransport.OFFICIAL_HTTP, 1),
         (DraftFeedTransport.BRIDGE_CAPTURE, None),
+        (DraftFeedTransport.BRIDGE_CAPTURE, TOTAL_PICKS + 1),
     ],
-    ids=["wrong_transport", "missing_overall"],
+    ids=["wrong_transport", "missing_overall", "overall_out_of_frozen_range"],
 )
 def test_malformed_profiled_board_rows_neither_apply_nor_corroborate_rpc(
     session: Session,
