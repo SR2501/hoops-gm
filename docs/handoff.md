@@ -32861,3 +32861,43 @@ arbitration.
 
 **Next:** Freeze the correction commit, update PR #145, and require fresh
 exact-head review and hosted checks before merge. Do not self-approve.
+
+---
+
+## 2026-09-01 - architect - Four reviewed lanes shipped; availability advances to opportunity coverage
+
+**Changed:** Completed the 1 September four-hour fan-out on main
+`452522caa80bbfe9fa61b5237b95daa9b6f03c56`. Four independently reviewed lanes
+merged without widening their stated boundaries.
+
+**Now true:** PR #143 merged the Reliability endpoint UI. Independent rendered-
+browser proof showed 596 scorecards over 1,230 final games, 50 cards initially
+mounted, a `Show 50 more` control, and explicit incomplete-opportunity and
+no-invented-roster-score warnings. PR #144 merged exact allowlisted retry of
+apply-time draft conflicts after append-only correction or void, preserving
+observation and artifact identity; permanent malformed, recognition, duplicate,
+and ordering failures remain fail-closed.
+
+PR #141 merged only a Proposed availability preregistration. It is deterministic
+and independently quant-reviewed, but remains `FIT_VETOED_PREREQUISITES`: no fit
+or acceptance occurred, and owner accept/decline remains open. PR #145 merged the
+genuine 2023-24 through 2025-26 direct-observation ledger: 129,924 rows, 826
+players, and observations in 3,687 of 3,690 final games. The three
+`BoxScoreSummaryV3` outages on 2025-11-19 remain absent evidence. Game-level
+source coverage is not player-level opportunity completeness.
+
+Review prevented new per-season play/non-play/unknown marginals from entering
+public Git history before owner protocol acceptance; clean PR ancestry excludes
+the local private marginal commits. The authoritative post-#145 backlog recount
+remains in `docs/backlog.md`; `participation-opportunity-coverage` is now the
+first strict availability blocker. Backend and frontend both return HTTP 200.
+The backend intentionally uses the ignored `reliability_ui_demo_20250901.db`.
+
+**Could not verify:** Post-merge CI for main `452522c` was still running when
+this entry was appended. No NBA Fantrax auction room or instrumented mock exists.
+The player-level opportunity denominator remains unproved. The owner has not
+accepted or declined the protocol or outcome-marginal release.
+
+**Next:** Establish `participation-opportunity-coverage` without manufacturing
+labels from silence, preserve the fit veto until that evidence exists, and leave
+protocol acceptance and outcome-marginal release to the owner.
