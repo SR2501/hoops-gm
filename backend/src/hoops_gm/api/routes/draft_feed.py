@@ -251,6 +251,17 @@ class SourceBoardResponse(BaseModel):
     caveats: list[str]
 
 
+class ParticipantSkippedOut(BaseModel):
+    """Permanent skips attributable to one stable draft participant."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    participant_id: int
+    team_slot: int
+    total: int
+    reasons: dict[str, int]
+
+
 class FeedStatusResponse(BaseModel):
     """Everything the screen needs to say how much it can be trusted."""
 
@@ -280,6 +291,10 @@ class FeedStatusResponse(BaseModel):
     #: next local apply. These are not permanent recognition or dedupe skips.
     retryable: dict[str, int]
     skipped: dict[str, int]
+    #: Permanent skips partitioned by stable participant id, in team-slot order.
+    skipped_by_participant: list[ParticipantSkippedOut]
+    #: Permanent skips for which no draft participant can be established.
+    unattributed_skipped: dict[str, int]
     #: The draft log's version token, the same one ``GET /drafts/{id}``
     #: publishes, so a screen can tell whether the board it holds is the board
     #: this status describes.
@@ -555,6 +570,16 @@ def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
         blocked=list(status.blocked),
         retryable=dict(status.retryable),
         skipped=dict(status.skipped),
+        skipped_by_participant=[
+            ParticipantSkippedOut(
+                participant_id=item.participant_id,
+                team_slot=item.team_slot,
+                total=item.total,
+                reasons=dict(item.reasons),
+            )
+            for item in status.skipped_by_participant
+        ],
+        unattributed_skipped=dict(status.unattributed_skipped),
         last_sequence=status.last_sequence,
         board_regressions=[
             BoardRegressionOut(

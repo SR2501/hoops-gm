@@ -173,9 +173,10 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     kind: Mapped[DraftFeedInstantKind] = mapped_column(
         portable_enum(DraftFeedInstantKind, "draft_feed_instant_kind")
     )
-    #: Fantrax's team id, verbatim. Resolution to one of our seats is
-    #: ``participant_id`` and is done against ``fantasy_teams.fantrax_team_id``,
-    #: never inferred from the payload.
+    #: Fantrax's team id, verbatim. RPC resolution to one of our seats is done
+    #: against ``fantasy_teams.fantrax_team_id``. Rendered-board rows have no
+    #: team id and can resolve ``participant_id`` only through the draft's
+    #: explicit frozen ``source_seat`` binding.
     team_external_id: Mapped[str | None] = mapped_column(String(64))
     #: One-indexed rendered-board column. It is deliberately not a foreign key
     #: and must never be read as ``DraftParticipant.team_slot``.

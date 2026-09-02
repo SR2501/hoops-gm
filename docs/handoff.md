@@ -32931,6 +32931,311 @@ the documentation, append-only, secret, backlog, and hosted checks pass.
 
 ---
 
+## 2026-09-02 - backend - Bound rendered draft boards to frozen participants
+
+**Changed:** Completed the supported snake/linear boundary of
+`draft-board-feed-integration` after rebasing onto main
+`5d141b5f4672b0cd28db05f84817637c4df004d2`. Migration `0023` adds nullable
+`DraftParticipant.source_seat`; draft creation accepts either no values or a
+complete one-to-one mapping over `1..team_count`, and the participant read
+contract publishes the frozen binding. Partial, duplicate, nonpositive and
+out-of-range mappings are refused. No update or repair surface was added.
+
+A supported rendered-board observation now resolves its source column only
+through that binding and then enters the existing append-only pending/apply
+pipeline. Ordered-state derivation uses the binding for bound drafts and keeps
+the old `team_slot` rule for unbound/manual drafts. The public
+`next_pick.team_slot` still names the mapped participant's local team slot while
+the internal `DraftPick.team_slot` remains the frozen ordered/source coordinate.
+A deliberately rotated mapping proves those values are not aliases.
+
+The apply pass now requires a bound board row's
+`(overall, round, pick_in_round, source_seat)` to equal the current frozen-format
+coordinate before append. Independent review found the missing gate: in a
+three-seat snake, source seat 3 owns both picks 3 and 4, so a changed historical
+pick-3 cell could otherwise append as pick 4. The exact reproduction now blocks
+as `draft_pick_coordinate_mismatch`, leaves the row pending, and appends
+nothing. Existing board-content dedupe, replay, dimension locking, regression
+publication and no-retraction behavior remain intact.
+
+`GET /api/v1/drafts/{id}/feed` retains aggregate `skipped` and adds
+`skipped_by_participant`, ordered by local `team_slot` and keyed by stable
+participant id, plus `unattributed_skipped`. Tests require attributed and
+unattributed reason counts to partition the aggregate exactly; source-only rows
+on an unbound draft remain unattributed rather than being guessed onto the
+same-numbered local slot. The OpenAPI schemas carry both additions.
+
+Auction and `layout="other"` remain refused by their existing named reasons.
+`fantrax-auction-capture` now states the recorded NBA-auction evidence required
+before nomination, price or sale semantics may be added. No Fantrax action,
+external write, bridge executor or automation guardrail changed.
+
+**Gates:** Code and Adapter apply; Model and Automation do not. On the rebased
+code, Ruff check and format-check passed over 239 files, strict mypy passed over
+232 source files, and the complete SQLite-backed suite passed with **2,415
+passed, 1 skipped, 41 live-smoke tests deselected**. The relevant draft API,
+draft feed, rendered-board and migration suites passed together. SQLite Alembic
+upgrade from empty, model/schema comparison, downgrade to base, and the focused
+`0022 -> 0023` current-schema upgrade all passed. The backlog graph recounts 191
+items as 72 done and 119 pending.
+
+**Holdings:** No private capture, database, credential or generated artifact is
+required to resume this unit. The committed board fixture drives the
+snake/rendered path; the linear boundary test changes only its independently
+rendered even-round coordinate marks and proves the parser classifies the result
+as linear before ingest.
+
+**Could not verify:** The historical local PostgreSQL endpoint at
+`127.0.0.1:55432` timed out, so native PostgreSQL execution was not available
+before this append; the repository's configured PostgreSQL CI job still needs
+to run against the exact publication head. No real Fantrax NBA auction or
+linear draft-room capture exists, and this work establishes no auction
+applicability. ADR-020's exact-content undo blind spot remains unchanged.
+Hosted CI and an independent review of the eventual documentation commit had
+not run when this entry was appended.
+
+**Next:** Commit the append-only documentation, independently review one exact
+head, push `sr2501-bind-rendered-draft-board`, open the focused PR, and freeze
+that head for hosted Code, Adapter and PostgreSQL checks. Do not merge or
+self-approve.
+
+---
+
+## 2026-09-02 - backend - Coupled board admission to the log version
+
+**Changed:** Exact-head review of the rebased board-feed unit found that the
+new current-coordinate check and the subsequent event append were not tied to
+one log version. In a three-seat snake, source seat 3 owns both picks 3 and 4;
+a tail void landing after the pick-4 coordinate check could make pick 3 current
+again, and participant-only validation would accept the stale pick-4 row there.
+Feed-driven picks and sales now pass `expected_last_sequence=state.last_sequence`.
+A concurrent change blocks as retryable `draft_sequence_conflict`, reloads the
+current log version for the response, and leaves the observation pending for
+fresh coordinate validation.
+
+A focused race test enters the exact interval by appending a void after
+coordinate admission and before `record_pick`. It proves the void is the only
+new event, the observation is not burned, and the reported `last_sequence`
+includes the concurrent correction. The existing source-fact classification
+test now distinguishes this state version token from source payload facts.
+
+**Gates:** The rendered-board and full draft-feed suites pass together after
+the fix; focused Ruff and strict mypy pass. The backlog and committed handoff
+prefix checks still need to be rerun after this append, followed by the complete
+hosted matrix on the new exact head.
+
+**Could not verify:** Hosted SQLite, PostgreSQL and Adapter jobs have not run on
+the eventual corrected head. The prior green matrix belongs to
+`fd18d281d0eb06fb7a1054f07ceb97c98c1e699c` and must not be cited for this
+change. The frontend `DraftParticipant.source_seat` type/guard follow-up remains
+outside this backend PR by architect ruling.
+
+**Next:** Commit this review fix and append, preserve the `ad9b461` handoff
+prefix exactly, run independent exact-head review, force-push with lease, and
+require fresh hosted checks. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Froze rendered-board applicability to its evidence
+
+**Changed:** Independent review of PR #148 found that a complete participant
+binding answered *who* a rendered column meant but not *whether* the recorded
+football board evidence applied to this basketball product. Migration `0023`
+now also adds nullable immutable `Draft.source_board_profile`, closed to exactly
+`fantrax_football_snake_v1`. Creation accepts that profile only for a mock snake
+with a complete one-to-one source-seat binding; real, auction, linear, unknown
+and incomplete shapes refuse. Legacy and default drafts receive null.
+
+Board ingest resolves source participants only when that exact profile,
+`is_mock`, snake format and complete binding all agree. Binding alone remains
+evidence-only. The apply pass independently repeats the gate before admission,
+so a pending row written before the profile existed or by a hand-edited database
+cannot append. Existing coordinate, dimension, dedupe, ordering and
+`expected_last_sequence` checks remain downstream and unchanged. Tests drive an
+unbound null profile, a bound null-profile snake, a bound unprofiled linear, a
+pre-profile pending row, the explicit profiled recorded fixture, rotated
+binding, historical-coordinate refusal and the append race.
+
+The create/read/OpenAPI contracts publish the profile as a one-value closed
+enum. No frontend selector or inference was added. The immediate frontend
+follow-up must type both `DraftParticipant.source_seat` and
+`Draft.source_board_profile` while leaving profile selection outside the browser.
+`draft-board-feed-integration` returns to pending: product completion requires a
+real NBA auction capture, committed fixture and contract tests, followed by a
+separately reviewed profile value. `draft-tracker` remains pending.
+
+**Gates:** The complete draft-board, draft-feed, drafts-API and migration suites
+pass locally. Focused Ruff and strict mypy pass. Full Code and Adapter gates,
+the backlog/document checks, PostgreSQL execution, hosted CI and independent
+review still need to run on the eventual publication head.
+
+**Could not verify:** No NBA auction board capture exists, so nomination, price
+and sale semantics remain unestablished and no NBA profile can be defined. The
+local machine has no running PostgreSQL service established for this unit; the
+configured hosted PostgreSQL job remains authoritative. The exact-content undo
+blind spot in ADR-020 is unchanged.
+
+**Next:** Run the full local gates, commit and push one exact head, require the
+fresh hosted matrix, and independently review that no unprofiled, real, NBA,
+auction or linear path can append a board-derived event. Do not merge or
+self-approve.
+
+---
+
+## 2026-09-02 - backend - Rejected ineligible boards before reconciliation
+
+**Changed:** Fresh cumulative review of exact head `459e21ca088e6062befae56711f7aa8634d21341` found that the apply-time evidence-profile gate ran after contradiction sets were built. A legacy pending board row on an unprofiled draft could therefore disagree about participant identity and suppress a valid RPC-derived pick before the board row was marked `source_board_evidence_only`. Applicability rejection now runs before reconciliation, removes ineligible board rows from both pending and applied identity evidence, and only then computes contradictions. The reviewer's exact bound-null-profile reproduction now appends the valid RPC pick and permanently classifies the board row as source evidence.
+
+**Gates:** The complete rendered-board and draft-feed suites pass after the ordering fix; focused Ruff, format-check and strict mypy pass. Full-suite, migration, repository-document, hosted PostgreSQL and fresh independent cumulative review still need to run on the eventual publication head.
+
+**Could not verify:** Hosted checks have not run on this correction, and the prior clean hosted matrix belongs to an earlier head. No NBA auction evidence exists; the profile boundary and all applicability limits from the preceding handoff entry remain unchanged.
+
+**Next:** Re-run the full local gates, commit and push a new exact head, require fresh hosted checks, and independently review the cumulative diff again. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Bound board application to successful recognition
+
+**Changed:** The next cumulative review found two remaining ways ineligible board evidence could cross its boundary. `feed_status` still reconciled rows already classified `source_board_evidence_only`, creating false cross-transport corroboration, and a handcrafted profiled observation could reach apply without any persisted successful board reading. Board eligibility is now one shared predicate used by apply history, pending reconciliation and status reconciliation. A board row must match a successful snake `DraftSourceBoardReading` on draft, recogniser, capture, artifact, source coordinate and player facts, in addition to the exact profile, mock flag and complete participant binding. Ineligible board rows still count as source observations for board liveness, but cannot contradict, corroborate or append an RPC event.
+
+Focused tests prove a profiled row with no successful reading remains evidence-only, the recorded fixture still applies end to end, coordinate and race tests carry explicit post-recognition parents, and a matching unprofiled board/RPC pair reports zero cross-transport witnesses while the RPC pick appends.
+
+**Gates:** The complete rendered-board and draft-feed suites pass with focused Ruff, format-check and strict mypy. Full local, migration, documentation, hosted PostgreSQL and final independent exact-head review remain to be rerun after this append.
+
+**Could not verify:** The explicit `fantrax_football_snake_v1` profile is a creation-time evidence declaration, not an inferred sport field; the schema has no sport discriminator and this change deliberately does not invent one from league ids, labels or DOM shape. No NBA auction capture exists and no NBA profile is defined.
+
+**Next:** Run the full gates, publish one new exact head, and commission a fresh cumulative review of both application and reconciliation boundaries. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Completed the board provenance tuple
+
+**Changed:** Final cumulative review of `9275457c44b75fd604f5e3d6203f060175655341` found that successful-reading membership still omitted two facts: transport and `overall_pick`. The shared eligibility predicate now requires `BRIDGE_CAPTURE` exactly and derives the frozen snake coordinate from `overall_pick`, requiring its round, pick-in-round and source seat to match before either apply or reconciliation. Tests reproduce a board-shaped row labelled `OFFICIAL_HTTP` and a matching row with no overall pick; in both cases the valid RPC pick appends, the board row becomes evidence-only, and cross-transport witness count remains zero.
+
+**Gates:** The rendered-board and draft-feed suites pass; focused Ruff and strict mypy pass after the fix. Full and hosted gates plus one fresh exact-head review remain outstanding.
+
+**Could not verify:** No new source applicability was established. NBA auction semantics remain without a capture or profile, and the explicit football mock profile remains the only admitted declaration.
+
+**Next:** Run the final full matrix, publish and independently review the exact head. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Closed cumulative board-feed contract gaps
+
+**Changed:** Integrated the coordinator's evidence-profile and pre-reconciliation applicability corrections, then closed the remaining cumulative review gaps after `a3d4cfc4dab5c935dd06726f168dd0069b4b4b2c`. `DraftParticipant.source_seat` continues to resolve ordered participant identity, but complete binding alone does not authorize rendered-board application: only the separately frozen, recorded `fantrax_football_snake_v1` profile may do so. ADR-020 and the feed-service contract comment now state that distinction without changing auction, NBA, linear or unprofiled behavior.
+
+Selection-coordinate admission now covers RPC and official observations as well as rendered-board rows. Every supplied coordinate is checked when its attributed participant is due; a wrong participant still takes the existing `draft_pick_out_of_turn` path, then receives coordinate validation if it later becomes current. A three-team snake reproduction proves a corrected RPC claim for historical pick 3 cannot append as pick 4 when team slot 3 recurs. Bound rendered-board rows still require all four `(overall, round, pick_in_round, source_seat)` fields, and all feed-driven appends remain coupled to the checked `expected_last_sequence`.
+
+The authoritative backlog now marks pre-integration statements as historical, states the source-board evidence-only rule conditionally, records the repaired over-budget-sale premise, and removes the stale claim that the draft tracker has no screen. `draft-board-feed-integration`, `draft-tracker` and `category-table-board-completeness` remain pending under the coordinator's profile boundary; no NBA or auction applicability is claimed.
+
+**Gates:** On the integrated tree before this documentation append, Ruff and format-check passed, strict mypy passed, and the complete draft API, rendered-board feed, general draft-feed and migration suites passed together. The generalized coordinate change also passed the complete local SQLite suite at its pre-profile head; a fresh complete suite, exact-head review and hosted matrix still must run after this append.
+
+**Could not verify:** No real NBA auction or linear Fantrax draft-room capture exists. The only authoritative rendered-board application profile remains the recorded football mock snake corpus. The local PostgreSQL endpoint remains unavailable; hosted PostgreSQL must verify the eventual exact head. The immediate frontend follow-up remains unchanged: `frontend/src/api/draftTypes.ts` must add `DraftParticipant.source_seat`, and `frontend/src/api/draftEndpoints.ts` must require it as number-or-null while implementing `category-table-board-completeness`.
+
+**Next:** Commit this append and backlog correction, run the complete local gates and fresh cumulative exact-head review, push only after reconciling any concurrent PR-branch updates, and require a new hosted matrix. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Refused unreadable coordinates and stale concurrent blocks
+
+**Changed:** Fresh cumulative review found two final application-boundary defects. First, the official recogniser could receive an out-of-range supplied coordinate, coerce it to `None`, retain player identity, and leave the observation applicable. When that participant recurred in snake order, the unreadable historical claim could append at the current coordinate. Both bridge and official selection recognisers now mark any supplied-but-unreadable coordinate `draft_coordinate_unreadable`, withhold player identity, and store the row as a permanent attributed refusal rather than an application or reconciliation candidate.
+
+Second, a worker losing `draft_sequence_conflict` could stamp that reason on stale ORM state after another worker had already applied the same observation. The conflict path now refreshes the observation before deciding whether it remains blocked, and `FeedStatus.blocked` excludes every row that already has an applied sequence. A focused status test pins the latter invariant while the existing tail-void race continues to prove genuinely pending conflicts remain retryable.
+
+The backlog dependency graph now records the actual blocker: `draft-board-feed-integration` depends on pending `fantrax-auction-capture`, and the `draft-tracker` umbrella depends on that integration rather than claiming all dependencies are done. Its status note now names profile widening and real NBA auction evidence instead of the obsolete question of whether any automatic pick tracking is possible.
+
+**Gates:** On the complete integrated tree, Ruff and format-check passed over 239 files, strict mypy passed over 232 source files, and the full SQLite suite passed with **2,428 passed, 1 skipped and 41 live-smoke tests deselected**. The complete draft-feed, rendered-board and migration suites passed; the backlog graph, document terminators and diff checks passed.
+
+**Could not verify:** Hosted PostgreSQL, Adapter and Code gates have not run on the eventual commit containing these final corrections; all earlier hosted matrices belong to superseded heads. No real NBA auction or linear Fantrax capture exists. The immediate frontend `DraftParticipant.source_seat` type/guard and category completeness work remains outside this backend PR.
+
+**Next:** Commit this append with the final fixes, independently review the cumulative exact head, reconcile any concurrent remote-branch advance without overwriting it, push, and require a fresh hosted matrix. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Reconciled board provenance and bounded frozen coordinates
+
+**Changed:** Resumed from local `1c2912ba909cfd46ef58fc3b8adfe0acfc49ae20` after independently fetching PR #148 at `0f6fb35a40e6d08ac0562ce2cbab11289a0c5486`. The remote series added exact successful-reading provenance checks; the local series added supplied-coordinate, concurrency and contract corrections. The five local commits were replayed onto the remote head without force-overwriting it. The complete remote handoff blob is the byte-exact prefix of this file, and only LF bytes were appended.
+
+The reported frozen-format crash was present in the reconciled provenance predicate: a structurally complete profiled board row called `SnakeDraftFormat.pick_at(overall_pick)` before proving the value was inside the draft's total pick range. An out-of-range stored row therefore raised `DraftFormatError` from both apply-time and status-time eligibility checks instead of failing closed. `_board_row_is_eligible` now catches that refusal and returns false, so the row is classified `source_board_evidence_only`, cannot apply or reconcile, and leaves the valid RPC sibling free to append. The existing malformed-profile test now drives `overall_pick = total_picks + 1` through both `apply_observations` and `feed_status`.
+
+The reconciled local fixes also preserve the remote profile boundary while refusing supplied-but-unreadable bridge/official coordinates, validating supplied historical RPC coordinates when their participant recurs, coupling append to the checked log sequence, and preventing applied observations from publishing stale concurrency blocks.
+
+**Gates:** The complete draft-board, draft-feed, draft API and migration suites pass on the reconciled tree. Focused Ruff and strict mypy pass; backlog graph, terminators, diff checks and byte-prefix verification pass. Full local Code and Adapter gates, fresh cumulative review, hosted PostgreSQL and exact-head CI remain to run after this append is committed.
+
+**Could not verify:** No real NBA auction or linear Fantrax capture exists, so the recorded football mock snake profile remains the only admitted board application profile. The local PostgreSQL endpoint has not been re-established. Hosted checks on remote `0f6fb35` were green but do not cover these reconciled commits or the frozen-range refusal.
+
+**Next:** Commit this append, run full Code and Adapter gates, obtain fresh cumulative exact-head review, push normally after checking for another remote advance, wait for exact-head hosted checks, and merge only while the PR is clean and mergeable. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend - Corrected the parser-era integration claim
+
+**Changed:** Fresh cumulative review of reconciled head `372d21bad8fa3c511a0305d630391b2050c35784` found one stale parser-era backlog paragraph still saying rendered boards were not wired into the feed. The paragraph is now explicitly historical and states the current conditional contract: only a profiled, completely bound mock from the recorded football snake evidence may produce applicable board observations with successful-reading provenance; unprofiled, real, linear, auction and `layout="other"` boards remain evidence-only or refused.
+
+**Gates:** This is documentation-only after the complete Code and Adapter gates passed at `372d21b`. Backlog graph, terminators, append-only containment and diff checks must rerun on the correction commit, followed by one fresh cumulative exact-head review.
+
+**Could not verify:** Hosted checks and PostgreSQL have not run on the eventual correction head. No NBA auction or linear Fantrax capture exists.
+
+**Next:** Commit, run targeted document gates, obtain fresh cumulative exact-head review, reconcile any remote advance, push normally, and wait for hosted gates before merge. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Preserved official coordinate refusal
+
+**Changed:** Cumulative publication review found that strict recognition was still downstream of a lossy official parser. `parse_draft_picks` used `int()` and truthy alias selection, so `overallPick: 1.9` became the valid-looking integer `1`, `overallPick: "bad"` became absence, and `overallPick: 0` fell through to a sibling alias. The feed recogniser could not recover what the parser had erased and could retain player identity on a historical claim.
+
+The official adapter now selects round, pick and overall coordinate aliases by key presence and accepts only JSON integers or canonical signed digit strings. A supplied boolean, float, malformed string or other non-exact value raises the adapter's stable `SourceContractError` before `FantraxDraftPick` is constructed. Zero remains zero through parsing and is then permanently refused by the feed recogniser as `draft_coordinate_unreadable`, with player identity withheld. Adapter-contract tests pin malformed, fractional, boolean, zero/fallback and healthy populated cases. Existing recorded `getDraftPicks` empty-response coverage remains unchanged.
+
+The backlog wording now says the board recogniser persists observations regardless of profile; `source_board_profile` gates participant attribution and application, not observation creation.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts, draft-feed and rendered-board suites pass after this change. Full Code and Adapter gates, cumulative exact-head review and hosted PostgreSQL remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload exists, so accepted coordinate runtime types beyond the constructed integer and digit-string cases remain unobserved. The real endpoint's committed completed-draft fixture is still an empty list. No NBA auction or linear board capture exists.
+
+**Next:** Commit this append, rerun the full Code and Adapter gates, obtain clean cumulative review, reconcile any remote advance without force-overwriting, push normally, wait for hosted exact-head checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend - Narrowed observation creation to recognised boards
+
+**Changed:** Final exact-head review found one wording overreach: the backlog said rendered boards persist observations regardless of profile, but auction and `layout="other"` snapshots refuse before observations exist. The text now applies observation persistence only to successfully recognised snake/linear boards, distinguishes unprofiled evidence-only storage from unsupported-layout refusal, and changes no code or scope.
+
+**Gates:** The complete Code and Adapter gates passed at parent `cf9a0cfcd76023cadec139e147200d49e648d61d` with 2,438 default tests and 619 Adapter tests. Targeted backlog, terminator, append-only and diff checks must rerun on this documentation-only correction, followed by fresh cumulative exact-head review.
+
+**Could not verify:** Hosted PostgreSQL and CI remain outstanding on the eventual head. No NBA auction or linear Fantrax capture exists.
+
+**Next:** Commit, run targeted document gates, obtain final cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Bounded official coordinate grammar
+
+**Changed:** Final cumulative review found the strict official coordinate parser still accepted Unicode decimal numerals and could pass an arbitrarily long digit string into Python's bounded integer conversion, raising a raw `ValueError` instead of the adapter contract error. Coordinate strings are now limited to ten ASCII digits plus an optional sign before conversion. Full-width digits, booleans, floats, malformed strings and oversized digit strings all raise `SourceContractError`; integer and canonical signed-digit inputs continue to the feed's positivity and storage-bound checks.
+
+Two stale documentation statements that still described unreadable-player-id GET surfacing as unfixed are now historical. `draft-feed-unreadable-id-surfacing` remains the completed mechanism: permanent refusal rows are persisted and counted by the feed status endpoint.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts and both draft-feed suites pass. Full Code and Adapter gates, append-only checks and fresh cumulative review remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload establishes whether Fantrax uses JSON integers or digit strings for coordinates; both exact forms are supported, while lossy/non-ASCII forms fail loudly. Hosted PostgreSQL remains outstanding.
+
+**Next:** Commit this append, rerun complete gates, obtain clean cumulative exact-head review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
+## 2026-09-02 - backend/data seam - Required verbatim coordinate strings
+
+**Changed:** Cumulative review found that the bounded ASCII coordinate parser still called `strip()`, accepting whitespace-padded values outside its stated exact grammar. It now validates the source string verbatim. Leading/trailing ASCII or non-ASCII whitespace, Unicode numerals, booleans, floats, malformed strings and oversized digit strings all raise `SourceContractError`; canonical signed ASCII digit strings and JSON integers remain supported.
+
+The official recogniser docstring no longer repeats the repaired bare-`int()` coordinate examples. It now distinguishes the strict coordinate seam from the still-lossy, separately scoped auction amount alias path.
+
+**Gates:** Focused Ruff, strict mypy, Adapter contracts and the draft-feed suite pass. Full Code/Adapter gates and fresh cumulative review remain to run on the final commit.
+
+**Could not verify:** No populated live `getDraftPicks` payload establishes its coordinate runtime type. Hosted PostgreSQL remains outstanding. Auction amount alias normalization is unchanged and remains outside this coordinate-focused correction.
+
+**Next:** Commit this append, rerun complete gates, obtain clean cumulative review, reconcile any remote advance, push normally, wait for exact-head hosted checks, and merge PR #148 only while clean. Do not touch PR #150.
+
+---
+
 ## 2026-09-02 - data-engineer - Populated the 2022-23 direct-ledger support season
 
 **Changed:** Populated the one direct-observation support season missing from
@@ -33191,3 +33496,54 @@ participation outcome marginal, or model output was produced.
 **Next:** Push and freeze the exact receipt-documentation head, verify
 local/remote/PR identity, obtain a fresh cumulative independent review, and
 leave PR #149 open and unmerged.
+
+
+---
+
+## 2026-09-02 - data-engineer - Reconciled support-ledger proof after PR #148
+
+**Changed:** Merged new `origin/main` at exact PR #148 merge commit
+`a540ee1d0351ad8a9d2fe01684ae1fd74b3dcc15` into PR #149 without rebasing or
+force-updating its published history. The only content conflict was the expected
+append-only `docs/handoff.md` collision. The resolution uses the complete new
+main blob as a byte-for-byte prefix, including its 149 inherited CR bytes, then
+appends PR #149's complete 15,127-byte suffix from pre-merge head
+`e29330266823bc0944b948032d427100b8339b75`. The merged PR #148 entry and every
+PR #149 data-engineer entry occur exactly once.
+
+`docs/backlog.md` merged semantically rather than by choosing either stale
+header: the finished file recounts 192 items as 72 done, zero blocked, and 120
+pending. PR #148's merged draft-board truth remains intact. The narrow
+`participation-ledger-2022-23-support` item remains done and
+`participation-opportunity-coverage` still depends on it; no opportunity
+classification, direct outcome marginal, or model work was introduced.
+
+The replay implementation, committed census, and off-repository artifacts are
+unchanged. Exact proof receipt
+`participation-ledger-2022-23-offline-replay-proof-863dffb-20260902T075224Z.json`
+remains 10,854 bytes at SHA-256
+`f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`,
+naming implementation `863dffb41e3d2cd60ba0bf7d3b98cf59f12df0e2`, script blob
+`d81ed7f5b5a14f2ec377c05f7adc99667afa884e14f7f9d14714712afb23bafb`,
+and manifest
+`e1f0ce01578723c6ed8cb1f5c7cbde9cc5dcc09e79ac5c20f3368e0722b25a4a`.
+The active and preserved stores retain SHA-256
+`93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a` and
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
+
+Local post-reconciliation gates passed: backend and repository-script
+lint/format, strict mypy over 234 source files, 2,448 backend tests with one
+skip, 629 offline Adapter contracts, 37 live-smoke tests with four explicit
+skips, an empty SQLite migration through revision `0023`, backlog graph,
+tracked-file secret scan, document terminators, and conflict-marker checks.
+
+**Could not verify:** Hosted checks and fresh independent cumulative review had
+not run against the eventual merge-reconciliation commit when this entry was
+written. The database, raw captures, logs, manifest, and receipts remain
+off-repository operator-machine artifacts. PR #150 was not modified or
+reconciled; its stacked branch must absorb merged main independently after this
+PR lands.
+
+**Next:** Commit and push the non-rewriting reconciliation only if the remote PR
+head still equals `e29330266823bc0944b948032d427100b8339b75`, then obtain fresh
+cumulative exact-head review and hosted checks before delivery.

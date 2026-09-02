@@ -915,6 +915,16 @@ def _instant_from(
     overall_pick = _as_int(_first(record, "overall_pick"))
     round_number = _as_int(_first(record, "round_number"))
     pick_in_round = _as_int(_first(record, "pick_in_round"))
+    coordinate_unreadable = kind is InstantKind.SELECTION and any(
+        _first(record, field) is not None and value is None
+        for field, value in (
+            ("overall_pick", overall_pick),
+            ("round_number", round_number),
+            ("pick_in_round", pick_in_round),
+        )
+    )
+    if skipped_reason is None and coordinate_unreadable:
+        skipped_reason = "draft_coordinate_unreadable"
 
     if kind is InstantKind.SELECTION:
         amount = None
@@ -1330,30 +1340,24 @@ def recognise_official_draft_picks(
     that" without noticing the argument held on one path only; if you are about
     to write a fourth, name the path.
 
-    **What this docstring used to say, and why it was wrong.** It justified the
-    weakness with "it can afford to be, because the shape is already typed by
-    ``parse_draft_picks`` rather than guessed from an arbitrary JSON block".
-    Round 8 falsified that by execution. Being typed by that parser is not a
-    safety property, because the parser *normalises before this reader sees
-    anything*: it converts with a bare ``int()``/``float()``/``str()`` and
-    selects aliases with a truthy ``or`` chain. Measured, on the real chain::
+    **What this docstring used to say, and what remains true.** It justified
+    the weakness with "the shape is already typed by ``parse_draft_picks``".
+    Round 8 falsified that by execution: the parser normalised coordinates with
+    bare ``int()`` and truthy aliases before this reader could validate them.
+    That coordinate seam is now strict. Supplied round/pick/overall values must
+    be bounded ASCII exact integers; malformed, fractional, non-ASCII and
+    whitespace-padded forms fail at the adapter boundary, while zero is
+    preserved for this recogniser to refuse as non-positive.
 
-        {"overallPick": 1.9}              -> overall_pick=1     (bridge refuses)
-        {"overallPick": "1_0"}            -> overall_pick=10    (bridge refuses)
-        {"overallPick": 0, "overall": 3}  -> overall_pick=3     (bridge refuses)
-        {"amount": 0, "bid": 10}          -> amount=10.0        (bridge refuses)
+    Typing is still not a general safety property. Auction amount aliases retain
+    the older lossy path::
 
-    Every one of those is *already* a plain, in-range, exactly-typed value by
-    the time the coercers above run, so they pass — and they pass **because**
-    the damage was done upstream, not in spite of it. The round-7 fix that
-    routed every field through the coercers is therefore real but bounded: it
-    closes the asymmetry at the typed-dataclass layer, and **not** across the
-    raw source. The coercers cannot recover information that no longer exists.
+        {"amount": 0, "bid": 10} -> amount=10.0
 
-    That defect lives in
-    :mod:`hoops_gm.ingest.fantrax_official.parsers`, which this unit does not
-    own, and it is filed rather than patched here. **Do not add a "the parser
-    validates that" clause to this docstring.** It does not.
+    That separate amount defect remains in
+    :mod:`hoops_gm.ingest.fantrax_official.parsers`. The coercers here also
+    remain necessary for direct typed callers and storage bounds; neither claim
+    is replaced by the adapter's raw-coordinate grammar.
     """
     anchor_failure = context.anchor_failure()
     if anchor_failure is not None:
@@ -1433,6 +1437,11 @@ def recognise_official_draft_picks(
                 if pick.player_id is not None or pick.player_name is not None
                 else "record_names_no_player"
             )
+        elif kind is InstantKind.SELECTION and any(field in _ORDINAL_FIELDS for field in lost):
+            skipped_reason = "draft_coordinate_unreadable"
+            # A permanently refused record must not enter identity matching.
+            player_external_id = None
+            player_label = None
         # ``parse_draft_picks`` fills the ordinals *and* the amount from the
         # same row unconditionally, so an auction league's own results are the
         # expected shape that violates the storage CHECK. Conform to the kind
@@ -1507,9 +1516,11 @@ def recognise_official_draft_picks(
             )
         )
     if unreadable:
-        # Not ``rejected``: these picks were still recorded, minus a field. The
-        # count exists so "the board shows no price for that sale" has an
-        # answer other than "the source did not send one".
+        # Not an artifact-level ``rejected``: each record is still stored. A
+        # refused identity or coordinate is stored as a permanent skip with its
+        # player fields withheld; a nonessential field may instead be dropped.
+        # The count says the source supplied something this reader could not
+        # represent rather than pretending it was absent upstream.
         unrecognised.append(
             UnrecognisedShape(
                 keys=tuple(sorted(unreadable_fields)),
@@ -1594,8 +1605,9 @@ def board_locator(seat: int, round_number: int, pick_in_round: int) -> str:
     The board's own coordinates: the column, and the cell's ``round-pick``
     ``<mark>``. A path into the artifact, exactly as an RPC locator is, and the
     locator remains a path into the artifact; ``source_seat`` also stores the
-    column explicitly so API consumers do not have to parse this string. Neither
-    is a mapping to one of our ``draft_participants`` rows.
+    column explicitly so API consumers do not have to parse this string. The
+    recogniser itself makes no participant mapping; the feed may resolve a
+    complete binding only under the exact evidence profile frozen on the draft.
 
     Comfortably inside ``MAX_LOCATOR_CHARS``: a 99-seat, 999-round board renders
     to 27 characters.
@@ -1640,8 +1652,10 @@ def recognise_board_snapshot(
       board carries no team id anywhere -- ``draftTeamId`` and ``cellTeamId`` are Fantrax console
       vocabulary and appear nowhere in the markup. The column ordinal is stored
       as ``source_seat`` and is not assumed to equal
-      :class:`DraftParticipant.team_slot`. ``seat_name`` is retained only as a
-      mutable source label.
+      :class:`DraftParticipant.team_slot`. A later feed pass may resolve an
+      explicit frozen source-seat binding only when the draft also freezes the
+      exact applicable evidence profile; this recogniser infers neither.
+      ``seat_name`` is retained only as a mutable source label.
 
     **An auction board is refused by name rather than guessed at.** Every byte
     of evidence under ADR-020 is one football snake draft. An auction board may
@@ -1732,9 +1746,10 @@ def recognise_board_snapshot(
         "Read from the rendered board, not from an RPC body. Transport stays "
         "BRIDGE_CAPTURE (ADR-020 decision 1) so that two readings off one pipe "
         "cannot look like two pipes; the distinction is the recogniser name.",
-        "The board carries no Fantrax team id. Its column is stored only as "
-        "source_seat; the mutable seat_name is evidence for display and neither "
-        "is matched to DraftParticipant.",
+        "The board carries no Fantrax team id. Its column is stored as source_seat; "
+        "the mutable seat_name is display evidence and is never matched to a "
+        "DraftParticipant. Participant attribution, when available, requires both "
+        "the draft's exact frozen evidence profile and its explicit source-seat binding.",
     ]
     if reading.truncated:
         # A cut that lands past the grid yields a perfectly good board, which is

@@ -47,7 +47,13 @@ from hoops_gm.db.models.draft_feed import (
     DraftSourceBoardReading,
     DraftSourceBoardState,
 )
-from hoops_gm.db.models.enums import DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import (
+    DraftFeedInstantKind,
+    DraftFeedTransport,
+    DraftSourceBoardProfile,
+    DraftToolUsage,
+    DraftType,
+)
 from hoops_gm.db.models.league import FantasyTeam, League
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed import service as feed_service
@@ -79,6 +85,7 @@ NOW = datetime(2026, 10, 18, 23, 14, tzinfo=UTC)
 
 SEATS = 12
 ROUNDS = 18
+PROFILE = DraftSourceBoardProfile.FANTRAX_FOOTBALL_SNAKE_V1
 TOTAL_PICKS = SEATS * ROUNDS  # 216
 EARLY_PICKS = 7
 SHORT_ROUNDS = 14
@@ -180,7 +187,13 @@ def _league(
     return league
 
 
-def _draft(session: Session, league: League) -> Draft:
+def _draft(
+    session: Session,
+    league: League,
+    *,
+    source_seats: tuple[int, ...] | None = None,
+    source_board_profile: DraftSourceBoardProfile | None = None,
+) -> Draft:
     teams = []
     for index in range(1, SEATS + 1):
         external = f"t{index}"
@@ -193,9 +206,11 @@ def _draft(session: Session, league: League) -> Draft:
         league=league,
         name="board feed",
         tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=source_board_profile,
         participants=[
             draft_service.ParticipantSpec(
                 team_slot=index,
+                source_seat=None if source_seats is None else source_seats[index - 1],
                 display_name=f"Seat {index}",
                 is_owner=index == 1,
                 fantasy_team_id=team.id,
@@ -205,6 +220,27 @@ def _draft(session: Session, league: League) -> Draft:
     )
     session.flush()
     return draft
+
+
+def linear_board(html: str) -> str:
+    """Turn the recorded coordinate grid linear without inventing source markup."""
+
+    def replace_coordinate(match: re.Match[str]) -> str:
+        round_number = int(match.group("round"))
+        pick_in_round = int(match.group("pick"))
+        if round_number % 2:
+            return match.group(0)
+        linear_pick = SEATS + 1 - pick_in_round
+        return f"{match.group('prefix')}{round_number}-{linear_pick}{match.group('suffix')}"
+
+    transformed = re.sub(
+        r"(?P<prefix><mark[^>]*>\s*)(?P<round>\d+)-(?P<pick>\d+)(?P<suffix>\s*</mark>)",
+        replace_coordinate,
+        html,
+    )
+    reading = parse_draft_board(transformed, captured_at=NOW)
+    assert reading.layout == "linear"
+    return transformed
 
 
 def _context(
@@ -255,6 +291,38 @@ def _snapshot(
     session.add(row)
     session.flush()
     return row
+
+
+def _persist_recognised_board_artifact(
+    session: Session,
+    draft: Draft,
+    *,
+    artifact_key: str,
+    occupied_slots: list[dict[str, int | str | None]],
+) -> int:
+    """Seed the post-recognition boundary for apply-only race/coordinate tests."""
+    payload = _snapshot(
+        session,
+        html="<html>apply-layer fixture</html>",
+        dedupe_key=f"GET:apply-layer:{artifact_key}",
+    )
+    session.add(
+        DraftSourceBoardReading(
+            draft_id=draft.id,
+            bridge_payload_id=payload.id,
+            artifact_key=artifact_key,
+            recogniser=BOARD_RECOGNISER,
+            observed_at=NOW,
+            layout="snake",
+            seat_count=draft.team_count,
+            round_count=draft.roster_size,
+            picks_made=len(occupied_slots),
+            seat_labels=[f"Seat {seat}" for seat in range(1, draft.team_count + 1)],
+            occupied_slots=occupied_slots,
+        )
+    )
+    session.flush()
+    return payload.id
 
 
 def _reading(
@@ -516,8 +584,555 @@ def test_a_board_pick_preserves_source_seat_without_participant_attribution(
 
     status = feed_service.feed_status(session, draft, now=NOW)
     assert dict(status.skipped) == {"source_board_evidence_only": EARLY_PICKS}
+    assert dict(status.unattributed_skipped) == {"source_board_evidence_only": EARLY_PICKS}, (
+        "A source column is not a participant attribution without the frozen binding."
+    )
+    assert all(item.total == 0 for item in status.skipped_by_participant)
     assert status.applied_count == 0
     assert status.last_sequence == 0
+
+
+def test_a_bound_null_profile_snake_stays_source_evidence_only(
+    session: Session,
+) -> None:
+    """A participant binding is not evidence that this source applies."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    _snapshot(session, html=load_early_with_distinct_names(), dedupe_key="GET:bound-null:1")
+
+    feed_service.ingest_bridge(session, draft, _context())
+
+    rows = _board_rows(session, draft)
+    assert all(row.participant_id is None for row in rows)
+    assert {row.skipped_reason for row in rows} == {"source_board_evidence_only"}
+    assert feed_service.apply_observations(session, draft, now=NOW).applied == ()
+    assert draft_service.load_events(session, draft) == []
+
+
+def test_a_pending_board_row_cannot_bypass_a_null_profile(
+    session: Session,
+) -> None:
+    """Apply rechecks applicability instead of trusting an already-stored row."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    row = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:pre-profile",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="pre-profile-player",
+        overall_pick=1,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add(row)
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert outcome.skipped == ((row.id, "source_board_evidence_only"),)
+    assert row.participant_id is None
+    assert row.skipped_reason == "source_board_evidence_only"
+    assert draft_service.load_events(session, draft) == []
+
+
+def test_a_profiled_board_row_requires_successful_reading_provenance(
+    session: Session,
+) -> None:
+    """A caller cannot manufacture an authoritative row after recognition."""
+    league = _league(session)
+    draft = _draft(
+        session,
+        league,
+        source_seats=tuple(range(1, SEATS + 1)),
+        source_board_profile=PROFILE,
+    )
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    row = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:no-reading",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="no-reading-player",
+        overall_pick=1,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add(row)
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert row.skipped_reason == "source_board_evidence_only"
+    assert row.participant_id is None
+    assert draft_service.load_events(session, draft) == []
+
+
+@pytest.mark.parametrize(
+    ("transport", "overall_pick"),
+    [
+        (DraftFeedTransport.OFFICIAL_HTTP, 1),
+        (DraftFeedTransport.BRIDGE_CAPTURE, None),
+        (DraftFeedTransport.BRIDGE_CAPTURE, TOTAL_PICKS + 1),
+    ],
+    ids=["wrong_transport", "missing_overall", "overall_out_of_frozen_range"],
+)
+def test_malformed_profiled_board_rows_neither_apply_nor_corroborate_rpc(
+    session: Session,
+    transport: DraftFeedTransport,
+    overall_pick: int | None,
+) -> None:
+    league = _league(session)
+    draft = _draft(
+        session,
+        league,
+        source_seats=tuple(range(1, SEATS + 1)),
+        source_board_profile=PROFILE,
+    )
+    participant = next(seat for seat in draft.participants if seat.source_seat == 1)
+    payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:malformed",
+        occupied_slots=[
+            {
+                "source_seat": 1,
+                "round_number": 1,
+                "pick_in_round": 1,
+                "player_label": "Nikola Jokic",
+                "player_external_id": "same-player",
+            }
+        ],
+    )
+    rpc = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.OFFICIAL_HTTP,
+        artifact_key="official:valid-profiled",
+        locator="currentDraftPicks[0]",
+        recogniser="fxea_getDraftPicks_v1",
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+    )
+    board = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=transport,
+        artifact_key="board:malformed",
+        locator="board[1].1-1",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        bridge_payload_id=payload_id,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=1,
+        participant_id=participant.id,
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+        overall_pick=overall_pick,
+        round_number=1,
+        pick_in_round=1,
+    )
+    session.add_all([rpc, board])
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert len(outcome.applied) == 1
+    assert outcome.applied[0].observation_id == rpc.id
+    assert board.skipped_reason == "source_board_evidence_only"
+    status = feed_service.feed_status(session, draft, now=NOW)
+    assert status.reconciliation is not None
+    assert status.reconciliation.witnessed_by_two_transports == 0
+    assert status.reconciliation.agreements == ()
+
+
+def test_an_ineligible_board_row_cannot_contradict_a_valid_rpc_pick(
+    session: Session,
+) -> None:
+    """Applicability is decided before board rows enter reconciliation."""
+    league = _league(session)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    by_source = {seat.source_seat: seat.id for seat in draft.participants}
+    rpc = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.OFFICIAL_HTTP,
+        artifact_key="official:valid",
+        locator="currentDraftPicks[0]",
+        recogniser="fxea_getDraftPicks_v1",
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        participant_id=by_source[1],
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+    )
+    board = DraftFeedObservation(
+        draft_id=draft.id,
+        transport=DraftFeedTransport.BRIDGE_CAPTURE,
+        artifact_key="board:ineligible",
+        locator="board[2].1-2",
+        recogniser=BOARD_RECOGNISER,
+        observed_at=NOW,
+        kind=DraftFeedInstantKind.SELECTION,
+        source_seat=2,
+        participant_id=by_source[2],
+        player_label="Nikola Jokic",
+        player_external_id="same-player",
+        overall_pick=2,
+        round_number=1,
+        pick_in_round=2,
+    )
+    session.add_all([rpc, board])
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert len(outcome.applied) == 1
+    assert outcome.applied[0].observation_id == rpc.id
+    assert draft_service.load_events(session, draft)[0].participant_id == by_source[1]
+    assert board.skipped_reason == "source_board_evidence_only"
+    assert board.participant_id is None
+    assert rpc.blocked_reason is None
+    status = feed_service.feed_status(session, draft, now=NOW)
+    assert status.reconciliation is not None
+    assert status.reconciliation.witnessed_by_two_transports == 0
+    assert status.reconciliation.agreements == ()
+
+
+def test_a_recorded_board_applies_through_a_deliberately_rotated_source_binding(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """The old source-seat-equals-team-slot assumption sends pick one to the wrong team."""
+    league = _league(session)
+    source_seats = (*range(2, SEATS + 1), 1)
+    draft = _draft(
+        session,
+        league,
+        source_seats=source_seats,
+        source_board_profile=PROFILE,
+    )
+    _snapshot(session, html=load_early_with_distinct_names(), dedupe_key="GET:rotated:1")
+    session.commit()
+
+    response = client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": True})
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert len(body["applied"]["events"]) == EARLY_PICKS
+    assert body["applied"]["halted"] is None
+    assert body["status"]["skipped"] == {}
+    assert body["status"]["unattributed_skipped"] == {}
+    assert all(item["total"] == 0 for item in body["status"]["skipped_by_participant"])
+
+    participants = {
+        participant["source_seat"]: participant
+        for participant in client.get(f"/api/v1/drafts/{draft.id}").json()["participants"]
+    }
+    assert participants[1]["team_slot"] == SEATS
+    assert participants[1]["team_slot"] != participants[1]["source_seat"]
+    assert participants[1]["holdings"][0]["player_label"] == "Nikola Jokic"
+
+    events = client.get(f"/api/v1/drafts/{draft.id}/events").json()["events"]
+    assert [event["participant_id"] for event in events] == [
+        participants[source_seat]["id"] for source_seat in range(1, EARLY_PICKS + 1)
+    ]
+
+    replay = client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": True})
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["applied"]["events"] == []
+    assert client.get(f"/api/v1/drafts/{draft.id}/events").json()["last_sequence"] == EARLY_PICKS
+
+
+def test_a_bound_linear_board_stays_evidence_only_without_an_applicable_profile(
+    client: TestClient,
+    session: Session,
+) -> None:
+    league = _league(session, draft_type=DraftType.LINEAR)
+    draft = _draft(session, league, source_seats=tuple(range(1, SEATS + 1)))
+    _snapshot(
+        session,
+        html=linear_board(load_early_with_distinct_names()),
+        dedupe_key="GET:linear:1",
+    )
+    session.commit()
+
+    response = client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": True})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["applied"]["events"] == []
+    assert body["applied"]["halted"] is None
+    assert body["status"]["applied_count"] == 0
+    assert body["status"]["skipped"] == {"source_board_evidence_only": EARLY_PICKS}
+
+
+def test_a_changed_historical_board_cell_cannot_be_appended_as_the_next_pick(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """A rotated participant recurring on the clock cannot launder an old coordinate."""
+    league = League(
+        fantrax_league_id=LEAGUE,
+        name="three-seat recurrence",
+        season="2026-27",
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        auction_budget=None,
+    )
+    session.add(league)
+    session.flush()
+    draft = draft_service.create_draft(
+        session,
+        league=league,
+        name="three-seat recurrence",
+        tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=PROFILE,
+        participants=[
+            draft_service.ParticipantSpec(
+                team_slot=team_slot,
+                source_seat=source_seat,
+                display_name=f"Team {team_slot}",
+            )
+            for team_slot, source_seat in [(1, 2), (2, 3), (3, 1)]
+        ],
+    )
+    by_source = {participant.source_seat: participant.id for participant in draft.participants}
+    names = ["Nikola Jokic", "Anthony Edwards", "Tyrese Haliburton"]
+    original_slots: list[dict[str, int | str | None]] = [
+        {
+            "source_seat": source_seat,
+            "round_number": 1,
+            "pick_in_round": source_seat,
+            "player_label": names[source_seat - 1],
+            "player_external_id": f"original-{source_seat}",
+        }
+        for source_seat in range(1, 4)
+    ]
+    original_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:original",
+        occupied_slots=original_slots,
+    )
+    session.add_all(
+        [
+            DraftFeedObservation(
+                draft_id=draft.id,
+                transport=DraftFeedTransport.BRIDGE_CAPTURE,
+                artifact_key="board:original",
+                locator=f"board[{source_seat}].1-{source_seat}",
+                recogniser=BOARD_RECOGNISER,
+                observed_at=NOW,
+                bridge_payload_id=original_payload_id,
+                kind="selection",
+                source_seat=source_seat,
+                participant_id=by_source[source_seat],
+                player_label=names[source_seat - 1],
+                player_external_id=f"original-{source_seat}",
+                overall_pick=source_seat,
+                round_number=1,
+                pick_in_round=source_seat,
+            )
+            for source_seat in range(1, 4)
+        ]
+    )
+    session.flush()
+    first = feed_service.apply_observations(session, draft, now=NOW)
+    assert len(first.applied) == 3
+
+    # In a three-team snake, source seat 3 owns both overall picks 3 and 4.
+    # Without an exact coordinate gate this changed historical cell passes the
+    # participant-only turn check and is appended as overall pick 4.
+    changed_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:changed",
+        occupied_slots=[
+            {
+                "source_seat": 3,
+                "round_number": 1,
+                "pick_in_round": 3,
+                "player_label": "Shai Gilgeous-Alexander",
+                "player_external_id": "changed-player-id",
+            }
+        ],
+    )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="board:changed",
+            locator="board[3].1-3",
+            recogniser=BOARD_RECOGNISER,
+            observed_at=NOW + timedelta(seconds=30),
+            bridge_payload_id=changed_payload_id,
+            kind="selection",
+            source_seat=3,
+            participant_id=by_source[3],
+            player_label="Shai Gilgeous-Alexander",
+            player_external_id="changed-player-id",
+            overall_pick=3,
+            round_number=1,
+            pick_in_round=3,
+        )
+    )
+    session.commit()
+
+    second = client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": True})
+
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["applied"]["events"] == []
+    assert body["applied"]["halted"] == "draft_pick_coordinate_mismatch"
+    assert body["last_sequence"] == 3
+    assert body["status"]["pending_count"] == 1
+    assert any(
+        reason.startswith("draft_pick_coordinate_mismatch:") for reason in body["status"]["blocked"]
+    )
+    assert body["status"]["skipped"] == {}, "The blocked row stays retryable, not burned."
+    events = client.get(f"/api/v1/drafts/{draft.id}/events").json()["events"]
+    assert "Shai Gilgeous-Alexander" not in [event["player_label"] for event in events]
+
+
+def test_a_tail_void_between_coordinate_check_and_append_forces_revalidation(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same source seat recurring in a snake cannot hide a log-version race."""
+    league = League(
+        fantrax_league_id=LEAGUE,
+        name="coordinate race",
+        season="2026-27",
+        draft_type=DraftType.SNAKE,
+        team_count=3,
+        roster_size=2,
+        auction_budget=None,
+    )
+    session.add(league)
+    session.flush()
+    draft = draft_service.create_draft(
+        session,
+        league=league,
+        name="coordinate race",
+        tool_usage=DraftToolUsage.INSTRUMENTED,
+        source_board_profile=PROFILE,
+        participants=[
+            draft_service.ParticipantSpec(
+                team_slot=team_slot,
+                source_seat=source_seat,
+                display_name=f"Team {team_slot}",
+            )
+            for team_slot, source_seat in [(1, 2), (2, 3), (3, 1)]
+        ],
+    )
+    by_source = {participant.source_seat: participant.id for participant in draft.participants}
+    for source_seat, player in enumerate(
+        ["Nikola Jokic", "Anthony Edwards", "Tyrese Haliburton"],
+        start=1,
+    ):
+        draft_service.record_pick(
+            session,
+            draft,
+            participant_id=by_source[source_seat],
+            player_label=player,
+        )
+    pick_four_payload_id = _persist_recognised_board_artifact(
+        session,
+        draft,
+        artifact_key="board:pick-four",
+        occupied_slots=[
+            {
+                "source_seat": 3,
+                "round_number": 2,
+                "pick_in_round": 1,
+                "player_label": "Shai Gilgeous-Alexander",
+                "player_external_id": "pick-four",
+            }
+        ],
+    )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="board:pick-four",
+            locator="board[3].2-1",
+            recogniser=BOARD_RECOGNISER,
+            observed_at=NOW,
+            bridge_payload_id=pick_four_payload_id,
+            kind="selection",
+            source_seat=3,
+            participant_id=by_source[3],
+            player_label="Shai Gilgeous-Alexander",
+            player_external_id="pick-four",
+            overall_pick=4,
+            round_number=2,
+            pick_in_round=1,
+        )
+    )
+    session.flush()
+
+    original_record_pick = draft_service.record_pick
+    raced = False
+
+    def record_pick_after_tail_void(
+        session_arg: Session,
+        draft_arg: Draft,
+        *,
+        participant_id: int,
+        player_label: str,
+        player_id: int | None = None,
+        occurred_at: datetime | None = None,
+        note: str | None = None,
+        expected_last_sequence: int | None = None,
+    ) -> object:
+        nonlocal raced
+        if not raced:
+            raced = True
+            assert expected_last_sequence == 3
+            draft_service.record_void(session_arg, draft_arg, supersedes_sequence=3)
+        return original_record_pick(
+            session_arg,
+            draft_arg,
+            participant_id=participant_id,
+            player_label=player_label,
+            player_id=player_id,
+            occurred_at=occurred_at,
+            note=note,
+            expected_last_sequence=expected_last_sequence,
+        )
+
+    monkeypatch.setattr(draft_service, "record_pick", record_pick_after_tail_void)
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert raced is True, "The test must enter the interval between coordinate check and append."
+    assert outcome.applied == ()
+    assert outcome.halted == "draft_sequence_conflict"
+    assert outcome.last_sequence == 4, "The concurrent void is the new log version."
+    assert [event.event_type.value for event in draft_service.load_events(session, draft)] == [
+        "pick",
+        "pick",
+        "pick",
+        "void",
+    ]
+    assert feed_service.feed_status(session, draft, now=NOW).pending_count == 1
 
 
 def test_an_auction_board_is_refused_by_name_rather_than_guessed_at() -> None:

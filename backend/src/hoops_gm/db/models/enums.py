@@ -285,6 +285,17 @@ class DraftType(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
+class DraftSourceBoardProfile(enum.StrEnum):
+    """Recorded evidence boundary for authoritative rendered-board application.
+
+    Each member names one source corpus whose applicability was independently
+    established. Adding another member therefore requires its own migration,
+    fixture contract, and review; it is not a generic feature switch.
+    """
+
+    FANTRAX_FOOTBALL_SNAKE_V1 = "fantrax_football_snake_v1"
+
+
 class DraftStatus(enum.StrEnum):
     """Where a recorded draft is in its own life.
 

@@ -17,14 +17,16 @@ Fantrax anything but a GET.
 provenance of.
 
 **The one decision made here, stated so it can be argued with.** An observed
-RPC selection with an independently anchored team id is appended to the log
-automatically. It is not held for
-confirmation. The unit exists because the owner cannot both think about value
-and be a keyboard at 7:14pm, and a feed that requires a click per pick is a
-keyboard with extra steps. The safety of that is not "we trust the recogniser";
-it is that the log is append-only and correctable by ``void``, that every
-appended event is traceable back to the exact bytes that caused it, and that a
-wrong claim is refused by ``draft.state``'s derivation before it is written.
+RPC selection with an independently anchored team id, or a rendered selection
+whose mock snake draft freezes the exact established evidence profile and a
+complete source-seat binding, is appended to the log automatically. It is not
+held for confirmation. The unit exists because the owner cannot both think
+about value and be a keyboard at 7:14pm, and a feed that requires a click per
+pick is a keyboard with extra steps. The safety of that is not "we trust the
+recogniser"; it is that the log is append-only and correctable by ``void``, that
+every appended event is traceable back to the exact source artifact that caused
+it, and that a wrong claim is refused by ``draft.state``'s derivation before it
+is written.
 
 **What is deliberately not automatic.** A sale is appended too, but a
 *disagreement* between the two sources never is: it is reported and left. And
@@ -32,10 +34,11 @@ an ordered draft stops applying at the first out-of-turn pick rather than
 skipping it, because skipping desynchronises every subsequent pick and the
 owner would find out at pick 30 rather than pick 8.
 
-Rendered-board selections are the explicit exception. Their column ordinal has
-no established binding to ``DraftParticipant``, so they are stored as
-``source_board_evidence_only`` and exposed through :func:`source_board_evidence`;
-they never enter the application queue.
+Rendered-board selections enter the same application queue only when the draft
+froze ``fantrax_football_snake_v1`` and a complete source-seat binding at
+creation. Binding alone is never applicability evidence. Every other draft
+retains ``source_board_evidence_only`` behavior after parsing; auction or
+unrecognised layouts are still refused before observations exist.
 """
 
 from __future__ import annotations
@@ -58,9 +61,11 @@ from hoops_gm.db.models import (
     DraftFeedObservation,
     DraftFeedTransport,
     DraftParticipant,
+    DraftSourceBoardProfile,
     DraftSourceBoardReading,
     DraftSourceBoardState,
     DraftStatus,
+    DraftType,
     FantasyTeam,
     League,
     RefreshArtifactType,
@@ -95,6 +100,7 @@ from hoops_gm.draft.feed.reconcile import (
     reconcile,
     values_disagree,
 )
+from hoops_gm.draft.formats import DraftFormatError, SnakeDraftFormat
 from hoops_gm.draft.state import DraftLogError
 from hoops_gm.identity.names import normalize_key
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
@@ -371,7 +377,8 @@ def build_context(session: Session, draft: Draft) -> RecognitionContext | str:
     Everything here is read from our own tables. ``team_external_ids`` comes
     from ``fantasy_teams.fantrax_team_id`` for the seats *this draft* declared.
     RPC recognition refuses when that set is empty; rendered-board recognition
-    does not need it because it publishes source columns without attribution.
+    does not need it because participant attribution, when applicable, comes
+    from the draft's exact frozen evidence profile and source-seat binding.
     """
     league = session.get(League, draft.league_id)
     if league is None:  # pragma: no cover - FK makes this unreachable
@@ -403,6 +410,146 @@ def _participant_by_external_id(session: Session, draft: Draft) -> dict[str, int
     return {str(external): participant_id for external, participant_id in rows if external}
 
 
+def _participant_by_source_seat(session: Session, draft: Draft) -> dict[int, int] | None:
+    """The complete frozen board-column binding, or no usable binding.
+
+    Creation admits only complete or absent bindings. The shape is checked again
+    here so a partially hand-edited database fails closed as evidence-only rather
+    than applying whichever subset happened to remain.
+    """
+    rows = session.execute(
+        select(DraftParticipant.source_seat, DraftParticipant.id)
+        .where(DraftParticipant.draft_id == draft.id)
+        .order_by(DraftParticipant.team_slot)
+    ).all()
+    if all(source_seat is None for source_seat, _participant_id in rows):
+        return None
+    if (
+        len(rows) != draft.team_count
+        or any(source_seat is None for source_seat, _participant_id in rows)
+        or sorted(source_seat for source_seat, _participant_id in rows if source_seat is not None)
+        != list(range(1, draft.team_count + 1))
+    ):
+        logger.error("draft_feed.source_seat_binding_invalid", extra={"draft_id": draft.id})
+        return None
+    return {
+        source_seat: participant_id
+        for source_seat, participant_id in rows
+        if source_seat is not None
+    }
+
+
+def _source_board_application_participants(session: Session, draft: Draft) -> dict[int, int] | None:
+    """Participants only when the draft exactly matches the established corpus."""
+    if (
+        draft.source_board_profile is not DraftSourceBoardProfile.FANTRAX_FOOTBALL_SNAKE_V1
+        or not draft.is_mock
+        or draft.draft_type is not DraftType.SNAKE
+    ):
+        return None
+    return _participant_by_source_seat(session, draft)
+
+
+type _RecognisedBoardSlot = tuple[
+    str,
+    int,
+    int,
+    int,
+    int,
+    str | None,
+    str | None,
+]
+
+
+def _recognised_board_slots(session: Session, draft: Draft) -> set[_RecognisedBoardSlot]:
+    """Exact observation facts backed by a successful compatible board reading."""
+    readings = session.scalars(
+        select(DraftSourceBoardReading).where(
+            DraftSourceBoardReading.draft_id == draft.id,
+            DraftSourceBoardReading.recogniser == BOARD_RECOGNISER,
+            DraftSourceBoardReading.layout == "snake",
+            DraftSourceBoardReading.seat_count == draft.team_count,
+            DraftSourceBoardReading.round_count <= draft.roster_size,
+        )
+    ).all()
+    slots: set[_RecognisedBoardSlot] = set()
+    for reading in readings:
+        for raw in reading.occupied_slots:
+            source_seat = raw.get("source_seat")
+            round_number = raw.get("round_number")
+            pick_in_round = raw.get("pick_in_round")
+            if not (
+                isinstance(source_seat, int)
+                and isinstance(round_number, int)
+                and isinstance(pick_in_round, int)
+            ):  # pragma: no cover - _record_board_attempt owns these rows
+                continue
+            player_label = raw.get("player_label")
+            player_external_id = raw.get("player_external_id")
+            slots.add(
+                (
+                    reading.artifact_key,
+                    reading.bridge_payload_id,
+                    source_seat,
+                    round_number,
+                    pick_in_round,
+                    player_label if isinstance(player_label, str) else None,
+                    player_external_id if isinstance(player_external_id, str) else None,
+                )
+            )
+    return slots
+
+
+def _board_row_is_eligible(
+    row: DraftFeedObservation,
+    *,
+    draft: Draft,
+    source_participants: dict[int, int] | None,
+    recognised_slots: set[_RecognisedBoardSlot],
+) -> bool:
+    """Whether a row is RPC evidence or an applicable recognised board fact."""
+    if row.recogniser != BOARD_RECOGNISER and row.source_seat is None:
+        return True
+    if (
+        source_participants is None
+        or row.recogniser != BOARD_RECOGNISER
+        or row.transport is not DraftFeedTransport.BRIDGE_CAPTURE
+        or row.bridge_payload_id is None
+        or row.source_seat is None
+        or row.overall_pick is None
+        or row.round_number is None
+        or row.pick_in_round is None
+        or row.participant_id != source_participants.get(row.source_seat)
+    ):
+        return False
+    draft_format = draft_service.format_from_snapshot(draft)
+    if not isinstance(draft_format, SnakeDraftFormat):
+        return False
+    try:
+        expected = draft_format.pick_at(row.overall_pick)
+    except DraftFormatError:
+        return False
+    if (
+        row.round_number,
+        row.pick_in_round,
+        row.source_seat,
+    ) != (
+        expected.round_number,
+        expected.pick_in_round,
+        expected.team_slot,
+    ):
+        return False
+    return (
+        row.artifact_key,
+        row.bridge_payload_id,
+        row.source_seat,
+        row.round_number,
+        row.pick_in_round,
+        row.player_label,
+        row.player_external_id,
+    ) in recognised_slots
+
+
 def _existing_keys(session: Session, draft: Draft) -> set[tuple[str, str, str]]:
     rows = session.execute(
         select(
@@ -420,6 +567,7 @@ def _store(
     result: RecognitionResult,
     *,
     participants: dict[str, int],
+    source_participants: dict[int, int] | None = None,
     existing: set[tuple[str, str, str]],
     bridge_payload_ids: dict[str, int] | None = None,
     stored_skip_reason: str | None = None,
@@ -457,6 +605,13 @@ def _store(
             already += 1
             continue
         existing.add(key)
+        participant_id = participants.get(instant.team_external_id or "")
+        if (
+            participant_id is None
+            and source_participants is not None
+            and instant.source_seat is not None
+        ):
+            participant_id = source_participants.get(instant.source_seat)
         row = DraftFeedObservation(
             draft_id=draft.id,
             transport=DraftFeedTransport(provenance.transport.value),
@@ -470,7 +625,7 @@ def _store(
             team_external_id=instant.team_external_id,
             source_seat=instant.source_seat,
             source_seat_label=instant.source_seat_label,
-            participant_id=participants.get(instant.team_external_id or ""),
+            participant_id=participant_id,
             player_label=instant.player_label,
             player_external_id=instant.player_external_id,
             overall_pick=instant.overall_pick,
@@ -758,6 +913,7 @@ def ingest_bridge(
     # order is that, but only if it is actually recorded in arrival order.
     rows.reverse()
     participants = _participant_by_external_id(session, draft)
+    source_participants = _source_board_application_participants(session, draft)
     draft_format = draft_service.format_from_snapshot(draft)
     existing = _existing_keys(session, draft)
 
@@ -886,9 +1042,12 @@ def ingest_bridge(
             bridge_payload_ids={
                 instant.provenance.artifact_key: row.id for instant in result.instants
             },
-            # A source column has no established participant binding. Keep the
-            # evidence visible and permanently outside the application queue.
-            stored_skip_reason="source_board_evidence_only",
+            source_participants=source_participants,
+            # A binding identifies participants but is not applicability
+            # evidence. Only the exact frozen profile may enter the apply queue.
+            stored_skip_reason=(
+                None if source_participants is not None else "source_board_evidence_only"
+            ),
         )
         written += stored
         already += seen
@@ -922,10 +1081,16 @@ def ingest_bridge(
             "them parsed as a draft board; only their RPC siblings were read."
         )
     elif snapshots:
+        attribution = (
+            "each column was attributed only through the draft's frozen evidence profile "
+            "and source-seat binding."
+            if source_participants is not None
+            else "no applicable frozen evidence profile and binding exists, so its columns "
+            "remain evidence-only."
+        )
         notes.append(
             f"{boards_read} of {snapshots} page snapshot(s) for this league parsed as "
-            "a draft board. The markup carries no Fantrax team id; each column is "
-            "stored as source_seat and is not attributed to DraftParticipant."
+            f"a draft board. The markup carries no Fantrax team id; {attribution}"
         )
     if sale_instants:
         # Non-heuristic by construction: conditioned only on a fact already
@@ -1233,12 +1398,11 @@ def _admit(row: DraftFeedObservation) -> _Admitted | str:
     ``no_seat_for_team_external_id`` means the source named a team and we have
     no seat linked to it, which the owner fixes by linking the Fantrax team.
     ``source_named_no_team`` means the reading names nobody to attribute the
-    pick to at all, which he cannot fix, and which is the ordinary state of
-    every rendered-board observation: the Fantrax draft board carries no team id
-    in its markup — ``draftTeamId`` and ``cellTeamId`` are console vocabulary —
-    so the column ordinal is the only seat identity it offers and this unit is
-    not entitled to map that onto one of our participants. Reporting both under
-    one string would send the owner to relink a team that is already linked.
+    pick to at all. That is the state of an unbound rendered-board observation:
+    the markup carries no team id — ``draftTeamId`` and ``cellTeamId`` are
+    console vocabulary — and its column can be resolved only when the draft
+    froze an explicit source-seat binding. Reporting both refusals under one
+    string would send the owner to relink a team that is already linked.
     """
     if row.participant_id is None:
         return (
@@ -1260,10 +1424,13 @@ def _admit(row: DraftFeedObservation) -> _Admitted | str:
 #: These, and only these, are what a second reading has to agree about before
 #: it can be filed as corroboration. The set is deliberately narrower than
 #: :data:`hoops_gm.draft.feed.reconcile._COMPARED_FIELDS`, which compares
-#: everything two readings say: the coordinate fields order the apply pass but
-#: are never passed to the draft service, so a coordinate disagreement cannot
-#: make the board assert anything false about *this* holding, and blocking on
-#: it would strand real picks over a difference the owner can never see.
+#: everything two readings say. Coordinate fields do not become facts on a
+#: holding and therefore remain outside this cross-reading comparison.
+#: Profile-eligible, bound rendered-board rows have a separate, stricter
+#: admission rule below: their full source coordinate must equal the draft's
+#: current next coordinate before ``record_pick`` is called. That check prevents
+#: a changed historical cell from being laundered into a new holding without
+#: pretending the holding stores the source coordinate.
 #:
 #: ``test_the_blocking_facts_are_exactly_what_the_board_is_told`` derives this
 #: set from the call site rather than trusting this comment, so passing a new
@@ -1635,11 +1802,44 @@ def apply_observations(
 
     observations = load_observations(session, draft)
     pending = [row for row in observations if _is_application_candidate(row)]
+    pending.sort(key=_apply_order)
+    source_participants = _source_board_application_participants(session, draft)
+    recognised_slots = _recognised_board_slots(session, draft)
+
+    # Applicability precedes reconciliation. Otherwise an ineligible legacy
+    # board row can contradict and suppress a valid RPC row before being
+    # classified evidence-only.
+    profile_skipped: list[tuple[int, str]] = []
+    eligible_pending: list[DraftFeedObservation] = []
+    for row in pending:
+        if _board_row_is_eligible(
+            row,
+            draft=draft,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        ):
+            eligible_pending.append(row)
+            continue
+        row.participant_id = None
+        row.skipped_reason = "source_board_evidence_only"
+        profile_skipped.append((row.id, "source_board_evidence_only"))
+    pending = eligible_pending
+
     # Identity history. A row that was skipped as a duplicate still carries the
     # sequence it corroborated, so it is evidence about which id landed under
-    # which name -- see :func:`_identity_conflicts`.
-    applied_history = [row for row in observations if row.applied_event_sequence is not None]
-    pending.sort(key=_apply_order)
+    # which name -- see :func:`_identity_conflicts`. Ineligible board history
+    # is source evidence, not participant evidence, and cannot contradict RPC.
+    applied_history = [
+        row
+        for row in observations
+        if row.applied_event_sequence is not None
+        and _board_row_is_eligible(
+            row,
+            draft=draft,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        )
+    ]
 
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
     # fact about *this* run. Unlike the exact retryable skip-code allowlist, a
@@ -1667,13 +1867,17 @@ def apply_observations(
         for row in pending:
             row.blocked_reason = "draft_closed"
         session.flush()
-        return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
+        return ApplyOutcome(
+            skipped=tuple(profile_skipped),
+            halted="draft_closed",
+            last_sequence=state.last_sequence,
+        )
 
     held = _held_keys(state)
     contradicted = _contradicted_keys(pending, held, applied_history)
 
     applied: list[AppliedEvent] = []
-    skipped: list[tuple[int, str]] = []
+    skipped = list(profile_skipped)
     halted: str | None = None
     seen_this_run: set[str] = set()
 
@@ -1715,6 +1919,47 @@ def apply_observations(
             row.skipped_reason = "already_in_log"
             skipped.append((row.id, "already_in_log"))
             continue
+        if (
+            row.kind is InstantKind.SELECTION
+            and state.next_pick is not None
+            and row.participant_id == state.next_pick_participant_id
+        ):
+            observed_coordinate = (
+                row.overall_pick,
+                row.round_number,
+                row.pick_in_round,
+                row.source_seat,
+            )
+            expected_coordinate = (
+                state.next_pick.overall_pick,
+                state.next_pick.round_number,
+                state.next_pick.pick_in_round,
+                state.next_pick.team_slot,
+            )
+            supplied_coordinate_disagrees = any(
+                observed is not None and observed != expected
+                for observed, expected in zip(
+                    observed_coordinate,
+                    expected_coordinate,
+                    strict=True,
+                )
+            )
+            bound_board_coordinate_is_incomplete = row.source_seat is not None and (
+                row.overall_pick is None or row.round_number is None or row.pick_in_round is None
+            )
+            if supplied_coordinate_disagrees or bound_board_coordinate_is_incomplete:
+                # A cumulative board republishes historical cells. A novel
+                # player in one of those cells is a correction or source
+                # defect, not the selection due now. RPC and official reads can
+                # publish the same stale coordinate without a ``source_seat``,
+                # so every supplied selection coordinate is checked; a bound
+                # board additionally requires all four fields.
+                halted = "draft_pick_coordinate_mismatch"
+                row.blocked_reason = (
+                    f"{halted}:expected={expected_coordinate}:observed={observed_coordinate}"
+                )
+                skipped.append((row.id, halted))
+                break
 
         try:
             if row.kind is InstantKind.SALE or row.amount is not None:
@@ -1729,6 +1974,7 @@ def apply_observations(
                     amount=row.amount,
                     player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
+                    expected_last_sequence=state.last_sequence,
                 )
             else:
                 state = draft_service.record_pick(
@@ -1737,10 +1983,11 @@ def apply_observations(
                     participant_id=admitted.participant_id,
                     player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
+                    expected_last_sequence=state.last_sequence,
                 )
         except DraftLogError as error:
             skipped.append((row.id, error.code))
-            if error.code == "draft_pick_out_of_turn":
+            if error.code in {"draft_pick_out_of_turn", "draft_sequence_conflict"}:
                 # Stop rather than skip. Skipping would silently desynchronise
                 # every pick after this one and the owner would find out much
                 # later, which is the worst possible time.
@@ -1750,7 +1997,12 @@ def apply_observations(
                 # than the recovery allowlist: the owner types the missing
                 # earlier pick, re-runs, and this exact row remains pending.
                 halted = error.code
-                row.blocked_reason = error.code
+                if error.code == "draft_sequence_conflict":
+                    # Another worker may have applied this exact observation.
+                    # Refresh before stamping a block onto stale ORM state.
+                    session.refresh(row)
+                    state = draft_service.load_state(session, draft)
+                row.blocked_reason = error.code if row.applied_event_sequence is None else None
                 break
             row.skipped_reason = f"{error.code}: {error}"
             continue
@@ -1788,6 +2040,16 @@ def apply_observations(
 
 
 @dataclass(frozen=True, slots=True)
+class ParticipantSkipped:
+    """Permanent skips attributed to one stable draft participant."""
+
+    participant_id: int
+    team_slot: int
+    total: int
+    reasons: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FeedStatus:
     """Everything the screen needs to say how much it can be trusted."""
 
@@ -1814,6 +2076,8 @@ class FeedStatus:
     #: next local apply. Kept separate from permanent ``skipped`` reasons.
     retryable: tuple[tuple[str, int], ...]
     skipped: tuple[tuple[str, int], ...]
+    skipped_by_participant: tuple[ParticipantSkipped, ...]
+    unattributed_skipped: tuple[tuple[str, int], ...]
     last_sequence: int
     #: Board slots an earlier reading filled and the newest one does not.
     #:
@@ -2195,11 +2459,24 @@ def feed_status(
     context = build_context(session, draft)
     rows = load_observations(session, draft)
     board_readings = load_board_readings(session, draft)
+    source_participants = _source_board_application_participants(session, draft)
+    recognised_slots = _recognised_board_slots(session, draft)
     # A row that names nobody is a recorded refusal, not a reading — see
     # :func:`names_a_player`. It is still counted in ``observation_count`` and
     # still reported by name in ``skipped`` below; what it must not do is make
     # a source look like it has produced a pick.
     instants = [_to_instant(row) for row in rows if names_a_player(row)]
+    reconciliation_instants = [
+        _to_instant(row)
+        for row in rows
+        if names_a_player(row)
+        and _board_row_is_eligible(
+            row,
+            draft=draft,
+            source_participants=source_participants,
+            recognised_slots=recognised_slots,
+        )
+    ]
 
     by_transport: dict[SourceTransport, list[ObservedInstant]] = {
         SourceTransport.BRIDGE_CAPTURE: [],
@@ -2207,6 +2484,12 @@ def feed_status(
     }
     for instant in instants:
         by_transport[instant.provenance.transport].append(instant)
+    reconciliation_by_transport: dict[SourceTransport, list[ObservedInstant]] = {
+        SourceTransport.BRIDGE_CAPTURE: [],
+        SourceTransport.OFFICIAL_HTTP: [],
+    }
+    for instant in reconciliation_instants:
+        reconciliation_by_transport[instant.provenance.transport].append(instant)
 
     contact_at = _transport_contact(
         session,
@@ -2216,30 +2499,34 @@ def feed_status(
         # feed can read here. See :func:`_transport_contact`.
         board_is_a_source_here=bool(board_readings),
     )
-    if instants:
+    freshness = tuple(
+        freshness_of(
+            by_transport[transport],
+            transport=transport,
+            now=stamp,
+            silence_threshold=silence_threshold,
+            contact_at=contact_at.get(transport),
+        )
+        for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
+    )
+    if reconciliation_instants:
         report = reconcile(
-            by_transport[SourceTransport.BRIDGE_CAPTURE],
-            by_transport[SourceTransport.OFFICIAL_HTTP],
+            reconciliation_by_transport[SourceTransport.BRIDGE_CAPTURE],
+            reconciliation_by_transport[SourceTransport.OFFICIAL_HTTP],
             now=stamp,
             silence_threshold=silence_threshold,
             contact_at=contact_at,
         )
-        freshness = report.freshness
     else:
         report = None
-        freshness = tuple(
-            freshness_of(
-                [],
-                transport=transport,
-                now=stamp,
-                silence_threshold=silence_threshold,
-                contact_at=contact_at.get(transport),
-            )
-            for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
-        )
 
+    state = draft_service.load_state(session, draft)
+    participant_reasons: dict[int, dict[str, int]] = {
+        seat.participant.id: {} for seat in state.participants
+    }
     retryable: dict[str, int] = {}
     skipped: dict[str, int] = {}
+    unattributed_skipped: dict[str, int] = {}
     for row in rows:
         disposition = _skip_disposition(row.skipped_reason)
         if disposition == "retryable":
@@ -2247,11 +2534,13 @@ def feed_status(
             _tally(retryable, row.skipped_reason.partition(":")[0])
         elif disposition == "permanent":
             assert row.skipped_reason is not None
-            _tally(skipped, row.skipped_reason.partition(":")[0])
+            reason = row.skipped_reason.partition(":")[0]
+            _tally(skipped, reason)
+            reasons = participant_reasons.get(row.participant_id or -1)
+            _tally(reasons if reasons is not None else unattributed_skipped, reason)
 
     applied = sum(1 for row in rows if row.applied_event_sequence is not None)
     pending = sum(1 for row in rows if _is_application_candidate(row))
-    state = draft_service.load_state(session, draft)
     # ``draft_closed`` is a claim about the draft's *current* status, so it is
     # filtered against the status rather than trusted as a stamp. The stamp is
     # written by ``apply_observations``, which only a caller passing
@@ -2267,6 +2556,7 @@ def feed_status(
                 row.blocked_reason
                 for row in rows
                 if row.blocked_reason
+                and row.applied_event_sequence is None
                 and not (
                     row.blocked_reason == "draft_closed" and state.status is not DraftStatus.CLOSED
                 )
@@ -2286,6 +2576,16 @@ def feed_status(
         blocked=blocked,
         retryable=tuple(sorted(retryable.items())),
         skipped=tuple(sorted(skipped.items())),
+        skipped_by_participant=tuple(
+            ParticipantSkipped(
+                participant_id=seat.participant.id,
+                team_slot=seat.participant.team_slot,
+                total=sum(participant_reasons[seat.participant.id].values()),
+                reasons=tuple(sorted(participant_reasons[seat.participant.id].items())),
+            )
+            for seat in state.participants
+        ),
+        unattributed_skipped=tuple(sorted(unattributed_skipped.items())),
         last_sequence=state.last_sequence,
         board_regressions=board_regressions(board_readings),
     )

@@ -1159,6 +1159,67 @@ def test_models_and_migrations_agree(alembic_config: Config, migration_url: str)
     assert diff == [], f"models and migrations disagree: {diff}"
 
 
+def test_0023_upgrades_existing_drafts_without_manufacturing_a_source_binding(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """Existing drafts stay unprofiled; new profile and binding facts are constrained."""
+    command.upgrade(alembic_config, "0022")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _seed_draft_for_feed(connection)
+            connection.execute(
+                text(
+                    "INSERT INTO draft_participants "
+                    "(id, draft_id, team_slot, display_name) VALUES "
+                    "(1, 1, 1, 'Team 1'), (2, 1, 2, 'Team 2')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "head")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            profile = connection.execute(
+                text("SELECT source_board_profile FROM drafts WHERE id = 1")
+            ).scalar_one()
+            assert profile is None
+            source_seats = connection.execute(
+                text("SELECT source_seat FROM draft_participants ORDER BY team_slot")
+            ).scalars()
+            assert list(source_seats) == [None, None]
+            connection.execute(
+                text("UPDATE draft_participants SET source_seat = team_slot WHERE draft_id = 1")
+            )
+            connection.execute(
+                text(
+                    "UPDATE drafts SET source_board_profile = "
+                    "'fantrax_football_snake_v1' WHERE id = 1"
+                )
+            )
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE draft_participants SET source_seat = 1 WHERE id = 2"))
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE draft_participants SET source_seat = 0 WHERE id = 2"))
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text("UPDATE drafts SET source_board_profile = 'unknown' WHERE id = 1")
+            )
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE drafts SET is_mock = FALSE WHERE id = 1"))
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE drafts SET draft_type = 'linear' WHERE id = 1"))
+    finally:
+        engine.dispose()
+
+
 def test_downgrade_to_base_is_possible(alembic_config: Config, migration_url: str) -> None:
     """Migrations are forward-only in practice, but a stuck upgrade needs a way back."""
     command.upgrade(alembic_config, "head")

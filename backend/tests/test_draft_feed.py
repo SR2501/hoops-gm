@@ -27,9 +27,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Integer, Numeric, String
 from sqlalchemy.dialects import postgresql
@@ -70,6 +71,7 @@ from hoops_gm.draft.feed.recognise import (
     _player_label,
 )
 from hoops_gm.identity.names import normalize_key
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 from hoops_gm.ingest.fantrax_official.parsers import parse_draft_picks
 
@@ -1401,6 +1403,57 @@ def test_applying_appends_through_the_ordinary_draft_log(session: Session) -> No
     assert all((event.note or "").startswith("feed:bridge_capture:") for event in events)
 
 
+def test_an_rpc_correction_at_a_historical_coordinate_cannot_become_the_next_pick(
+    session: Session,
+) -> None:
+    """A recurring snake participant does not make an old RPC coordinate current."""
+    league = _league(session, team_count=3, roster_size=2)
+    teams = _teams(session, league, ["t1", "t2", "t3"])
+    draft = _draft(session, league, teams)
+    by_slot = {participant.team_slot: participant.id for participant in draft.participants}
+    for team_slot, player_label in enumerate(
+        [JOKIC, EDWARDS, HALIBURTON],
+        start=1,
+    ):
+        draft_service.record_pick(
+            session,
+            draft,
+            participant_id=by_slot[team_slot],
+            player_label=player_label,
+        )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="rpc-corrected-pick-three",
+            locator="responses[0].data.draftPicks[2]",
+            recogniser="test-rpc",
+            observed_at=NOW,
+            kind="selection",
+            team_external_id="t3",
+            participant_id=by_slot[3],
+            player_label="Shai Gilgeous-Alexander",
+            player_external_id="corrected-pick-three",
+            overall_pick=3,
+            round_number=1,
+            pick_in_round=3,
+        )
+    )
+    session.flush()
+
+    outcome = feed_service.apply_observations(session, draft, now=NOW)
+
+    assert outcome.applied == ()
+    assert outcome.halted == "draft_pick_coordinate_mismatch"
+    assert outcome.last_sequence == 3
+    assert feed_service.feed_status(session, draft, now=NOW).pending_count == 1
+    assert [event.player_label for event in draft_service.load_events(session, draft)] == [
+        JOKIC,
+        EDWARDS,
+        HALIBURTON,
+    ]
+
+
 def test_picks_are_applied_in_the_order_the_draft_happened(session: Session) -> None:
     """Excludes: arrival order being mistaken for draft order.
 
@@ -1487,7 +1540,7 @@ def test_the_observation_that_halted_the_run_is_still_pending_afterwards(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 2}],
         dedupe_key="capture-one",
     )
     feed_service.ingest(session, draft)
@@ -1535,7 +1588,7 @@ def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 2}],
         dedupe_key="capture-one",
     )
     feed_service.ingest(session, draft)
@@ -1558,6 +1611,46 @@ def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
     healthy = feed_service.feed_status(session, draft, now=NOW)
     assert healthy.blocked == ()
     assert healthy.pending_count == 0
+
+
+def test_an_applied_observation_never_publishes_a_stale_sequence_block(
+    session: Session,
+) -> None:
+    """A concurrent apply loser cannot leave the polling status falsely blocked."""
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    state = draft_service.record_pick(
+        session,
+        draft,
+        participant_id=draft.participants[0].id,
+        player_label=JOKIC,
+    )
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="concurrent-winner",
+            locator="responses[0].data.draftPicks[0]",
+            recogniser="test",
+            observed_at=NOW,
+            kind="selection",
+            team_external_id="t1",
+            participant_id=draft.participants[0].id,
+            player_label=JOKIC,
+            overall_pick=1,
+            applied_event_sequence=state.last_sequence,
+            applied_at=NOW,
+            blocked_reason="draft_sequence_conflict",
+        )
+    )
+    session.flush()
+
+    status = feed_service.feed_status(session, draft, now=NOW)
+
+    assert status.applied_count == 1
+    assert status.pending_count == 0
+    assert status.blocked == ()
 
 
 def test_a_closed_draft_with_a_backlog_says_so_rather_than_looking_queued(
@@ -2407,13 +2500,11 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     reported input, and they are the reason this test asserts a rule rather
     than the three values someone happened to send.
 
-    **What this does not fix, and it is upstream of here.**
-    ``parse_draft_picks`` converts with a bare ``int()``, so ``overallPick:
-    1.9`` has already become ``1`` before this function sees it. Re-coercing
-    cannot recover a truncation that happened earlier — the value arriving here
-    is a perfectly valid ``1``. That defect lives in
-    ``hoops_gm.ingest.fantrax_official.parsers``, which this lane does not own,
-    and is recorded in ``docs/handoff.md`` rather than patched here.
+    ``parse_draft_picks`` now refuses non-integral or malformed supplied
+    coordinates before constructing this typed record. These assertions remain
+    necessary for direct callers and for values outside the storage bound,
+    which are valid Python integers even though no database column can hold
+    them.
     """
 
     def official(**kwargs: Any) -> RecognitionResult:
@@ -2434,6 +2525,11 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     # A coordinate too wide for the column no longer reaches the bind.
     result = official(overall_pick=int(1e100))
     assert [instant.overall_pick for instant in result.instants] == [None]
+    assert [instant.skipped_reason for instant in result.instants] == [
+        "draft_coordinate_unreadable"
+    ]
+    assert [instant.player_label for instant in result.instants] == [None]
+    assert [instant.player_external_id for instant in result.instants] == [None]
     assert [shape.reason for shape in result.unrecognised] == ["field_too_large_to_record"]
     assert result.unrecognised[0].keys == ("overall_pick",)
 
@@ -2485,6 +2581,37 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     assert [instant.overall_pick for instant in healthy.instants] == [1]
     assert [instant.player_label for instant in healthy.instants] == [JOKIC]
     assert healthy.unrecognised == ()
+
+
+def test_a_bridge_selection_with_an_unreadable_supplied_coordinate_is_permanent() -> None:
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": "t1",
+                    "playerId": "p-jokic",
+                    "playerName": JOKIC,
+                    "overallPick": MAX_COORDINATE + 1,
+                    "roundNumber": 1,
+                    "pickNumber": 1,
+                }
+            ]
+        ),
+        dedupe_key="coordinate-unreadable",
+        received_at=NOW,
+        captured_at=NOW,
+        context=_context(),
+    )
+
+    assert len(result.instants) == 1
+    instant = result.instants[0]
+    assert instant.skipped_reason == "draft_coordinate_unreadable"
+    assert instant.player_label is None
+    assert instant.player_external_id is None
+    assert instant.overall_pick is None
+    assert instant.round_number == 1
+    assert instant.pick_in_round == 1
 
 
 def test_a_capacity_refusal_survives_an_accepted_sibling_list(
@@ -3814,69 +3941,40 @@ def test_the_recogniser_reads_every_response_in_the_batch() -> None:
     assert result.instants[0].provenance.locator.startswith("responses[1].data")
 
 
-def test_the_official_coercers_do_not_survive_the_parser_that_feeds_them() -> None:
-    """Excludes: believing round 7 closed the read-a-field asymmetry.
+@pytest.mark.parametrize("overall_pick", [1.9, "1_0"])
+def test_the_official_parser_refuses_non_exact_coordinates(overall_pick: object) -> None:
+    record = {
+        "teamId": "t1",
+        "playerId": "p1",
+        "playerName": JOKIC,
+        "overallPick": overall_pick,
+    }
 
-    **This test documents a defect that is not fixed, and is deliberately
-    written to fail when it is.** The fix belongs in
-    ``hoops_gm.ingest.fantrax_official.parsers``, which this unit does not own.
+    with pytest.raises(SourceContractError, match="overall_pick must be an exact integer"):
+        parse_draft_picks({"draftPicks": [record]})
 
-    Round 7 routed every field in ``recognise_official_draft_picks`` through the
-    same coercers as the bridge path. That is real, and it is bounded: the
-    coercers see values that ``parse_draft_picks`` has *already* converted with
-    a bare ``int()``/``float()`` and selected with a truthy ``or`` chain. By the
-    time they run, a fractional ordinal is an exact ``int`` and an invented
-    amount is an ordinary ``float`` — in range, correctly typed, and wrong.
 
-    So the asymmetry is closed at the typed-dataclass layer and open across the
-    raw source, and the discriminator is that the *bridge* reader, given the
-    identical raw record, refuses it. Each case below asserts that difference,
-    which is why a reader cannot dismiss this as the two paths being allowed to
-    differ: they differ **on the same bytes**.
+def test_an_official_zero_coordinate_is_not_replaced_and_cannot_apply() -> None:
+    record = {
+        "teamId": "t1",
+        "playerId": "p1",
+        "playerName": JOKIC,
+        "overallPick": 0,
+        "overall": 3,
+    }
+    official = recognise_official_draft_picks(
+        parse_draft_picks({"draftPicks": [record]}),
+        artifact_key="sha256:seam",
+        received_at=NOW,
+        context=_context(),
+    )
 
-    When the parser is fixed, this test fails, and it should — the assertion to
-    change is the ``official`` side, and the bridge side is already right.
-    """
-    raw_cases: list[tuple[str, dict[str, object], DraftType, object]] = [
-        # A fractional ordinal truncates to a position the payload never claimed,
-        # colliding with whoever really holds that pick.
-        ("fractional ordinal", {"overallPick": 1.9}, DraftType.SNAKE, 1),
-        # Python's literal grammar, applied to a JSON string.
-        ("python-grammar ordinal", {"overallPick": "1_0"}, DraftType.SNAKE, 10),
-        # ``0`` is falsy, so a real zero is discarded for a sibling key.
-        ("zero ordinal falls through", {"overallPick": 0, "overall": 3}, DraftType.SNAKE, 3),
-    ]
-
-    for label, extra, draft_type, expected_ordinal in raw_cases:
-        record: dict[str, object] = {
-            "teamId": "t1",
-            "playerId": "p1",
-            "playerName": JOKIC,
-            **extra,
-        }
-        context = _context(draft_type=draft_type)
-
-        official = recognise_official_draft_picks(
-            parse_draft_picks({"draftPicks": [record]}),
-            artifact_key="sha256:seam",
-            received_at=NOW,
-            context=context,
-        )
-        bridge = recognise_bridge_payload(
-            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-            body_json={"responses": [{"data": {"draftPicks": [record]}}]},
-            dedupe_key="seam",
-            received_at=NOW,
-            captured_at=None,
-            context=context,
-        )
-
-        assert [i.overall_pick for i in official.instants] == [expected_ordinal], label
-        assert official.unrecognised == (), label
-        assert bridge.instants == (), label
-        assert [shape.reason for shape in bridge.unrecognised] == [
-            "record_missing_draft_coordinate"
-        ], label
+    assert len(official.instants) == 1
+    instant = official.instants[0]
+    assert instant.overall_pick is None
+    assert instant.player_label is None
+    assert instant.player_external_id is None
+    assert instant.skipped_reason == "draft_coordinate_unreadable"
 
 
 def test_an_auction_amount_the_payload_set_to_zero_is_not_replaced_by_a_sibling_bid() -> None:
@@ -4406,6 +4504,9 @@ def test_the_blocking_facts_are_exactly_what_the_board_is_told() -> None:
     #: base name is now part of what the test checks rather than part of what
     #: it assumes.
     payload_bases = {"row", "admitted"}
+    #: Local state passed only as optimistic-concurrency control. It is not a
+    #: source claim and therefore does not belong in ``_BOARD_FACTS``.
+    control_bases = {"state"}
 
     recorded_attrs: set[str] = set()
     seen_bases: set[str] = set()
@@ -4431,7 +4532,8 @@ def test_the_blocking_facts_are_exactly_what_the_board_is_told() -> None:
     assert recorded_attrs, "extractor found no payload arguments; the walk is broken, not the code"
     assert "participant_id" in recorded_attrs
 
-    undeclared_bases = seen_bases - payload_bases
+    assert "state" in seen_bases, "Feed appends must remain tied to the state version checked."
+    undeclared_bases = seen_bases - payload_bases - control_bases
     assert not undeclared_bases, (
         f"{sorted(undeclared_bases)} carry attributes into record_sale/record_pick but are not "
         "declared payload bases. Add them to payload_bases, or this test stops reading them."
@@ -5554,6 +5656,149 @@ def test_the_status_document_itself_reports_the_missing_pick(
     # The board really is short a player, which is what the report is about.
     events = client.get(f"/api/v1/drafts/{draft.id}/events").json()
     assert [event["player_label"] for event in events["events"]] == [JOKIC]
+
+
+def test_feed_status_partitions_every_permanent_skip_by_stable_participant_or_unattributed(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """Per-seat completeness accounts for every aggregate skip and guesses none."""
+    league = _league(session, team_count=3, roster_size=2)
+    teams = _teams(session, league, ["t1", "t2", "t3"])
+    draft = _draft(session, league, teams)
+    participants = sorted(draft.participants, key=lambda participant: participant.team_slot)
+    rows = [
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key=f"skip-{index}",
+            locator=f"$[{index}]",
+            recogniser="status-partition-test",
+            observed_at=NOW + timedelta(seconds=index),
+            kind="selection",
+            team_external_id=team_external_id,
+            source_seat=source_seat,
+            participant_id=participant_id,
+            player_label=player_label,
+            player_external_id=player_external_id,
+            skipped_reason=reason,
+        )
+        for index, (
+            participant_id,
+            team_external_id,
+            source_seat,
+            player_label,
+            player_external_id,
+            reason,
+        ) in enumerate(
+            [
+                (
+                    participants[0].id,
+                    "t1",
+                    None,
+                    None,
+                    None,
+                    "record_names_no_player",
+                ),
+                (
+                    participants[0].id,
+                    "t1",
+                    None,
+                    None,
+                    None,
+                    "player_external_id_unreadable",
+                ),
+                (
+                    participants[1].id,
+                    "t2",
+                    None,
+                    None,
+                    "p2",
+                    "no_player_label",
+                ),
+                (
+                    None,
+                    None,
+                    1,
+                    "Source-only Player",
+                    None,
+                    "source_board_evidence_only",
+                ),
+                (
+                    None,
+                    "outside-this-draft",
+                    None,
+                    "Unmapped Team Player",
+                    None,
+                    "no_seat_for_team_external_id",
+                ),
+            ],
+            start=1,
+        )
+    ]
+    session.add_all(rows)
+    session.commit()
+
+    response = client.get(f"/api/v1/drafts/{draft.id}/feed")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["skipped"] == {
+        "no_player_label": 1,
+        "no_seat_for_team_external_id": 1,
+        "player_external_id_unreadable": 1,
+        "record_names_no_player": 1,
+        "source_board_evidence_only": 1,
+    }
+    assert body["skipped_by_participant"] == [
+        {
+            "participant_id": participants[0].id,
+            "team_slot": 1,
+            "total": 2,
+            "reasons": {
+                "player_external_id_unreadable": 1,
+                "record_names_no_player": 1,
+            },
+        },
+        {
+            "participant_id": participants[1].id,
+            "team_slot": 2,
+            "total": 1,
+            "reasons": {"no_player_label": 1},
+        },
+        {
+            "participant_id": participants[2].id,
+            "team_slot": 3,
+            "total": 0,
+            "reasons": {},
+        },
+    ]
+    assert body["unattributed_skipped"] == {
+        "no_seat_for_team_external_id": 1,
+        "source_board_evidence_only": 1,
+    }
+
+    partitioned: dict[str, int] = {}
+    for item in body["skipped_by_participant"]:
+        for reason, count in item["reasons"].items():
+            partitioned[reason] = partitioned.get(reason, 0) + count
+    for reason, count in body["unattributed_skipped"].items():
+        partitioned[reason] = partitioned.get(reason, 0) + count
+    assert partitioned == body["skipped"]
+
+    schemas = cast("FastAPI", client.app).openapi()["components"]["schemas"]
+    status_properties = schemas["FeedStatusResponse"]["properties"]
+    assert {
+        "skipped",
+        "skipped_by_participant",
+        "unattributed_skipped",
+    } <= set(status_properties)
+    assert set(schemas["ParticipantSkippedOut"]["properties"]) == {
+        "participant_id",
+        "team_slot",
+        "total",
+        "reasons",
+    }
 
 
 def test_the_official_path_surfaces_a_refused_identity_too(session: Session) -> None:
