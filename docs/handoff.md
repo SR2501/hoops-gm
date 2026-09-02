@@ -33117,3 +33117,19 @@ Focused tests prove a profiled row with no successful reading remains evidence-o
 **Could not verify:** No new source applicability was established. NBA auction semantics remain without a capture or profile, and the explicit football mock profile remains the only admitted declaration.
 
 **Next:** Run the final full matrix, publish and independently review the exact head. Do not merge or self-approve.
+
+---
+
+## 2026-09-02 - backend - Closed cumulative board-feed contract gaps
+
+**Changed:** Integrated the coordinator's evidence-profile and pre-reconciliation applicability corrections, then closed the remaining cumulative review gaps after `a3d4cfc4dab5c935dd06726f168dd0069b4b4b2c`. `DraftParticipant.source_seat` continues to resolve ordered participant identity, but complete binding alone does not authorize rendered-board application: only the separately frozen, recorded `fantrax_football_snake_v1` profile may do so. ADR-020 and the feed-service contract comment now state that distinction without changing auction, NBA, linear or unprofiled behavior.
+
+Selection-coordinate admission now covers RPC and official observations as well as rendered-board rows. Every supplied coordinate is checked when its attributed participant is due; a wrong participant still takes the existing `draft_pick_out_of_turn` path, then receives coordinate validation if it later becomes current. A three-team snake reproduction proves a corrected RPC claim for historical pick 3 cannot append as pick 4 when team slot 3 recurs. Bound rendered-board rows still require all four `(overall, round, pick_in_round, source_seat)` fields, and all feed-driven appends remain coupled to the checked `expected_last_sequence`.
+
+The authoritative backlog now marks pre-integration statements as historical, states the source-board evidence-only rule conditionally, records the repaired over-budget-sale premise, and removes the stale claim that the draft tracker has no screen. `draft-board-feed-integration`, `draft-tracker` and `category-table-board-completeness` remain pending under the coordinator's profile boundary; no NBA or auction applicability is claimed.
+
+**Gates:** On the integrated tree before this documentation append, Ruff and format-check passed, strict mypy passed, and the complete draft API, rendered-board feed, general draft-feed and migration suites passed together. The generalized coordinate change also passed the complete local SQLite suite at its pre-profile head; a fresh complete suite, exact-head review and hosted matrix still must run after this append.
+
+**Could not verify:** No real NBA auction or linear Fantrax draft-room capture exists. The only authoritative rendered-board application profile remains the recorded football mock snake corpus. The local PostgreSQL endpoint remains unavailable; hosted PostgreSQL must verify the eventual exact head. The immediate frontend follow-up remains unchanged: `frontend/src/api/draftTypes.ts` must add `DraftParticipant.source_seat`, and `frontend/src/api/draftEndpoints.ts` must require it as number-or-null while implementing `category-table-board-completeness`.
+
+**Next:** Commit this append and backlog correction, run the complete local gates and fresh cumulative exact-head review, push only after reconciling any concurrent PR-branch updates, and require a new hosted matrix. Do not merge or self-approve.

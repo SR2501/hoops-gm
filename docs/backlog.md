@@ -2642,19 +2642,18 @@ corrections are recorded as `void` events, which is what makes `last_sequence` a
 complete version token and lets a read take no lock (ADR-014). A mock auction and
 a mock snake draft are recorded end to end by `hoops_gm.dev.seed_draft`.
 
-Three things this does **not** do, each of which is why the marker is still
-`pending` rather than `done`. There is no screen - that is the stacked
-`frontend` lane, and this item's own description asks for a board and a roster
-construction view. Only a mock explicitly frozen to the recorded
-`fantrax_football_snake_v1` evidence profile can feed the log from a rendered
-board; bound but unprofiled drafts remain evidence-only, and the product's NBA
+The screen and manual append-only recorder have landed. This umbrella remains
+`pending` for one current reason: automatic tracking is established only for a
+mock explicitly frozen to the recorded `fantrax_football_snake_v1` evidence
+profile. Bound but unprofiled drafts remain evidence-only, the product's NBA
 auction capture and semantics remain unestablished under
-`fantrax-auction-capture`. The official API still returns no usable picks. And
-the log stores only what happened - no price
-estimate, no inflation, no recommendation, no `p(play)` - which is correct scope
-here but means the item's downstream readers (`auction-budget-manager`,
-`auction-inflation`, `draft-recommender`, `live-draft-availability`) are
-unblocked on their *input*, not served by it.
+`fantrax-auction-capture`, and the official API still returns no usable picks.
+
+The log deliberately stores only what happened - no price estimate, inflation,
+recommendation or `p(play)`. That is correct scope rather than an unfinished
+screen; downstream readers (`auction-budget-manager`, `auction-inflation`,
+`draft-recommender`, `live-draft-availability`) are unblocked on their input,
+not served by this umbrella.
 
 **Owner ruling 2026-08-29:** that manual recorder is retained as a
 catastrophe-only firebreak, not removed and not promoted to a normal parallel
