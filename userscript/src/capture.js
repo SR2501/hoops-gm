@@ -31,6 +31,9 @@
   const AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS = 60000;
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
   const VERSION_STATUS_MIN_INTERVAL_MS = 60000;
+  const FEED_STATUS_MIN_INTERVAL_MS = 60000;
+  const STATUS_STRIP_HOST_MARKER = Symbol("hoops-gm-status-strip-host");
+  const FANTRAX_LEAGUE_ID = /^[A-Za-z0-9-]{1,64}$/;
   const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
   const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
   const DRAFT_BOARD_HEADER_SELECTOR = ".league-draft-board__header";
@@ -146,6 +149,22 @@
       return DRAFT_PAGE_PATH.test(new URL(url, CAPTURE_BASE).pathname);
     } catch {
       return false;
+    }
+  }
+
+  function fantraxLeagueIdFromUrl(url) {
+    if (!isFantraxLeaguePage(url)) {
+      return null;
+    }
+    try {
+      const parsed = new URL(url, CAPTURE_BASE);
+      const encoded = parsed.pathname
+        .slice(FANTRAX_LEAGUE_PATH_PREFIX.length)
+        .split("/")[0];
+      const leagueId = decodeURIComponent(encoded);
+      return FANTRAX_LEAGUE_ID.test(leagueId) ? leagueId : null;
+    } catch {
+      return null;
     }
   }
 
@@ -1117,13 +1136,9 @@
   // It reports only what this userscript observed directly: its own running
   // @version, its own pairing state, and the outcome of its own forwards. It
   // deliberately does NOT report picks the feed recognised. That number is
-  // draft-scoped -- it needs a `draft_id` for `GET /drafts/{id}/feed`, and
-  // the userscript has no honest way to learn one. A Fantrax league page URL
-  // carries Fantrax's external league id, while `GET /drafts` returns our
-  // internal `league_id`, so the two cannot be joined here; guessing "the
-  // newest draft" would render a confident number for the wrong draft, which
-  // is worse than rendering none. Widening it needs a backend contract that
-  // `backend` owns, not a heuristic here.
+  // Feed status is resolved only through the backend's external-league-id
+  // contract. Never list drafts or guess "the newest": a confident count for
+  // the wrong draft is worse than an explicit identity refusal.
   //
   // Hard boundary: this must never show a price, a value, a suggested bid or
   // a ranking. Those belong to `bridge-overlay` and carry the Model gate with
@@ -1214,12 +1229,199 @@
     return `${Math.round(minutes / 60)}h ago`;
   }
 
+  function countReasonMap(value) {
+    return reasonMapEntries(value).reduce((total, [, count]) => total + count, 0);
+  }
+
+  function reasonMapEntries(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [];
+    }
+    return Object.entries(value)
+      .filter(
+        ([reason, count]) =>
+          typeof reason === "string" && Number.isSafeInteger(count) && count > 0
+      )
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  }
+
+  function plural(count, singular, pluralValue = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : pluralValue}`;
+  }
+
+  function formatFeedState(safe, nowMs) {
+    const state = typeof safe.feedStatus === "string" ? safe.feedStatus : "checking";
+    const leagueId = sanitizeStatusText(safe.feedLeagueId, 64);
+    const report = safe.feedReport;
+    if (state === "checking") {
+      return {
+        line: leagueId ? `feed ${leagueId}: checking local draft` : "feed: checking page identity",
+        warning: null,
+        ok: false,
+      };
+    }
+    if (state === "invalid_page_id") {
+      return {
+        line: "feed unavailable",
+        warning: "FEED ID UNAVAILABLE: current Fantrax URL has no valid league id",
+        ok: false,
+      };
+    }
+    if (state === "not_found") {
+      return {
+        line: leagueId ? `feed ${leagueId}: no local draft` : "feed: no local draft",
+        warning: "NO LOCAL DRAFT: this Fantrax league is not linked to a persisted draft",
+        ok: false,
+      };
+    }
+    if (state === "ambiguous") {
+      return {
+        line: leagueId ? `feed ${leagueId}: ambiguous local draft` : "feed: ambiguous local draft",
+        warning: "AMBIGUOUS LOCAL DRAFT: multiple persisted drafts match this Fantrax league",
+        ok: false,
+      };
+    }
+    if (state !== "available" || !report) {
+      return {
+        line: leagueId ? `feed ${leagueId}: status uncheckable` : "feed: status uncheckable",
+        warning: `FEED STATUS UNCHECKABLE: ${
+          sanitizeStatusText(safe.feedReason) || "local feed contract unavailable"
+        }`,
+        ok: false,
+      };
+    }
+
+    const skippedEntries = reasonMapEntries(report.skipped);
+    const skipped = skippedEntries.reduce((total, [, count]) => total + count, 0);
+    const retryable = countReasonMap(report.retryable);
+    const lineParts = [
+      `draft ${report.draft_id} feed`,
+      `observed ${report.observation_count}`,
+      `applied ${report.applied_count}`,
+      `pending ${report.pending_count}`,
+      `skipped ${skipped}`,
+    ];
+    if (retryable > 0) {
+      lineParts.push(`retryable ${retryable}`);
+    }
+
+    const warnings = [];
+    if (typeof report.context_unavailable === "string" && report.context_unavailable) {
+      warnings.push(`FEED CONTEXT UNAVAILABLE: ${sanitizeStatusText(report.context_unavailable)}`);
+    }
+    if (skipped > 0) {
+      const reasons = skippedEntries.map(
+        ([reason, count]) => `${sanitizeStatusText(reason, 96) || "unknown"}=${count}`
+      );
+      // The backend classifies every member of `skipped` as permanent. There
+      // is deliberately no benign allowlist: even dedupe-shaped reasons can
+      // represent a missing pick when identity was wrong.
+      warnings.push(`FEED SKIPPED: ${reasons.join(", ")}`);
+    }
+    if (Array.isArray(report.blocked) && report.blocked.length > 0) {
+      warnings.push(
+        `FEED BLOCKED: ${report.blocked
+          .map((reason) => sanitizeStatusText(reason))
+          .filter(Boolean)
+          .join(", ")}`
+      );
+    }
+    if (retryable > 0) {
+      warnings.push(`FEED RETRYING: ${plural(retryable, "state conflict")} still pending`);
+    }
+    const asOfMs = Date.parse(report.as_of);
+    const elapsedSeconds =
+      Number.isFinite(safe.feedReceivedAtMs) &&
+      Number.isFinite(nowMs) &&
+      Number.isFinite(asOfMs)
+        ? Math.max(0, (nowMs - asOfMs) / 1000)
+        : 0;
+    if (elapsedSeconds > FEED_STATUS_MIN_INTERVAL_MS / 1000) {
+      warnings.push(`FEED STATUS STALE: local report ${Math.round(elapsedSeconds)}s old`);
+    }
+    const silent = Array.isArray(report.freshness)
+      ? report.freshness.filter((source) => {
+        if (!source || source.instant_count === 0) {
+          return true;
+        }
+        const age = source.contact_is_known
+          ? source.contact_age_seconds
+          : source.age_seconds;
+        return !Number.isFinite(age) ||
+          age + elapsedSeconds > source.silence_threshold_seconds;
+      })
+      : [];
+    if (silent.length > 0) {
+      const sources = silent.map((source) => {
+        const transport = sanitizeStatusText(source.transport, 32) || "unknown source";
+        const age = source.contact_is_known ? source.contact_age_seconds : source.age_seconds;
+        const effectiveAge = Number.isFinite(age) ? age + elapsedSeconds : null;
+        const ageText = Number.isFinite(effectiveAge)
+          ? `${Math.round(effectiveAge)}s old`
+          : "never seen";
+        return `${transport} ${ageText} (limit ${Math.round(source.silence_threshold_seconds)}s)`;
+      });
+      warnings.push(`FEED STALE/SILENT: ${sources.join(", ")}`);
+    }
+    const reconciliation = report.reconciliation;
+    if (reconciliation && typeof reconciliation === "object") {
+      const disagreementCount = Array.isArray(reconciliation.disagreements)
+        ? reconciliation.disagreements.length
+        : 0;
+      const bridgeOnly = Array.isArray(reconciliation.only_bridge)
+        ? reconciliation.only_bridge.length
+        : 0;
+      const officialOnly = Array.isArray(reconciliation.only_official)
+        ? reconciliation.only_official.length
+        : 0;
+      const findings = [];
+      if (disagreementCount > 0) {
+        findings.push(plural(disagreementCount, "disagreement"));
+      }
+      if (bridgeOnly > 0) {
+        findings.push(`${bridgeOnly} bridge-only`);
+      }
+      if (officialOnly > 0) {
+        findings.push(`${officialOnly} official-only`);
+      }
+      if (findings.length > 0) {
+        warnings.push(`FEED RECONCILIATION: ${findings.join(", ")}`);
+      }
+      if (reconciliation.independence && reconciliation.independence.independent === false) {
+        warnings.push(
+          `FEED UNCORROBORATED: ${
+            sanitizeStatusText(reconciliation.independence.reason) ||
+            "the readings are not independent"
+          }`
+        );
+      }
+      if (Array.isArray(reconciliation.caveats) && reconciliation.caveats.length > 0) {
+        warnings.push(
+          `FEED CAVEAT: ${sanitizeStatusText(reconciliation.caveats[0]) || "see dashboard"}`
+        );
+      }
+    }
+    const regressions = Array.isArray(report.board_regressions)
+      ? report.board_regressions.length
+      : 0;
+    if (regressions > 0) {
+      warnings.push(
+        `BOARD REGRESSION: ${plural(regressions, "pick")} disappeared; prior state retained`
+      );
+    }
+    return {
+      line: lineParts.join(" \u00b7 "),
+      warning: warnings.length > 0 ? warnings.join(" | ") : null,
+      ok: warnings.length === 0,
+    };
+  }
+
   /**
    * The whole rendering decision, as a pure function of state. Kept separate
    * from the DOM so the wording of every failure mode is testable without a
    * browser.
    *
-   * @returns {{headline: string, detail: string, refusal: string|null, ok: boolean}}
+   * @returns {{headline: string, detail: string, feed: string, refusal: string|null, ok: boolean}}
    */
   function formatStatusLines(state, { nowMs = Date.now() } = {}) {
     const safe = state || {};
@@ -1234,6 +1436,7 @@
     const sourceVersion = typeof safe.sourceVersion === "string" ? safe.sourceVersion : null;
     const servedVersion = typeof safe.servedVersion === "string" ? safe.servedVersion : null;
     const versionReason = sanitizeStatusText(safe.versionReason);
+    const feed = formatFeedState(safe, nowMs);
 
     const currentLabel = versionStatus === "current" ? " \u00b7 update current" : "";
     const headline =
@@ -1285,13 +1488,528 @@
     const warnings = [
       versionWarning,
       refusal ? `refused: ${refusal}` : null,
+      feed.warning,
     ].filter(Boolean);
     return {
       headline,
       detail,
+      feed: feed.line,
       refusal: warnings.length > 0 ? warnings.join(" | ") : null,
-      ok: paired && refusal === null && versionStatus === "current",
+      ok: paired && refusal === null && versionStatus === "current" && feed.ok,
     };
+  }
+
+  function isNonNegativeInteger(value) {
+    return Number.isSafeInteger(value) && value >= 0;
+  }
+
+  function isReasonMap(value) {
+    return Boolean(value) &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.values(value).every(isNonNegativeInteger);
+  }
+
+  function reasonEntries(value) {
+    if (!isReasonMap(value)) {
+      return null;
+    }
+    return Object.entries(value);
+  }
+
+  function addReasonCounts(target, entries) {
+    for (const [reason, count] of entries) {
+      const next = (target.get(reason) || 0) + count;
+      if (!Number.isSafeInteger(next)) {
+        return false;
+      }
+      target.set(reason, next);
+    }
+    return true;
+  }
+
+  function sameReasonCounts(left, right) {
+    if (left.size !== right.size) {
+      return false;
+    }
+    for (const [reason, count] of left) {
+      if (right.get(reason) !== count) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function hasExactKeys(value, keys) {
+    return Boolean(value) &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === keys.length &&
+      keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+  }
+
+  function isTimestamp(value) {
+    return typeof value === "string" &&
+      /(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+      !Number.isNaN(Date.parse(value));
+  }
+
+  function isTimestampOrNull(value) {
+    return value === null || isTimestamp(value);
+  }
+
+  function timestampsDifferBySeconds(newer, older, seconds) {
+    return Math.abs((Date.parse(newer) - Date.parse(older)) / 1000 - seconds) <= 0.01;
+  }
+
+  function isFiniteNonNegativeOrNull(value) {
+    return value === null || (Number.isFinite(value) && value >= 0);
+  }
+
+  function isStringOrNull(value) {
+    return value === null || typeof value === "string";
+  }
+
+  function isStringArray(value) {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+  }
+
+  function isTransportArray(value) {
+    return isStringArray(value) &&
+      value.every((transport) => ["bridge_capture", "official_http"].includes(transport));
+  }
+
+  function isFreshnessResponse(source, asOf) {
+    const keys = [
+      "transport",
+      "last_seen_at",
+      "age_seconds",
+      "instant_count",
+      "silent",
+      "silence_threshold_seconds",
+      "source_claimed_at",
+      "claim_skew_seconds",
+      "contact_at",
+      "contact_age_seconds",
+      "contact_is_known",
+    ];
+    if (
+      !hasExactKeys(source, keys) ||
+      !["bridge_capture", "official_http"].includes(source.transport) ||
+      !isTimestampOrNull(source.last_seen_at) ||
+      !isFiniteNonNegativeOrNull(source.age_seconds) ||
+      !isNonNegativeInteger(source.instant_count) ||
+      typeof source.silent !== "boolean" ||
+      !Number.isFinite(source.silence_threshold_seconds) ||
+      source.silence_threshold_seconds < 0 ||
+      !isTimestampOrNull(source.source_claimed_at) ||
+      !(
+        source.claim_skew_seconds === null ||
+        Number.isFinite(source.claim_skew_seconds)
+      ) ||
+      !isTimestampOrNull(source.contact_at) ||
+      !isFiniteNonNegativeOrNull(source.contact_age_seconds) ||
+      typeof source.contact_is_known !== "boolean"
+    ) {
+      return false;
+    }
+    if (
+      source.transport === "official_http" &&
+      (source.contact_at !== null ||
+        source.contact_age_seconds !== null ||
+        source.contact_is_known)
+    ) {
+      return false;
+    }
+
+    const hasInstants = source.instant_count > 0;
+    const hasLastSeen = source.last_seen_at !== null && source.age_seconds !== null;
+    const hasSourceClaim =
+      source.source_claimed_at !== null && source.claim_skew_seconds !== null;
+    const hasContact = source.contact_at !== null && source.contact_age_seconds !== null;
+    if (
+      hasInstants !== hasLastSeen ||
+      (source.last_seen_at === null) !== (source.age_seconds === null) ||
+      (source.source_claimed_at === null) !== (source.claim_skew_seconds === null) ||
+      (!hasInstants && hasSourceClaim) ||
+      source.contact_is_known !== hasContact ||
+      (source.contact_at === null) !== (source.contact_age_seconds === null)
+    ) {
+      return false;
+    }
+
+    if (
+      (hasLastSeen &&
+        !timestampsDifferBySeconds(asOf, source.last_seen_at, source.age_seconds)) ||
+      (hasSourceClaim &&
+        !timestampsDifferBySeconds(
+          source.source_claimed_at,
+          source.last_seen_at,
+          source.claim_skew_seconds
+        )) ||
+      (hasContact &&
+        !timestampsDifferBySeconds(asOf, source.contact_at, source.contact_age_seconds))
+    ) {
+      return false;
+    }
+
+    const ageForSilence = source.contact_is_known
+      ? source.contact_age_seconds
+      : source.age_seconds;
+    const expectedSilent =
+      !hasInstants || ageForSilence > source.silence_threshold_seconds;
+    return source.silent === expectedSilent;
+  }
+
+  function isCompleteFreshness(value, asOf) {
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      !value.every((source) => isFreshnessResponse(source, asOf))
+    ) {
+      return false;
+    }
+    const transports = new Set(value.map((source) => source.transport));
+    return transports.size === 2 &&
+      transports.has("bridge_capture") &&
+      transports.has("official_http");
+  }
+
+  function isIndependenceResponse(value) {
+    const keys = [
+      "independent",
+      "reason",
+      "left_transports",
+      "right_transports",
+      "shared_artifacts",
+      "shared_transports",
+    ];
+    if (
+      !hasExactKeys(value, keys) ||
+      typeof value.independent !== "boolean" ||
+      typeof value.reason !== "string" ||
+      !isTransportArray(value.left_transports) ||
+      !isTransportArray(value.right_transports) ||
+      !isStringArray(value.shared_artifacts) ||
+      !isTransportArray(value.shared_transports)
+    ) {
+      return false;
+    }
+    const leftIsBridge =
+      value.left_transports.length === 1 &&
+      value.left_transports[0] === "bridge_capture";
+    const rightIsOfficial =
+      value.right_transports.length === 1 &&
+      value.right_transports[0] === "official_http";
+    const noSharedTransport = value.shared_transports.length === 0;
+    if (value.independent) {
+      return value.reason === "distinct_artifacts_and_transports" &&
+        leftIsBridge &&
+        rightIsOfficial &&
+        value.shared_artifacts.length === 0 &&
+        noSharedTransport;
+    }
+    if (value.reason === "one_side_empty") {
+      return (value.left_transports.length === 0) !== (value.right_transports.length === 0) &&
+        (value.left_transports.length === 0 || leftIsBridge) &&
+        (value.right_transports.length === 0 || rightIsOfficial) &&
+        value.shared_artifacts.length === 0 &&
+        noSharedTransport;
+    }
+    return value.reason === "same_artifact_on_both_sides" &&
+      leftIsBridge &&
+      rightIsOfficial &&
+      value.shared_artifacts.length > 0 &&
+      noSharedTransport;
+  }
+
+  function isMatchResponse(value) {
+    return hasExactKeys(value, [
+      "player_label",
+      "key",
+      "bridge_artifact",
+      "official_artifact",
+    ]) &&
+      isStringOrNull(value.player_label) &&
+      typeof value.key === "string" &&
+      typeof value.bridge_artifact === "string" &&
+      typeof value.official_artifact === "string";
+  }
+
+  function isDisagreementResponse(value) {
+    return hasExactKeys(value, [
+      "player_label",
+      "field_name",
+      "bridge_value",
+      "official_value",
+      "bridge_artifact",
+      "official_artifact",
+    ]) &&
+      isStringOrNull(value.player_label) &&
+      typeof value.field_name === "string" &&
+      isStringOrNull(value.bridge_value) &&
+      isStringOrNull(value.official_value) &&
+      typeof value.bridge_artifact === "string" &&
+      typeof value.official_artifact === "string";
+  }
+
+  function isReconciliationResponse(value) {
+    if (value === null) {
+      return true;
+    }
+    const keys = [
+      "independence",
+      "witnessed_by_two_transports",
+      "agreements",
+      "unwitnessed_matches",
+      "disagreements",
+      "only_bridge",
+      "only_official",
+      "caveats",
+    ];
+    if (
+      !hasExactKeys(value, keys) ||
+      !isIndependenceResponse(value.independence) ||
+      !isNonNegativeInteger(value.witnessed_by_two_transports) ||
+      !Array.isArray(value.agreements) ||
+      !value.agreements.every(isMatchResponse) ||
+      !Array.isArray(value.unwitnessed_matches) ||
+      !value.unwitnessed_matches.every(isMatchResponse) ||
+      !Array.isArray(value.disagreements) ||
+      !value.disagreements.every(isDisagreementResponse) ||
+      !isStringArray(value.only_bridge) ||
+      !isStringArray(value.only_official) ||
+      !isStringArray(value.caveats) ||
+      value.witnessed_by_two_transports !== value.agreements.length
+    ) {
+      return false;
+    }
+    if (value.independence.independent) {
+      return value.unwitnessed_matches.length === 0;
+    }
+    if (value.agreements.length > 0 || value.witnessed_by_two_transports > 0) {
+      return false;
+    }
+    if (value.independence.reason === "one_side_empty") {
+      const leftEmpty = value.independence.left_transports.length === 0;
+      return value.unwitnessed_matches.length === 0 &&
+        value.disagreements.length === 0 &&
+        (leftEmpty
+          ? value.only_bridge.length === 0 && value.only_official.length > 0
+          : value.only_official.length === 0 && value.only_bridge.length > 0);
+    }
+    return true;
+  }
+
+  function reconciliationMatchesFreshness(reconciliation, freshness) {
+    const bridge = freshness.find((source) => source.transport === "bridge_capture");
+    const official = freshness.find((source) => source.transport === "official_http");
+    const totalInstants = freshness.reduce((total, source) => total + source.instant_count, 0);
+    if (totalInstants === 0) {
+      return reconciliation === null;
+    }
+
+    if (reconciliation === null) {
+      return official.instant_count === 0;
+    }
+    const leftPresent = reconciliation.independence.left_transports.length > 0;
+    const rightPresent = reconciliation.independence.right_transports.length > 0;
+    return rightPresent === (official.instant_count > 0) &&
+      !(leftPresent && bridge.instant_count === 0);
+  }
+
+  function reconciliationEvidenceIsConsistent(reconciliation) {
+    if (reconciliation === null) {
+      return true;
+    }
+    const outcomes =
+      reconciliation.agreements.length +
+      reconciliation.unwitnessed_matches.length +
+      reconciliation.disagreements.length +
+      reconciliation.only_bridge.length +
+      reconciliation.only_official.length;
+    if (reconciliation.independence.independent && outcomes === 0) {
+      return false;
+    }
+    if (!reconciliation.independence.independent) {
+      return true;
+    }
+    const bridgeArtifacts = new Set();
+    const officialArtifacts = new Set();
+    for (const match of [
+      ...reconciliation.agreements,
+      ...reconciliation.unwitnessed_matches,
+      ...reconciliation.disagreements,
+    ]) {
+      bridgeArtifacts.add(match.bridge_artifact);
+      officialArtifacts.add(match.official_artifact);
+    }
+    return [...bridgeArtifacts].every((artifact) => !officialArtifacts.has(artifact));
+  }
+
+  function sourceInstantTotalsFitObservations(report) {
+    const instantTotal = report.freshness.reduce(
+      (total, source) => total + source.instant_count,
+      0
+    );
+    return Number.isSafeInteger(instantTotal) &&
+      instantTotal <= report.observation_count;
+  }
+
+  function hasUniqueParticipantIdentities(participants) {
+    const participantIds = new Set();
+    const teamSlots = new Set();
+    for (const participant of participants) {
+      if (
+        !participant ||
+        participantIds.has(participant.participant_id) ||
+        teamSlots.has(participant.team_slot)
+      ) {
+        return false;
+      }
+      participantIds.add(participant.participant_id);
+      teamSlots.add(participant.team_slot);
+    }
+    return true;
+  }
+
+  function observationCountsAreConserved(report) {
+    const skippedEntries = reasonEntries(report.skipped);
+    if (skippedEntries === null) {
+      return false;
+    }
+    let accountedFor = report.applied_count + report.pending_count;
+    if (!Number.isSafeInteger(accountedFor)) {
+      return false;
+    }
+    for (const [, count] of skippedEntries) {
+      accountedFor += count;
+      if (!Number.isSafeInteger(accountedFor)) {
+        return false;
+      }
+    }
+    return accountedFor === report.observation_count;
+  }
+
+  function isBoardRegressionResponse(value) {
+    return hasExactKeys(value, [
+      "source_seat",
+      "round_number",
+      "pick_in_round",
+      "player_label",
+      "last_seen_artifact_key",
+    ]) &&
+      isNonNegativeInteger(value.source_seat) &&
+      value.source_seat > 0 &&
+      isNonNegativeInteger(value.round_number) &&
+      value.round_number > 0 &&
+      isNonNegativeInteger(value.pick_in_round) &&
+      value.pick_in_round > 0 &&
+      isStringOrNull(value.player_label) &&
+      typeof value.last_seen_artifact_key === "string";
+  }
+
+  function isConsistentSkipPartition(report) {
+    const aggregateEntries = reasonEntries(report.skipped);
+    const unattributedEntries = reasonEntries(report.unattributed_skipped);
+    if (
+      aggregateEntries === null ||
+      unattributedEntries === null ||
+      !Array.isArray(report.skipped_by_participant) ||
+      !hasUniqueParticipantIdentities(report.skipped_by_participant)
+    ) {
+      return false;
+    }
+
+    const aggregate = new Map();
+    const partitioned = new Map();
+    if (
+      !addReasonCounts(aggregate, aggregateEntries) ||
+      !addReasonCounts(partitioned, unattributedEntries)
+    ) {
+      return false;
+    }
+    let partitionTotal = unattributedEntries.reduce((total, [, count]) => total + count, 0);
+    if (!Number.isSafeInteger(partitionTotal)) {
+      return false;
+    }
+
+    const participantKeys = ["participant_id", "team_slot", "total", "reasons"];
+    for (const participant of report.skipped_by_participant) {
+      if (
+        !hasExactKeys(participant, participantKeys) ||
+        !isNonNegativeInteger(participant.participant_id) ||
+        participant.participant_id === 0 ||
+        !isNonNegativeInteger(participant.team_slot) ||
+        participant.team_slot === 0 ||
+        !isNonNegativeInteger(participant.total)
+      ) {
+        return false;
+      }
+      const participantReasonEntries = reasonEntries(participant.reasons);
+      if (participantReasonEntries === null) {
+        return false;
+      }
+      const participantTotal = participantReasonEntries.reduce(
+        (total, [, count]) => total + count,
+        0
+      );
+      if (!Number.isSafeInteger(participantTotal) || participant.total !== participantTotal) {
+        return false;
+      }
+      partitionTotal += participantTotal;
+      if (
+        !Number.isSafeInteger(partitionTotal) ||
+        !addReasonCounts(partitioned, participantReasonEntries)
+      ) {
+        return false;
+      }
+    }
+
+    const aggregateTotal = aggregateEntries.reduce((total, [, count]) => total + count, 0);
+    return Number.isSafeInteger(aggregateTotal) &&
+      aggregateTotal === partitionTotal &&
+      sameReasonCounts(aggregate, partitioned);
+  }
+
+  function isFeedStatusResponse(report) {
+    return hasExactKeys(report, [
+      "draft_id",
+      "as_of",
+      "context_unavailable",
+      "freshness",
+      "reconciliation",
+      "observation_count",
+      "applied_count",
+      "pending_count",
+      "blocked",
+      "retryable",
+      "skipped",
+      "skipped_by_participant",
+      "unattributed_skipped",
+      "last_sequence",
+      "board_regressions",
+    ]) &&
+      isNonNegativeInteger(report.draft_id) &&
+      report.draft_id > 0 &&
+      isTimestamp(report.as_of) &&
+      (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
+      isCompleteFreshness(report.freshness, report.as_of) &&
+      isReconciliationResponse(report.reconciliation) &&
+      reconciliationMatchesFreshness(report.reconciliation, report.freshness) &&
+      reconciliationEvidenceIsConsistent(report.reconciliation) &&
+      isNonNegativeInteger(report.observation_count) &&
+      sourceInstantTotalsFitObservations(report) &&
+      isNonNegativeInteger(report.applied_count) &&
+      isNonNegativeInteger(report.pending_count) &&
+      Array.isArray(report.blocked) &&
+      report.blocked.every((reason) => typeof reason === "string") &&
+      isReasonMap(report.retryable) &&
+      isConsistentSkipPartition(report) &&
+      observationCountsAreConserved(report) &&
+      isNonNegativeInteger(report.last_sequence) &&
+      Array.isArray(report.board_regressions) &&
+      report.board_regressions.every(isBoardRegressionResponse);
   }
 
   /**
@@ -1314,6 +2032,11 @@
       lastRefusal: null,
       lastRefusalSource: null,
       lastRefusalAtMs: null,
+      feedStatus: "checking",
+      feedLeagueId: null,
+      feedReport: null,
+      feedReceivedAtMs: null,
+      feedReason: null,
     };
     const scopedRefusals = new Map();
     let unscopedRefusal = null;
@@ -1505,6 +2228,44 @@
         state.versionReason = sanitizeStatusText(message) || "local version contract unavailable";
         emit();
       },
+      recordFeedChecking(leagueId) {
+        state.feedStatus = "checking";
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReceivedAtMs = null;
+        state.feedReason = null;
+        emit();
+      },
+      recordFeedStatus(report, leagueId) {
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReceivedAtMs = null;
+        state.feedReason = null;
+        if (!isFeedStatusResponse(report)) {
+          state.feedStatus = "uncheckable";
+          state.feedReason = "invalid local feed status response";
+        } else {
+          state.feedStatus = "available";
+          state.feedReport = report;
+          state.feedReceivedAtMs = now();
+        }
+        emit();
+      },
+      recordFeedUnavailable(kind, message, leagueId = null) {
+        state.feedStatus = [
+          "invalid_page_id",
+          "not_found",
+          "ambiguous",
+          "uncheckable",
+        ].includes(kind)
+          ? kind
+          : "uncheckable";
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReceivedAtMs = null;
+        state.feedReason = sanitizeStatusText(message) || "local feed contract unavailable";
+        emit();
+      },
     };
   }
 
@@ -1591,6 +2352,134 @@
     };
   }
 
+  /**
+   * Resolves feed status for the current page's exact external league id.
+   * It borrows the rendered-view watcher lifecycle, owns no timer, clears a
+   * previous report before refreshing, and lets only the newest generation
+   * publish.
+   */
+  function createFeedStatusRevalidator({
+    transport,
+    status,
+    now = () => Date.now(),
+    minIntervalMs = FEED_STATUS_MIN_INTERVAL_MS,
+    readCurrentUrl,
+  } = {}) {
+    const interval = Math.max(1000, Number(minIntervalMs) || FEED_STATUS_MIN_INTERVAL_MS);
+    let stopped = false;
+    let lastAttemptAt = Number.NEGATIVE_INFINITY;
+    let lastLeagueId = null;
+    let lastContextKey = null;
+    let requestGeneration = 0;
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function publishFailure(error, leagueId) {
+      const code = error && typeof error.code === "string" ? error.code : null;
+      if (code === "draft_for_fantrax_league_not_found") {
+        status.recordFeedUnavailable("not_found", code, leagueId);
+      } else if (code === "draft_for_fantrax_league_ambiguous") {
+        status.recordFeedUnavailable("ambiguous", code, leagueId);
+      } else {
+        status.recordFeedUnavailable(
+          "uncheckable",
+          error && error.message ? error.message : "local feed status request failed",
+          leagueId
+        );
+      }
+    }
+
+    function responseStillMatchesPage(generation, leagueId) {
+      if (stopped || generation !== requestGeneration || leagueId !== lastLeagueId) {
+        return false;
+      }
+      if (typeof readCurrentUrl !== "function") {
+        return true;
+      }
+      try {
+        return fantraxLeagueIdFromUrl(readCurrentUrl()) === leagueId;
+      } catch {
+        return false;
+      }
+    }
+
+    function recheck(url) {
+      if (
+        stopped ||
+        !transport ||
+        typeof transport.draftFeedStatus !== "function" ||
+        !status ||
+        typeof status.recordFeedChecking !== "function" ||
+        typeof status.recordFeedStatus !== "function" ||
+        typeof status.recordFeedUnavailable !== "function"
+      ) {
+        if (!stopped && status && typeof status.recordFeedUnavailable === "function") {
+          status.recordFeedUnavailable(
+            "uncheckable",
+            "local feed status transport unavailable"
+          );
+        }
+        return false;
+      }
+
+      const leagueId = fantraxLeagueIdFromUrl(url);
+      const contextKey = leagueId === null ? `invalid:${String(url || "")}` : `league:${leagueId}`;
+      if (leagueId === null) {
+        if (contextKey !== lastContextKey) {
+          requestGeneration += 1;
+          lastContextKey = contextKey;
+          lastLeagueId = null;
+          status.recordFeedUnavailable(
+            "invalid_page_id",
+            "current Fantrax URL has no valid league id"
+          );
+        }
+        return false;
+      }
+
+      const current = nowMs();
+      const leagueChanged = leagueId !== lastLeagueId;
+      if (!leagueChanged && current - lastAttemptAt < interval) {
+        return false;
+      }
+      lastContextKey = contextKey;
+      lastLeagueId = leagueId;
+      lastAttemptAt = current;
+      const generation = requestGeneration += 1;
+      status.recordFeedChecking(leagueId);
+      Promise.resolve()
+        .then(() => transport.draftFeedStatus(leagueId))
+        .then(
+          (report) => {
+            if (responseStillMatchesPage(generation, leagueId)) {
+              status.recordFeedStatus(report, leagueId);
+            }
+          },
+          (error) => {
+            if (responseStillMatchesPage(generation, leagueId)) {
+              publishFailure(error, leagueId);
+            }
+          }
+        );
+      return true;
+    }
+
+    return {
+      recheck,
+      stop() {
+        stopped = true;
+        requestGeneration += 1;
+      },
+    };
+  }
+
   const STATUS_HOST_STYLES = [
     // `all: initial` first, so Fantrax's inherited font, colour and direction
     // cannot reach into the shadow tree. Everything after it overrides that
@@ -1616,8 +2505,14 @@
     ["background", "rgba(17, 19, 24, 0.92)"],
     ["color", "rgb(226, 232, 240)"],
     ["box-shadow", "0 1px 6px rgba(0, 0, 0, 0.35)"],
-    ["white-space", "nowrap"],
+    ["white-space", "normal"],
     ["max-width", "60vw"],
+    ["overflow", "visible"],
+    ["overflow-wrap", "anywhere"],
+  ];
+
+  const STATUS_SINGLE_LINE_STYLES = [
+    ["white-space", "nowrap"],
     ["overflow", "hidden"],
     ["text-overflow", "ellipsis"],
   ];
@@ -1676,22 +2571,33 @@
     let box;
     let headlineNode;
     let detailNode;
+    let feedNode;
     let refusalNode;
     try {
       host = doc.createElement("div");
       if (typeof host.attachShadow !== "function") {
         return notInstalled;
       }
+      host[STATUS_STRIP_HOST_MARKER] = true;
       applyStyles(host, STATUS_HOST_STYLES);
       shadow = host.attachShadow({ mode: "closed" });
       box = doc.createElement("div");
       applyStyles(box, STATUS_BOX_STYLES);
       headlineNode = doc.createElement("div");
       detailNode = doc.createElement("div");
+      feedNode = doc.createElement("div");
       refusalNode = doc.createElement("div");
-      applyStyles(refusalNode, [["color", "rgb(252, 211, 77)"]]);
+      applyStyles(headlineNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(detailNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(feedNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(refusalNode, [
+        ["color", "rgb(252, 211, 77)"],
+        ["white-space", "normal"],
+        ["overflow-wrap", "anywhere"],
+      ]);
       box.appendChild(headlineNode);
       box.appendChild(detailNode);
+      box.appendChild(feedNode);
       box.appendChild(refusalNode);
       shadow.appendChild(box);
     } catch (err) {
@@ -1742,7 +2648,8 @@
       // document-start would depend entirely on the DOMContentLoaded listener.
       mount();
       const lines = formatStatusLines(state, { nowMs: nowMs() });
-      const signature = `${visible}|${lines.headline}|${lines.detail}|${lines.refusal || ""}`;
+      const signature =
+        `${visible}|${lines.headline}|${lines.detail}|${lines.feed}|${lines.refusal || ""}`;
       if (signature === lastRendered) {
         // The watcher tick calls this once a second for the whole draft.
         // Skipping an identical write keeps that from being a DOM mutation
@@ -1753,6 +2660,7 @@
       try {
         headlineNode.textContent = lines.headline;
         detailNode.textContent = lines.detail;
+        feedNode.textContent = lines.feed;
         refusalNode.textContent = lines.refusal || "";
         applyStyles(refusalNode, [["display", lines.refusal ? "block" : "none"]]);
         applyStyles(box, [["border", lines.ok ? STATUS_OK_BORDER : STATUS_ALERT_BORDER]]);
@@ -2021,6 +2929,41 @@
       return true;
     }
 
+    function belongsToStatusStrip(node) {
+      let current = node;
+      const visited = new Set();
+      while (current && !visited.has(current)) {
+        if (current[STATUS_STRIP_HOST_MARKER] === true) {
+          return true;
+        }
+        visited.add(current);
+        if (typeof current.getRootNode === "function") {
+          const root = current.getRootNode();
+          if (root && root.host && root.host !== current) {
+            current = root.host;
+            continue;
+          }
+        }
+        current = current.parentNode;
+      }
+      return false;
+    }
+
+    function mutationsBelongOnlyToStatusStrip(records) {
+      return Array.isArray(records) &&
+        records.length > 0 &&
+        records.every((record) => {
+          if (belongsToStatusStrip(record && record.target)) {
+            return true;
+          }
+          const changed = [
+            ...Array.from((record && record.addedNodes) || []),
+            ...Array.from((record && record.removedNodes) || []),
+          ];
+          return changed.length > 0 && changed.every(belongsToStatusStrip);
+        });
+    }
+
     function attachObserver() {
       if (
         observing ||
@@ -2030,7 +2973,10 @@
         return;
       }
       try {
-        observer = new observerType(() => {
+        observer = new observerType((records) => {
+          if (mutationsBelongOnlyToStatusStrip(records)) {
+            return;
+          }
           requestSnapshot("mutation");
         });
         observer.observe(doc.documentElement, { childList: true, subtree: true });
@@ -2057,11 +3003,12 @@
       reportContext(paired);
       if (
         doc.visibilityState !== "hidden" &&
-        isFantraxLeaguePage(nextUrl) &&
         typeof onRelevantContext === "function"
       ) {
         try {
-          onRelevantContext();
+          // Invalid/non-league SPA navigation is relevant because it must clear
+          // the old league's evidence and invalidate any in-flight response.
+          onRelevantContext(nextUrl);
         } catch {
           // A status recheck must never stop the capture watcher.
         }
@@ -2117,7 +3064,7 @@
       typeof onRelevantContext === "function"
     ) {
       try {
-        onRelevantContext();
+        onRelevantContext(win.location.href);
       } catch {
         // As above: currency reporting cannot stop capture.
       }
@@ -2224,6 +3171,7 @@
     shouldCapture,
     isFantraxLeaguePage,
     isFantraxDraftPage,
+    fantraxLeagueIdFromUrl,
     normalizeBody,
     buildEnvelope,
     computeDedupeKey,
@@ -2246,6 +3194,7 @@
     formatStatusLines,
     createBridgeStatus,
     createVersionStatusRevalidator,
+    createFeedStatusRevalidator,
     installStatusStrip,
     installStatusStripMenu,
     captureManualSnapshot,
@@ -2278,13 +3227,24 @@
       installedVersion: runningVersion,
     });
     installed.versionStatusRevalidator.recheck();
+    installed.feedStatusRevalidator = createFeedStatusRevalidator({
+      transport,
+      status,
+      readCurrentUrl: () => window.location.href,
+    });
+    installed.feedStatusRevalidator.recheck(window.location.href);
     installed.renderedViewWatcher = installAutomaticRenderedViewCapture({
       capture: installed,
       transport,
       win: window,
       doc: document,
       status,
-      onRelevantContext: installed.versionStatusRevalidator.recheck,
+      onRelevantContext: (url) => {
+        if (isFantraxLeaguePage(url)) {
+          installed.versionStatusRevalidator.recheck();
+        }
+        installed.feedStatusRevalidator.recheck(url);
+      },
     });
     capture.instance = installed;
     installStatusStripMenu({

@@ -2062,6 +2062,8 @@ class FeedStatus:
     freshness: tuple[SourceFreshness, ...]
     reconciliation: ReconciliationReport | None
     observation_count: int
+    #: Observations whose terminal disposition is an applied event. Permanent
+    #: skips are excluded even when they retain event linkage for provenance.
     applied_count: int
     pending_count: int
     #: Reasons the last apply run stopped without consuming a still-pending row.
@@ -2539,7 +2541,16 @@ def feed_status(
             reasons = participant_reasons.get(row.participant_id or -1)
             _tally(reasons if reasons is not None else unattributed_skipped, reason)
 
-    applied = sum(1 for row in rows if row.applied_event_sequence is not None)
+    # ``already_in_log`` and ``duplicate_within_run`` retain the sequence they
+    # corroborate so provenance remains answerable, but their terminal
+    # disposition is still a permanent skip. Count each observation in exactly
+    # one published bucket: applied, pending, or permanent skipped.
+    applied = sum(
+        1
+        for row in rows
+        if row.applied_event_sequence is not None
+        and _skip_disposition(row.skipped_reason) != "permanent"
+    )
     pending = sum(1 for row in rows if _is_application_candidate(row))
     # ``draft_closed`` is a claim about the draft's *current* status, so it is
     # filtered against the status rather than trusted as a stamp. The stamp is

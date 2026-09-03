@@ -8,6 +8,7 @@
   const PAIRING_CODE_PATH = "/api/v1/bridge/pairing";
   const PAIR_PATH = "/api/v1/bridge/pair";
   const USERSCRIPT_STATUS_PATH = "/bridge/userscript-status.json";
+  const DRAFT_FEED_STATUS_PATH = "/api/v1/drafts/by-fantrax-league/feed";
 
   function isStoredSecret(value) {
     return typeof value === "string" && (
@@ -42,7 +43,23 @@
           timeout: 3000,
           onload: (response) => {
             if (response.status < 200 || response.status >= 300) {
-              reject(new Error(`backend returned HTTP ${response.status}`));
+              let errorCode = null;
+              let detail = null;
+              try {
+                const payload = JSON.parse(response.responseText);
+                errorCode = typeof payload.error === "string" ? payload.error : null;
+                detail = typeof payload.detail === "string" ? payload.detail : null;
+              } catch {
+                // The HTTP status still identifies the failure when the backend
+                // cannot provide its stable JSON error envelope.
+              }
+              const error = new Error(
+                `backend returned HTTP ${response.status}${errorCode ? ` (${errorCode})` : ""}`
+              );
+              error.status = response.status;
+              error.code = errorCode;
+              error.detail = detail;
+              reject(error);
               return;
             }
             if (expectedStatus !== null && response.status !== expectedStatus) {
@@ -105,6 +122,13 @@
           "GET",
           `${USERSCRIPT_STATUS_PATH}?installed_version=${encodeURIComponent(
             typeof installedVersion === "string" ? installedVersion : ""
+          )}`
+        ),
+      draftFeedStatus: (fantraxLeagueId) =>
+        send(
+          "GET",
+          `${DRAFT_FEED_STATUS_PATH}?fantrax_league_id=${encodeURIComponent(
+            typeof fantraxLeagueId === "string" ? fantraxLeagueId : ""
           )}`
         ),
     };
@@ -177,6 +201,7 @@
     PAIRING_CODE_PATH,
     PAIR_PATH,
     USERSCRIPT_STATUS_PATH,
+    DRAFT_FEED_STATUS_PATH,
   };
   globalThis.HoopsGmBridge = bridge;
 

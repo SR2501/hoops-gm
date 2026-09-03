@@ -9,7 +9,8 @@ automatically via page-world `fetch`/`XHR` hooks, plus a conservative automatic
 rendered-view snapshot after initial load, SPA navigation, and settled page
 changes. An explicit manual page-state export remains the final fallback (see
 "Root cause #2" below). It also renders a small **status strip** reporting what
-it has already captured, because the bridge's failure mode is silence.
+it has already captured and what the matching local draft feed has recognised,
+because the bridge's failure mode is silence.
 Capture clones rather than mutates the Fantrax DOM, does not touch any other
 Fantrax endpoint, and does not execute any action. The status strip is
 informational only — it carries no price, value, suggested bid or ranking, and
@@ -365,6 +366,10 @@ any Fantrax league page, showing:
 - a persistent **update warning/refusal** when the installed version is behind,
   the source and served artifact disagree, or the three-way check is
   unavailable. Capture success cannot clear this separate state.
+- the matching local draft's exact **observed, applied, pending, skipped and
+  retryable counts**, plus blocked, stale/silent, reconciliation and board-
+  regression warnings from the backend's existing `FeedStatusResponse`.
+  Capture and version success cannot clear this separate feed state.
 
 Design constraints, all of them testable:
 
@@ -379,8 +384,12 @@ Design constraints, all of them testable:
   swallowing a click meant for the draft board.
 - **No timer of its own.** It rides the rendered-view watcher's existing
   one-second context check and suppresses DOM writes when its rendered text is
-  unchanged, so an unchanged tick costs nothing. Adding a status interval right
-  after removing the Cache Storage interval would have been a wash.
+  unchanged. That tick also ages the server's `as_of` and source clocks, so a
+  report turns stale or silent between minute-floor refreshes instead of keeping
+  its receipt-time green state. The rendered-view observer ignores mutations
+  owned by the strip host, so status updates cannot schedule their own next
+  capture. Adding a status interval right after removing the Cache Storage
+  interval would have been a wash.
 - **Text only, never markup.** Refusal text is capture-derived and is written
   with `textContent`; any secret-shaped token in it is redacted first.
 - **It shows no number a decision rests on.** No price, no value, no suggested
@@ -388,13 +397,54 @@ Design constraints, all of them testable:
   valuation chain and carries the **Model gate** with it. A test asserts the
   rendered text carries no valuation vocabulary, so growing one fails loudly.
 
-It does **not** show picks the feed recognised. That number is draft-scoped: it
-needs a `draft_id` for `GET /drafts/{id}/feed`, and the userscript has no honest
-way to learn one — a Fantrax league page URL carries Fantrax's *external* league
-id, while `GET /drafts` returns our *internal* `league_id`, so the two cannot be
-joined in the browser. Guessing "the newest draft" would render a confident
-number for the wrong draft, which is worse than rendering none. Surfacing it
-properly needs a backend contract that `backend` owns.
+From 0.5.5 the strip reads the first URL segment after `/fantasy/league/` as the
+external Fantrax league id and calls only
+`GET /api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=...`. The backend
+returns `FeedStatusResponse` only when that id resolves to exactly one persisted
+draft. Named zero-match and ambiguous-match errors render as **NO LOCAL DRAFT**
+and **AMBIGUOUS LOCAL DRAFT**, never as zero picks. A malformed or missing page
+id is refused before any request. There is no `GET /drafts` fallback, newest-
+draft guess, or all-drafts poll.
+
+The resolver and userscript share an explicit identifier boundary: 1-64 ASCII
+letters, digits or hyphens (`^[A-Za-z0-9-]+$`). The only recorded real Fantrax
+id is a 16-character lowercase alphanumeric token; persisted synthetic/test ids
+also establish uppercase and hyphens. Nothing in repository evidence
+establishes underscore, punctuation, Unicode or control characters, so the
+contract refuses them rather than inheriting the broader and runtime-dependent
+meaning of `\S`.
+
+Every positive count in `FeedStatusResponse.skipped` is a permanent skip and
+therefore prevents a healthy feed state. The strip renders **FEED SKIPPED**
+followed by every reason and count in deterministic lexical order. There is no
+benign-reason allowlist: even dedupe-shaped reasons can represent a missed pick
+when identity was wrong. A zero-valued reason contributes neither to the total
+nor to the warning. Before any count can publish, each participant entry must
+carry the exact identifier, slot, total and reason-map shape; participant totals
+and the complete participant-plus-unattributed partition must reconcile exactly
+to the aggregate by reason, with each participant id and team slot appearing
+exactly once even when its total is zero. The top-level counts also conserve
+every persisted observation exactly: observed equals applied plus pending plus
+permanently skipped. Blocked and retryable remain pending classifications, not
+additional dispositions. A malformed or inconsistent partition invalidates the
+whole response rather than salvaging its aggregate.
+Freshness entries are likewise accepted only with the complete backend shape,
+paired timestamps and ages, and a `silent` value consistent with the backend's
+instant/contact clock rule. Reported ages and claim skew must reproduce from the
+timestamps and feed `as_of` clock. Both expected source transports must appear
+exactly once. Reconciliation and board-regression entries are validated through
+their complete nested contracts; malformed status evidence cannot produce a
+green strip.
+
+Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
+and adds no recurring timer. It starts at most one request per minute for an
+unchanged league, refreshes immediately after navigation to a different valid
+league id, clears the prior count while a refresh is pending, and accepts only
+the newest request generation. Response settlement also re-reads the current
+browser URL and requires its exact external league id to still match, closing
+the interval before the one-second watcher notices SPA navigation. A failed
+refresh therefore cannot leave an old green/count state visible, and a late
+response from the previous league cannot overwrite the current one.
 
 **hoops-gm: show/hide status strip** toggles it from the Tampermonkey menu,
 which is why the strip itself never needs to accept a click. Hiding is
@@ -577,12 +627,16 @@ sanitization, draft-board scoping, parser-anchor checks, loud over-budget
 refusal, and tag-boundary truncation on other pages), the manual export (`captureManual`
 bypassing the `/fxpa/req` filter, app-state preference over DOM snapshot,
 script/style stripping, size truncation, and the Tampermonkey menu wiring),
-and the status strip (secret redaction in refusal text, the four silent
-failures rendering distinctly, a closed shadow root, `pointer-events: none`,
-`all: initial` written first, no `<style>` element, `textContent` rather than
-markup, deferred mounting before `body` exists, suppression of identical
-re-renders, the menu toggle, and the guarantee that it adds no timer and
-carries no valuation vocabulary).
+and the status strip (secret redaction in refusal text, capture/version/feed
+states remaining independent, exact feed counts, named draft-identity
+refusals, stale/silent and reconciliation/regression warnings, source instants
+bounded by persisted observations, complete independent reconciliation
+evidence, artifact-pair independence, live aging between long-lived refreshes,
+monotonic response generations, a closed shadow root,
+`pointer-events: none`, `all: initial` written first, no `<style>` element,
+`textContent` rather than markup, deferred mounting before `body` exists,
+suppression of identical re-renders, the menu toggle, and the guarantee that it
+adds no timer, never lists drafts, and carries no valuation vocabulary).
 It also verifies that no capture envelope has a request body, cookie, or
 header field and that the page's real response and live DOM remain intact.
 `test/build.test.js` runs the real build and freezes the legacy identity,

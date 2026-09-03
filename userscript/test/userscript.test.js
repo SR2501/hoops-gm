@@ -117,6 +117,102 @@ test("userscript status compares the installed build without exposing the bridge
   assert.equal(result.status, "current");
 });
 
+test("draft feed status uses only the exact external-league resolver", async () => {
+  let requestOptions;
+  const bridge = await loadBridge();
+  const transport = bridge.createTransport({
+    storage: { get: () => "a".repeat(64), set: () => {} },
+    request: (options) => {
+      requestOptions = options;
+      options.onload({
+        status: 200,
+        responseText: JSON.stringify({ draft_id: 17 }),
+      });
+    },
+  });
+
+  const result = await transport.draftFeedStatus("league id/with punctuation");
+
+  assert.equal(requestOptions.method, "GET");
+  assert.equal(
+    requestOptions.url,
+    "http://127.0.0.1:8000/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=league%20id%2Fwith%20punctuation"
+  );
+  assert.equal(requestOptions.headers["X-Bridge-Secret"], undefined);
+  assert.equal(requestOptions.data, undefined);
+  assert.equal(result.draft_id, 17);
+
+  const source = await readFile(new URL("../src/userscript.js", import.meta.url), "utf8");
+  assert.doesNotMatch(
+    source,
+    /send\(\s*"GET",\s*"\/api\/v1\/drafts(?:\?|")/,
+    "the bridge must not list drafts or guess among them"
+  );
+});
+
+test("transport preserves stable backend error codes for feed refusals", async () => {
+  const bridge = await loadBridge();
+  const requests = [];
+  const responses = [
+    {
+      status: 404,
+      responseText: JSON.stringify({
+        error: "draft_for_fantrax_league_not_found",
+        detail: "no draft matches",
+      }),
+    },
+    {
+      status: 409,
+      responseText: JSON.stringify({
+        error: "draft_for_fantrax_league_ambiguous",
+        detail: "multiple drafts match",
+      }),
+    },
+  ];
+  const transport = bridge.createTransport({
+    request: (options) => {
+      requests.push(options);
+      options.onload(responses.shift());
+    },
+  });
+
+  await assert.rejects(
+    transport.draftFeedStatus("one"),
+    (error) =>
+      error.status === 404 &&
+      error.code === "draft_for_fantrax_league_not_found" &&
+      error.detail === "no draft matches"
+  );
+  await assert.rejects(
+    transport.draftFeedStatus("two"),
+    (error) =>
+      error.status === 409 &&
+      error.code === "draft_for_fantrax_league_ambiguous" &&
+      error.detail === "multiple drafts match"
+  );
+  assert.deepEqual(
+    requests.map(({ method, url }) => ({ method, url })),
+    [
+      {
+        method: "GET",
+        url: "http://127.0.0.1:8000/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=one",
+      },
+      {
+        method: "GET",
+        url: "http://127.0.0.1:8000/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=two",
+      },
+    ],
+    "named refusals must not trigger a draft-list fallback"
+  );
+
+  const source = await readFile(new URL("../src/userscript.js", import.meta.url), "utf8");
+  assert.doesNotMatch(
+    source,
+    /["'`]\/api\/v1\/drafts(?:["'`]|[?#])/,
+    "the bridge source must not contain the draft-list endpoint"
+  );
+});
+
 test("pairing is registered only through the explicit menu command and stores the returned secret", async () => {
   const bridge = await loadBridge();
   const values = new Map();

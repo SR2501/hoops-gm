@@ -11,8 +11,10 @@ function toPlain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function loadCapture(overrides = {}) {
-  const source = await readFile(new URL("../src/capture.js", import.meta.url), "utf8");
+async function loadCapture(overrides = {}, transformSource = (source) => source) {
+  const source = transformSource(
+    await readFile(new URL("../src/capture.js", import.meta.url), "utf8")
+  );
   const context = {
     console,
     URL,
@@ -101,6 +103,104 @@ test("isFantraxDraftPage scopes only draft routes inside a Fantrax league", asyn
     capture.isFantraxDraftPage("https://example.test/fantasy/league/abc/draft"),
     false
   );
+});
+
+test("fantraxLeagueIdFromUrl returns only backend-valid external league ids", async () => {
+  const capture = await loadCapture();
+
+  for (const leagueId of [
+    "b2gyornvms4606iv",
+    "abc123league",
+    "fantrax-league-one",
+    "LG-BURN",
+    "A",
+    "x".repeat(64),
+  ]) {
+    assert.equal(
+      capture.fantraxLeagueIdFromUrl(
+        `https://www.fantrax.com/fantasy/league/${leagueId}/draft`
+      ),
+      leagueId
+    );
+  }
+
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://fantrax.com/fantasy/league/fantrax-league-one?view=players"
+    ),
+    "fantrax-league-one"
+  );
+
+  const invalidCharacters = [
+    "\u0000",
+    "\u0001",
+    "\u0008",
+    "\t",
+    "\n",
+    "\u000b",
+    "\u000c",
+    "\r",
+    "\u000e",
+    "\u001c",
+    "\u001d",
+    "\u001e",
+    "\u001f",
+    "\u007f",
+    "\u0085",
+    "\u00a0",
+    "\u1680",
+    "\u2000",
+    "\u2001",
+    "\u2002",
+    "\u2003",
+    "\u2004",
+    "\u2005",
+    "\u2006",
+    "\u2007",
+    "\u2008",
+    "\u2009",
+    "\u200a",
+    "\u200b",
+    "\u2028",
+    "\u2029",
+    "\u202f",
+    "\u205f",
+    "\u3000",
+    "\ufeff",
+    "/",
+    "?",
+    "&",
+    "=",
+    "%",
+    "_",
+    "é",
+  ];
+  for (const character of invalidCharacters) {
+    const encoded = encodeURIComponent(character);
+    assert.equal(
+      capture.fantraxLeagueIdFromUrl(
+        `https://www.fantrax.com/fantasy/league/contains${encoded}character/draft`
+      ),
+      null,
+      `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")} must be refused`
+    );
+  }
+
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl("https://www.fantrax.com/fantasy/league//draft"),
+    null
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      `https://www.fantrax.com/fantasy/league/${"x".repeat(65)}/draft`
+    ),
+    null
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl("https://www.fantrax.com/fantasy/league/%E0%A4%A/draft"),
+    null
+  );
+  assert.equal(capture.fantraxLeagueIdFromUrl("https://example.test/fantasy/league/abc"), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -1680,6 +1780,7 @@ test("a mutation during an in-flight snapshot is rate-limited from attempt start
           return new Promise((resolve) => {
             resolveFirst = resolve;
           });
+
         }
         return true;
       },
@@ -1726,6 +1827,73 @@ test("a mutation during an in-flight snapshot is rate-limited from attempt start
   await flushMicrotasks();
   assert.equal(calls, 2);
   watcher.uninstall();
+});
+
+test("the rendered-view observer ignores status-strip-owned mutations", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const doc = makeStripDocument();
+  const snapshotRoot = makeDynamicRoot(() => "players");
+  doc.querySelector = (selector) => (selector === "main" ? snapshotRoot : null);
+  const win = {
+    ...makeStripWindow("https://www.fantrax.com/fantasy/league/abc/players"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  let observerCallback;
+  class FakeMutationObserver {
+    constructor(callback) {
+      observerCallback = callback;
+    }
+    observe() {}
+    disconnect() {}
+  }
+  let snapshots = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+  };
+  const strip = capture.installStatusStrip({ status, win, doc, now: clock.now });
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: {
+      captureRenderedView: async () => {
+        snapshots += 1;
+        return true;
+      },
+    },
+    transport,
+    win,
+    doc,
+    MutationObserverCtor: FakeMutationObserver,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 0,
+    maxSettleMs: 0,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 1000,
+  });
+
+  clock.advance(0);
+  await flushMicrotasks();
+  assert.equal(snapshots, 1);
+
+  observerCallback([{ target: strip.host, addedNodes: [], removedNodes: [] }]);
+  clock.advance(1000);
+  await flushMicrotasks();
+  assert.equal(snapshots, 1, "status rendering must not schedule its own next snapshot");
+
+  observerCallback([{ target: doc.body, addedNodes: [], removedNodes: [] }]);
+  clock.advance(1000);
+  await flushMicrotasks();
+  assert.equal(snapshots, 2, "ordinary Fantrax DOM changes still schedule capture");
+
+  watcher.uninstall();
+  strip.uninstall();
 });
 
 test("an older rendered-view completion cannot clear a newer board refusal", async () => {
@@ -2148,7 +2316,97 @@ function makeStripWindow(href = "https://www.fantrax.com/fantasy/league/abc/draf
 
 function stripNodes(strip) {
   const box = strip.shadowRoot.children[0];
-  return { box, headline: box.children[0], detail: box.children[1], refusal: box.children[2] };
+  return {
+    box,
+    headline: box.children[0],
+    detail: box.children[1],
+    feed: box.children[2],
+    refusal: box.children[3],
+  };
+}
+
+function makeFeedStatus(overrides = {}) {
+  const observationCount = overrides.observation_count ?? 8;
+  const pendingCount = overrides.pending_count ?? Math.min(1, observationCount);
+  const skippedCount =
+    overrides.skipped &&
+    typeof overrides.skipped === "object" &&
+    !Array.isArray(overrides.skipped)
+      ? Object.values(overrides.skipped).reduce(
+        (total, count) => Number.isSafeInteger(count) && count >= 0 ? total + count : total,
+        0
+      )
+      : 0;
+  const appliedCount =
+    overrides.applied_count ?? Math.max(0, observationCount - pendingCount - skippedCount);
+  return {
+    draft_id: 17,
+    as_of: "2026-09-03T14:00:00Z",
+    context_unavailable: null,
+    freshness: [
+      {
+        transport: "bridge_capture",
+        last_seen_at: "2026-09-03T13:59:58Z",
+        age_seconds: 2,
+        instant_count: 1,
+        silent: false,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: "2026-09-03T13:59:59Z",
+        contact_age_seconds: 1,
+        contact_is_known: true,
+      },
+      {
+        transport: "official_http",
+        last_seen_at: "2026-09-03T13:59:58Z",
+        age_seconds: 2,
+        instant_count: 1,
+        silent: false,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: null,
+        contact_age_seconds: null,
+        contact_is_known: false,
+      },
+    ],
+    reconciliation: {
+      independence: {
+        independent: true,
+        reason: "distinct_artifacts_and_transports",
+        left_transports: ["bridge_capture"],
+        right_transports: ["official_http"],
+        shared_artifacts: [],
+        shared_transports: [],
+      },
+      witnessed_by_two_transports: 1,
+      agreements: [
+        {
+          player_label: "Player One",
+          key: "player-one",
+          bridge_artifact: "bridge:1",
+          official_artifact: "official:1",
+        },
+      ],
+      unwitnessed_matches: [],
+      disagreements: [],
+      only_bridge: [],
+      only_official: [],
+      caveats: [],
+    },
+    observation_count: observationCount,
+    applied_count: appliedCount,
+    pending_count: pendingCount,
+    blocked: [],
+    retryable: {},
+    skipped: {},
+    skipped_by_participant: [],
+    unattributed_skipped: {},
+    last_sequence: 7,
+    board_regressions: [],
+    ...overrides,
+  };
 }
 
 test("sanitizeStatusText redacts secret-shaped tokens, collapses whitespace, and truncates", async () => {
@@ -2193,6 +2451,10 @@ test("formatStatusLines separates the four ways this bridge fails silently", asy
     lastCaptureAtMs: null,
     lastSource: null,
     lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus(),
+    feedReason: null,
   };
   const at = 1_000_000;
 
@@ -2253,6 +2515,10 @@ test("formatStatusLines reports counts, source and a coarse age", async () => {
     lastCaptureAtMs: capturedAt,
     lastSource: "rendered-view",
     lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus(),
+    feedReason: null,
   };
 
   const fresh = capture.formatStatusLines(state, { nowMs: capturedAt + 5_000 });
@@ -2301,6 +2567,237 @@ test("formatStatusLines never renders a number a decision rests on", async () =>
     const rendered = `${lines.headline} ${lines.detail} ${lines.refusal || ""}`;
     assert.ok(!forbidden.test(rendered), `status text must carry no valuation vocabulary: ${rendered}`);
   }
+});
+
+test("formatStatusLines renders canonical feed counts and trust-changing states", async () => {
+  const capture = await loadCapture();
+  const report = makeFeedStatus({
+    observation_count: 12,
+    applied_count: 7,
+    pending_count: 5,
+    skipped: { unreadable_player_id: 2 },
+    retryable: { state_version_changed: 1 },
+    blocked: ["ordered_pick_out_of_turn"],
+    freshness: [
+      {
+        transport: "bridge_capture",
+        last_seen_at: "2026-09-03T13:57:00Z",
+        age_seconds: 180,
+        instant_count: 12,
+        silent: true,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: "2026-09-03T13:57:00Z",
+        contact_age_seconds: 180,
+        contact_is_known: true,
+      },
+    ],
+    reconciliation: {
+      independence: {
+        independent: false,
+        reason: "same_transport_on_both_sides",
+        left_transports: ["bridge_capture"],
+        right_transports: ["bridge_capture"],
+        shared_artifacts: [],
+        shared_transports: ["bridge_capture"],
+      },
+      witnessed_by_two_transports: 0,
+      agreements: [],
+      unwitnessed_matches: [],
+      disagreements: [{}],
+      only_bridge: ["Player One"],
+      only_official: ["Player Two", "Player Three"],
+      caveats: ["official source returned a partial view"],
+    },
+    board_regressions: [{}],
+  });
+  const lines = capture.formatStatusLines({
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 1,
+    duplicates: 0,
+    lastCaptureAtMs: 1,
+    lastSource: "rendered-view",
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: report,
+  });
+
+  assert.equal(
+    lines.feed,
+    "draft 17 feed \u00b7 observed 12 \u00b7 applied 7 \u00b7 pending 5 \u00b7 skipped 2 \u00b7 retryable 1"
+  );
+  assert.match(lines.refusal, /FEED BLOCKED: ordered_pick_out_of_turn/);
+  assert.match(lines.refusal, /FEED SKIPPED: unreadable_player_id=2/);
+  assert.match(lines.refusal, /FEED RETRYING: 1 state conflict still pending/);
+  assert.match(lines.refusal, /FEED STALE\/SILENT: bridge_capture 180s old \(limit 60s\)/);
+  assert.match(lines.refusal, /FEED RECONCILIATION: 1 disagreement, 1 bridge-only, 2 official-only/);
+  assert.match(lines.refusal, /FEED UNCORROBORATED: same_transport_on_both_sides/);
+  assert.match(lines.refusal, /FEED CAVEAT: official source returned a partial view/);
+  assert.match(lines.refusal, /BOARD REGRESSION: 1 pick disappeared; prior state retained/);
+  assert.equal(lines.ok, false);
+});
+
+test("permanent feed skips are ordered refusal details and zero skips stay healthy", async () => {
+  const capture = await loadCapture();
+  const healthy = {
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 0,
+    duplicates: 0,
+    lastCaptureAtMs: null,
+    lastSource: null,
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+  };
+
+  for (const [reason, count] of [
+    ["player_external_id_unreadable", 1],
+    ["sale_without_amount", 2],
+  ]) {
+    const lines = capture.formatStatusLines({
+      ...healthy,
+      feedReport: makeFeedStatus({ skipped: { [reason]: count } }),
+    });
+    assert.equal(lines.ok, false);
+    assert.equal(lines.refusal, `FEED SKIPPED: ${reason}=${count}`);
+  }
+
+  const multiple = capture.formatStatusLines({
+    ...healthy,
+    feedReport: makeFeedStatus({
+      skipped: {
+        sale_without_amount: 2,
+        player_external_id_unreadable: 1,
+        already_in_log: 3,
+      },
+    }),
+  });
+  assert.equal(
+    multiple.refusal,
+    "FEED SKIPPED: already_in_log=3, player_external_id_unreadable=1, sale_without_amount=2"
+  );
+  assert.equal(multiple.ok, false);
+
+  const zero = capture.formatStatusLines({
+    ...healthy,
+    feedReport: makeFeedStatus({
+      observation_count: 0,
+      applied_count: 0,
+      pending_count: 0,
+      skipped: { player_external_id_unreadable: 0 },
+    }),
+  });
+  assert.equal(zero.feed, "draft 17 feed \u00b7 observed 0 \u00b7 applied 0 \u00b7 pending 0 \u00b7 skipped 0");
+  assert.equal(zero.refusal, null);
+  assert.equal(zero.ok, true);
+});
+
+test("skipped reason text is sanitized without hiding other feed warnings", async () => {
+  const capture = await loadCapture();
+  const secret = "a".repeat(64);
+  const lines = capture.formatStatusLines({
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus({
+      skipped: {
+        sale_without_amount: 2,
+        [`player_${secret}`]: 1,
+      },
+      retryable: { draft_closed: 1 },
+      blocked: ["draft_pick_coordinate_mismatch"],
+      freshness: [
+        {
+          transport: "bridge_capture",
+          age_seconds: 120,
+          silent: true,
+          silence_threshold_seconds: 60,
+          contact_age_seconds: 120,
+          contact_is_known: true,
+        },
+      ],
+      board_regressions: [{}],
+    }),
+  });
+
+  assert.equal(lines.ok, false);
+  assert.match(lines.refusal, /FEED SKIPPED:/);
+  assert.match(lines.refusal, /sale_without_amount=2/);
+  assert.doesNotMatch(lines.refusal, new RegExp(secret));
+  assert.match(lines.refusal, /\[redacted\]=1/);
+  assert.match(lines.refusal, /FEED BLOCKED:/);
+  assert.match(lines.refusal, /FEED RETRYING:/);
+  assert.match(lines.refusal, /FEED STALE\/SILENT:/);
+  assert.match(lines.refusal, /BOARD REGRESSION:/);
+});
+
+test("formatStatusLines makes context and identity failures distinct from zero picks", async () => {
+  const capture = await loadCapture();
+  const base = {
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 0,
+    duplicates: 0,
+    lastCaptureAtMs: null,
+    lastSource: null,
+    lastRefusal: null,
+  };
+
+  const noDraft = capture.formatStatusLines({
+    ...base,
+    feedStatus: "not_found",
+    feedLeagueId: "league-one",
+    feedReason: "draft_for_fantrax_league_not_found",
+  });
+  assert.equal(noDraft.feed, "feed league-one: no local draft");
+  assert.match(noDraft.refusal, /^NO LOCAL DRAFT:/);
+
+  const ambiguous = capture.formatStatusLines({
+    ...base,
+    feedStatus: "ambiguous",
+    feedLeagueId: "league-one",
+    feedReason: "draft_for_fantrax_league_ambiguous",
+  });
+  assert.match(ambiguous.refusal, /^AMBIGUOUS LOCAL DRAFT:/);
+
+  const invalid = capture.formatStatusLines({
+    ...base,
+    feedStatus: "invalid_page_id",
+    feedLeagueId: null,
+  });
+  assert.match(invalid.refusal, /^FEED ID UNAVAILABLE:/);
+
+  const unavailable = capture.formatStatusLines({
+    ...base,
+    feedStatus: "uncheckable",
+    feedLeagueId: "league-one",
+    feedReason: "backend unreachable",
+  });
+  assert.match(unavailable.refusal, /^FEED STATUS UNCHECKABLE: backend unreachable/);
+
+  const context = capture.formatStatusLines({
+    ...base,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus({
+      observation_count: 0,
+      applied_count: 0,
+      pending_count: 0,
+      context_unavailable: "draft_source_context_unavailable",
+    }),
+  });
+  assert.match(context.feed, /observed 0/);
+  assert.match(context.refusal, /FEED CONTEXT UNAVAILABLE: draft_source_context_unavailable/);
 });
 
 test("createBridgeStatus records deliveries, duplicates and refusals, and notifies once each", async () => {
@@ -2375,6 +2872,14 @@ test("version currency stays fail-closed across current, update, and malformed r
   assert.equal(status.snapshot().versionStatus, "update_available");
   assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
 
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+  assert.equal(
+    status.snapshot().versionStatus,
+    "update_available",
+    "feed success cannot clear update currency"
+  );
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
+
   status.recordVersionStatus({
     status: "current",
     installed_version: "0.5.3",
@@ -2383,7 +2888,12 @@ test("version currency stays fail-closed across current, update, and malformed r
     reason: null,
   });
   assert.equal(status.snapshot().versionStatus, "current");
-  assert.equal(capture.formatStatusLines(status.snapshot()).refusal, null);
+  assert.equal(
+    capture.formatStatusLines(status.snapshot(), {
+      nowMs: Date.parse(status.snapshot().feedReport.as_of),
+    }).refusal,
+    null
+  );
 
   status.recordVersionStatus({
     status: "current",
@@ -2570,6 +3080,1204 @@ test("an older deferred currency response cannot overwrite a newer result", asyn
   assert.equal(status.snapshot().sourceVersion, "0.5.4");
 });
 
+test("feed revalidation uses the page league id, clears stale counts, and stays bounded", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const reports = [
+    makeFeedStatus({ observation_count: 3, applied_count: 3, pending_count: 0 }),
+    makeFeedStatus({ observation_count: 4, applied_count: 3, pending_count: 1 }),
+  ];
+  const requested = [];
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: async (leagueId) => {
+        requested.push(leagueId);
+        return reports.shift();
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    true
+  );
+  assert.equal(status.snapshot().feedStatus, "checking");
+  assert.equal(status.snapshot().feedReport, null);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
+  assert.deepEqual(requested, ["league-one"]);
+
+  clock.advance(999);
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    false
+  );
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
+
+  clock.advance(1);
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    true
+  );
+  assert.equal(status.snapshot().feedStatus, "checking");
+  assert.equal(
+    status.snapshot().feedReport,
+    null,
+    "an expired refresh cannot retain a previous green count"
+  );
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.observation_count, 4);
+  assert.deepEqual(requested, ["league-one", "league-one"]);
+});
+
+test("feed revalidation names zero-match, ambiguity, invalid page id, and network failures", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const failures = [
+    Object.assign(new Error("backend returned HTTP 404"), {
+      code: "draft_for_fantrax_league_not_found",
+    }),
+    Object.assign(new Error("backend returned HTTP 409"), {
+      code: "draft_for_fantrax_league_ambiguous",
+    }),
+    new Error("backend unreachable"),
+  ];
+  let calls = 0;
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: async () => {
+        calls += 1;
+        throw failures.shift();
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "not_found");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /NO LOCAL DRAFT/);
+
+  clock.advance(1000);
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "ambiguous");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /AMBIGUOUS LOCAL DRAFT/);
+
+  clock.advance(1000);
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /backend unreachable/);
+
+  assert.equal(
+    revalidator.recheck(
+      "https://www.fantrax.com/fantasy/league/contains%20whitespace/draft"
+    ),
+    false
+  );
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.equal(calls, 3, "a malformed or absent page id must never reach the backend");
+
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/home"),
+    false
+  );
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(calls, 3, "a page without a league id must never reach the backend");
+});
+
+test("feed revalidation rejects malformed success and capture or update changes cannot erase it", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => ({ draft_id: 17 }) },
+    status,
+  });
+
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft");
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.match(
+    capture.formatStatusLines(status.snapshot()).refusal,
+    /invalid local feed status response/
+  );
+
+  status.recordDelivered("rendered-view");
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.5",
+    source_version: "0.5.5",
+    served_version: "0.5.5",
+    reason: null,
+  });
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.match(
+    capture.formatStatusLines(status.snapshot()).refusal,
+    /invalid local feed status response/
+  );
+});
+
+test("feed refresh rejects a participant skip omitted from the aggregate", async () => {
+  const capture = await loadCapture();
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+  const malformed = makeFeedStatus({
+    skipped: {},
+    skipped_by_participant: [
+      {
+        participant_id: 101,
+        team_slot: 1,
+        total: 1,
+        reasons: { player_external_id_unreadable: 1 },
+      },
+    ],
+    unattributed_skipped: {},
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+  assert.equal(status.snapshot().feedStatus, "available");
+
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => malformed },
+    status,
+    readCurrentUrl: () => url,
+  });
+  revalidator.recheck(url);
+  assert.equal(status.snapshot().feedReport, null, "refresh start clears prior green evidence");
+  await flushMicrotasks();
+
+  const snapshot = status.snapshot();
+  const lines = capture.formatStatusLines({
+    ...snapshot,
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(snapshot.feedStatus, "uncheckable");
+  assert.equal(snapshot.feedReport, null);
+  assert.match(lines.feed, /status uncheckable/);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/);
+  assert.doesNotMatch(lines.feed, /skipped 0/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed refresh rejects malformed freshness instead of publishing a false green", async () => {
+  const capture = await loadCapture();
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+  const malformed = makeFeedStatus({
+    freshness: [
+      {
+        transport: "bridge_capture",
+        silent: false,
+        silence_threshold_seconds: -1,
+        instant_count: 0,
+      },
+    ],
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => malformed },
+    status,
+    readCurrentUrl: () => url,
+  });
+  revalidator.recheck(url);
+  await flushMicrotasks();
+
+  const snapshot = status.snapshot();
+  const lines = capture.formatStatusLines({
+    ...snapshot,
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(snapshot.feedStatus, "uncheckable");
+  assert.equal(snapshot.feedReport, null);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed validation enforces the complete freshness contract and clock relationships", async () => {
+  const capture = await loadCapture();
+  const [valid, official] = makeFeedStatus().freshness;
+  const invalidFreshness = [
+    ["empty source list", []],
+    ["missing source", [valid]],
+    ["duplicate source", [valid, { ...valid }]],
+    ["extra field", [{ ...valid, unexpected: true }, official]],
+    ["unknown transport", [{ ...valid, transport: "browser_guess" }, official]],
+    ["negative age", [{ ...valid, age_seconds: -1 }, official]],
+    ["fractional instant count", [{ ...valid, instant_count: 1.5 }, official]],
+    ["last-seen pair mismatch", [{ ...valid, age_seconds: null }, official]],
+    ["claim pair mismatch", [{ ...valid, claim_skew_seconds: 0 }, official]],
+    ["contact pair mismatch", [{ ...valid, contact_age_seconds: null }, official]],
+    ["contact flag mismatch", [{ ...valid, contact_is_known: false }, official]],
+    [
+      "official source cannot claim contact",
+      [
+        valid,
+        {
+          ...official,
+          last_seen_at: "2026-09-03T13:50:00Z",
+          age_seconds: 600,
+          silent: false,
+          contact_at: "2026-09-03T13:59:59Z",
+          contact_age_seconds: 1,
+          contact_is_known: true,
+        },
+      ],
+    ],
+    [
+      "silent decision mismatch",
+      [
+        {
+          ...valid,
+          age_seconds: 120,
+          contact_is_known: false,
+          contact_at: null,
+          contact_age_seconds: null,
+        },
+        official,
+      ],
+    ],
+    [
+      "zero instants cannot be healthy",
+      [
+        {
+          ...valid,
+          last_seen_at: null,
+          age_seconds: null,
+          instant_count: 0,
+          source_claimed_at: null,
+          claim_skew_seconds: null,
+          silent: false,
+        },
+        official,
+      ],
+    ],
+  ];
+
+  for (const [name, freshness] of invalidFreshness) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(makeFeedStatus({ freshness }), "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+});
+
+test("feed validation reconciles freshness ages with the status clock", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const freshness = makeFeedStatus().freshness.map((source) => ({
+    ...source,
+    last_seen_at: "2026-09-01T13:59:58Z",
+    ...(source.contact_is_known ? { contact_at: "2026-09-01T13:59:59Z" } : {}),
+  }));
+
+  status.recordFeedStatus(makeFeedStatus({ freshness }), "league-one");
+  const lines = capture.formatStatusLines({
+    ...status.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed validation rejects malformed reconciliation and board-regression contracts", async () => {
+  const capture = await loadCapture();
+  const match = {
+    player_label: "Player One",
+    key: "player-one",
+    bridge_artifact: "bridge:1",
+    official_artifact: "official:1",
+  };
+  const independence = {
+    independent: true,
+    reason: "distinct_artifacts_and_transports",
+    left_transports: ["bridge_capture"],
+    right_transports: ["official_http"],
+    shared_artifacts: [],
+    shared_transports: [],
+  };
+  const validReconciliation = {
+    independence,
+    witnessed_by_two_transports: 1,
+    agreements: [match],
+    unwitnessed_matches: [],
+    disagreements: [],
+    only_bridge: [],
+    only_official: [],
+    caveats: [],
+  };
+  const invalidReports = [
+    [
+      "missing reconciliation despite official observations",
+      makeFeedStatus({ reconciliation: null }),
+    ],
+    [
+      "truncated reconciliation",
+      makeFeedStatus({
+        reconciliation: {
+          independence: { independent: true },
+          disagreements: [],
+          only_bridge: [],
+          only_official: [],
+          caveats: [],
+        },
+      }),
+    ],
+    [
+      "witness count mismatch",
+      makeFeedStatus({
+        reconciliation: { ...validReconciliation, witnessed_by_two_transports: 0 },
+      }),
+    ],
+    [
+      "swapped independent transports",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          independence: {
+            ...independence,
+            left_transports: ["official_http"],
+            right_transports: ["bridge_capture"],
+          },
+        },
+      }),
+    ],
+    [
+      "empty independent transports",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          independence: {
+            ...independence,
+            left_transports: [],
+            right_transports: [],
+          },
+        },
+      }),
+    ],
+    [
+      "unwitnessed match despite independence",
+      makeFeedStatus({
+        reconciliation: { ...validReconciliation, unwitnessed_matches: [match] },
+      }),
+    ],
+    [
+      "official observations with an empty reconciliation right side",
+      makeFeedStatus({
+        reconciliation: {
+          independence: {
+            independent: false,
+            reason: "one_side_empty",
+            left_transports: ["bridge_capture"],
+            right_transports: [],
+            shared_artifacts: [],
+            shared_transports: [],
+          },
+          witnessed_by_two_transports: 0,
+          agreements: [],
+          unwitnessed_matches: [],
+          disagreements: [],
+          only_bridge: ["Player One"],
+          only_official: [],
+          caveats: [],
+        },
+      }),
+    ],
+    [
+      "malformed nested match",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          agreements: [{ ...match, bridge_artifact: 1 }],
+        },
+      }),
+    ],
+    [
+      "malformed board regression",
+      makeFeedStatus({
+        board_regressions: [{ source_seat: 1 }],
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(report, "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+
+  const validStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  validStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: validReconciliation,
+      board_regressions: [
+        {
+          source_seat: 1,
+          round_number: 1,
+          pick_in_round: 1,
+          player_label: "Player One",
+          last_seen_artifact_key: "bridge:1",
+        },
+      ],
+    }),
+    "league-one"
+  );
+  assert.equal(validStatus.snapshot().feedStatus, "available");
+  const validLines = capture.formatStatusLines({
+    ...validStatus.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.match(validLines.refusal, /BOARD REGRESSION/);
+  assert.equal(validLines.ok, false);
+
+  const emptySideStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  emptySideStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: {
+        independence: {
+          independent: false,
+          reason: "one_side_empty",
+          left_transports: [],
+          right_transports: ["official_http"],
+          shared_artifacts: [],
+          shared_transports: [],
+        },
+        witnessed_by_two_transports: 0,
+        agreements: [],
+        unwitnessed_matches: [],
+        disagreements: [],
+        only_bridge: [],
+        only_official: ["Player One"],
+        caveats: [],
+      },
+    }),
+    "league-one"
+  );
+  assert.equal(emptySideStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines({
+      ...emptySideStatus.snapshot(),
+      paired: true,
+      versionStatus: "current",
+    }).refusal,
+    /FEED UNCORROBORATED: one_side_empty/
+  );
+
+  const noInstantStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  noInstantStatus.recordFeedStatus(
+    makeFeedStatus({
+      freshness: makeFeedStatus().freshness.map((source) => ({
+        ...source,
+        last_seen_at: null,
+        age_seconds: null,
+        instant_count: 0,
+        silent: true,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+      })),
+      reconciliation: null,
+    }),
+    "league-one"
+  );
+  assert.equal(noInstantStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines({
+      ...noInstantStatus.snapshot(),
+      paired: true,
+      versionStatus: "current",
+    }).refusal,
+    /FEED STALE\/SILENT/
+  );
+});
+
+test("feed validation rejects impossible source and reconciliation evidence", async () => {
+  const capture = await loadCapture();
+  const valid = makeFeedStatus();
+  const sameArtifact = {
+    ...valid.reconciliation.agreements[0],
+    official_artifact: valid.reconciliation.agreements[0].bridge_artifact,
+  };
+  const invalidReports = [
+    [
+      "source instant total exceeds observations",
+      makeFeedStatus({ observation_count: 1 }),
+    ],
+    [
+      "independent nonempty sources have no reconciliation outcome",
+      makeFeedStatus({
+        reconciliation: {
+          ...valid.reconciliation,
+          witnessed_by_two_transports: 0,
+          agreements: [],
+        },
+      }),
+    ],
+    [
+      "an agreement reuses one artifact across independent sources",
+      makeFeedStatus({
+        reconciliation: {
+          ...valid.reconciliation,
+          agreements: [sameArtifact],
+        },
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5" });
+    status.recordFeedStatus(report, "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+
+  const sharedArtifactStatus = capture.createBridgeStatus({ version: "0.5.5" });
+  sharedArtifactStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: {
+        ...valid.reconciliation,
+        independence: {
+          ...valid.reconciliation.independence,
+          independent: false,
+          reason: "same_artifact_on_both_sides",
+          shared_artifacts: [sameArtifact.bridge_artifact],
+        },
+        witnessed_by_two_transports: 0,
+        agreements: [],
+        unwitnessed_matches: [sameArtifact],
+      },
+    }),
+    "league-one"
+  );
+  assert.equal(sharedArtifactStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines(
+      {
+        ...sharedArtifactStatus.snapshot(),
+        paired: true,
+        versionStatus: "current",
+      },
+      { nowMs: Date.parse(valid.as_of) }
+    ).refusal,
+    /FEED UNCORROBORATED: same_artifact_on_both_sides/
+  );
+});
+
+test("feed validation conserves every observation across terminal dispositions", async () => {
+  const capture = await loadCapture();
+  const participant = {
+    participant_id: 101,
+    team_slot: 1,
+    total: 2,
+    reasons: { player_external_id_unreadable: 2 },
+  };
+  const valid = makeFeedStatus({
+    observation_count: 8,
+    applied_count: 3,
+    pending_count: 1,
+    skipped: {
+      player_external_id_unreadable: 2,
+      sale_without_amount: 2,
+    },
+    skipped_by_participant: [participant],
+    unattributed_skipped: { sale_without_amount: 2 },
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5" });
+  status.recordFeedStatus(valid, "league-one");
+  assert.equal(status.snapshot().feedStatus, "available");
+
+  const corroborated = makeFeedStatus({
+    observation_count: 4,
+    applied_count: 1,
+    pending_count: 0,
+    skipped: { already_in_log: 2, duplicate_within_run: 1 },
+    skipped_by_participant: [
+      {
+        participant_id: 101,
+        team_slot: 1,
+        total: 2,
+        reasons: { already_in_log: 2 },
+      },
+      {
+        participant_id: 102,
+        team_slot: 2,
+        total: 1,
+        reasons: { duplicate_within_run: 1 },
+      },
+    ],
+    unattributed_skipped: {},
+  });
+  status.recordFeedStatus(corroborated, "league-one");
+  assert.equal(
+    status.snapshot().feedStatus,
+    "available",
+    "linked corroboration remains a permanent skip, not a second applied disposition"
+  );
+
+  const invalidReports = [
+    [
+      "observations exceed accounted dispositions",
+      makeFeedStatus({ observation_count: 9, applied_count: 7, pending_count: 1 }),
+    ],
+    [
+      "accounted dispositions exceed observations",
+      makeFeedStatus({ observation_count: 7, applied_count: 7, pending_count: 1 }),
+    ],
+    [
+      "disposition addition overflows the safe-integer range",
+      makeFeedStatus({
+        observation_count: Number.MAX_SAFE_INTEGER,
+        applied_count: Number.MAX_SAFE_INTEGER,
+        pending_count: 1,
+      }),
+    ],
+  ];
+  for (const [name, report] of invalidReports) {
+    status.recordFeedStatus(valid, "league-one");
+    status.recordFeedStatus(report, "league-one");
+    const snapshot = status.snapshot();
+    const lines = capture.formatStatusLines({
+      ...snapshot,
+      paired: true,
+      versionStatus: "current",
+    });
+    assert.equal(snapshot.feedStatus, "uncheckable", name);
+    assert.equal(snapshot.feedReport, null, `${name}: prior evidence must clear`);
+    assert.match(lines.refusal, /FEED STATUS UNCHECKABLE/, name);
+    assert.equal(lines.ok, false, name);
+  }
+});
+
+test("feed freshness ages on the existing watcher render without another response", async () => {
+  const capture = await loadCapture();
+  const report = makeFeedStatus({
+    freshness: makeFeedStatus().freshness.map((source) => ({
+      ...source,
+      silence_threshold_seconds: 120,
+    })),
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5" });
+  status.recordFeedStatus(report, "league-one");
+  const baseMs = Date.parse(report.as_of);
+  const state = {
+    ...status.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  };
+
+  const current = capture.formatStatusLines(state, { nowMs: baseMs + 59_000 });
+  assert.equal(current.refusal, null);
+  assert.equal(current.ok, true);
+
+  const stale = capture.formatStatusLines(state, { nowMs: baseMs + 61_000 });
+  assert.match(stale.refusal, /FEED STATUS STALE: local report 61s old/);
+  assert.equal(stale.ok, false);
+
+  const silent = capture.formatStatusLines(state, { nowMs: baseMs + 120_000 });
+  assert.match(silent.refusal, /FEED STALE\/SILENT/);
+  assert.match(silent.refusal, /bridge_capture 121s old/);
+  assert.equal(silent.ok, false);
+});
+
+test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
+  const capture = await loadCapture();
+  const participant = (overrides = {}) => ({
+    participant_id: 101,
+    team_slot: 1,
+    total: 1,
+    reasons: { player_external_id_unreadable: 1 },
+    ...overrides,
+  });
+  const invalidReports = [
+    [
+      "extra aggregate reason",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1, sale_without_amount: 1 },
+        skipped_by_participant: [participant()],
+      }),
+    ],
+    [
+      "zero-count aggregate reason missing from partition",
+      makeFeedStatus({ skipped: { player_external_id_unreadable: 0 } }),
+    ],
+    [
+      "extra partition reason",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1 },
+        skipped_by_participant: [participant()],
+        unattributed_skipped: { sale_without_amount: 1 },
+      }),
+    ],
+    [
+      "zero-count partition reason missing from aggregate",
+      makeFeedStatus({ unattributed_skipped: { player_external_id_unreadable: 0 } }),
+    ],
+    [
+      "participant total mismatch",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1 },
+        skipped_by_participant: [participant({ total: 2 })],
+      }),
+    ],
+    ["negative aggregate count", makeFeedStatus({ skipped: { invalid: -1 } })],
+    [
+      "fractional participant count",
+      makeFeedStatus({
+        skipped: { invalid: 1.5 },
+        skipped_by_participant: [
+          participant({ total: 1.5, reasons: { invalid: 1.5 } }),
+        ],
+      }),
+    ],
+    [
+      "string unattributed count",
+      makeFeedStatus({
+        skipped: { invalid: 1 },
+        unattributed_skipped: { invalid: "1" },
+      }),
+    ],
+    ["aggregate array", makeFeedStatus({ skipped: [] })],
+    ["unattributed array", makeFeedStatus({ unattributed_skipped: [] })],
+    ["malformed participant", makeFeedStatus({ skipped_by_participant: [null] })],
+    [
+      "participant reason array",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ total: 0, reasons: [] })],
+      }),
+    ],
+    [
+      "participant with extra field",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ unexpected: true })],
+      }),
+    ],
+    [
+      "invalid participant identifier",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ participant_id: "101", total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "invalid participant slot",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ team_slot: 0, total: 0, reasons: {} })],
+      }),
+    ],
+    [
+      "duplicate participant id with different slots",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ team_slot: 2, total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate team slot with different participant ids",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ participant_id: 102, total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate zero-count partition",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate positive partition otherwise reconciles",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 2 },
+        skipped_by_participant: [participant(), participant()],
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(makeFeedStatus(), "league-one");
+    assert.equal(status.snapshot().feedStatus, "available", `${name}: valid baseline`);
+
+    status.recordFeedStatus(report, "league-one");
+    const snapshot = status.snapshot();
+    const lines = capture.formatStatusLines({
+      ...snapshot,
+      paired: true,
+      versionStatus: "current",
+    });
+    assert.equal(snapshot.feedStatus, "uncheckable", name);
+    assert.equal(snapshot.feedReport, null, `${name}: prior count evidence must clear`);
+    assert.match(lines.feed, /status uncheckable/, name);
+    assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/, name);
+    assert.doesNotMatch(lines.feed, /skipped 0/, `${name}: malformed aggregate is not salvaged`);
+    assert.equal(lines.ok, false, name);
+  }
+});
+
+test("feed validation accepts only reconciled participant and unattributed skip partitions", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const linesAfter = (report) => {
+    status.recordFeedStatus(report, "league-one");
+    return capture.formatStatusLines(
+      {
+        ...status.snapshot(),
+        paired: true,
+        versionStatus: "current",
+      },
+      { nowMs: Date.parse(report.as_of) }
+    );
+  };
+
+  const unattributed = linesAfter(
+    makeFeedStatus({
+      skipped: { source_board_evidence_only: 2 },
+      skipped_by_participant: [],
+      unattributed_skipped: { source_board_evidence_only: 2 },
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(unattributed.refusal, "FEED SKIPPED: source_board_evidence_only=2");
+  assert.equal(unattributed.ok, false);
+
+  const partitioned = linesAfter(
+    makeFeedStatus({
+      observation_count: 12,
+      skipped: {
+        already_in_log: 3,
+        player_external_id_unreadable: 3,
+        source_board_evidence_only: 4,
+      },
+      skipped_by_participant: [
+        {
+          participant_id: 101,
+          team_slot: 1,
+          total: 3,
+          reasons: {
+            already_in_log: 2,
+            player_external_id_unreadable: 1,
+          },
+        },
+        {
+          participant_id: 102,
+          team_slot: 2,
+          total: 3,
+          reasons: {
+            already_in_log: 1,
+            player_external_id_unreadable: 2,
+          },
+        },
+      ],
+      unattributed_skipped: { source_board_evidence_only: 4 },
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(
+    partitioned.refusal,
+    "FEED SKIPPED: already_in_log=3, player_external_id_unreadable=3, source_board_evidence_only=4"
+  );
+  assert.equal(partitioned.ok, false);
+
+  const zero = linesAfter(
+    makeFeedStatus({
+      skipped: {},
+      skipped_by_participant: [
+        { participant_id: 101, team_slot: 1, total: 0, reasons: {} },
+        { participant_id: 102, team_slot: 2, total: 0, reasons: {} },
+      ],
+      unattributed_skipped: {},
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(zero.refusal, null);
+  assert.equal(zero.ok, true);
+});
+
+test("mutations removing feed conservation or partition identity checks are detected", async () => {
+  const conservationNeedle = "observationCountsAreConserved(report) &&";
+  const uniquenessNeedle = "!hasUniqueParticipantIdentities(report.skipped_by_participant)";
+  const withoutConservation = await loadCapture({}, (source) => {
+    assert.ok(source.includes(conservationNeedle));
+    return source.replace(conservationNeedle, "true &&");
+  });
+  const withoutUniqueness = await loadCapture({}, (source) => {
+    assert.ok(source.includes(uniquenessNeedle));
+    return source.replace(uniquenessNeedle, "false");
+  });
+
+  const conservationStatus = withoutConservation.createBridgeStatus({ version: "0.5.5" });
+  conservationStatus.recordFeedStatus(
+    makeFeedStatus({ observation_count: 9, applied_count: 7, pending_count: 1 }),
+    "league-one"
+  );
+  assert.equal(
+    conservationStatus.snapshot().feedStatus,
+    "available",
+    "the focused false-green assertion must kill a mutant without conservation"
+  );
+
+  const uniquenessStatus = withoutUniqueness.createBridgeStatus({ version: "0.5.5" });
+  uniquenessStatus.recordFeedStatus(
+    makeFeedStatus({
+      skipped_by_participant: [
+        { participant_id: 101, team_slot: 1, total: 0, reasons: {} },
+        { participant_id: 101, team_slot: 2, total: 0, reasons: {} },
+      ],
+    }),
+    "league-one"
+  );
+  assert.equal(
+    uniquenessStatus.snapshot().feedStatus,
+    "available",
+    "the focused false-green assertion must kill a mutant without identity uniqueness"
+  );
+});
+
+test("a league navigation invalidates an older in-flight feed response", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const pending = [];
+  const requested = [];
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: (leagueId) => {
+        requested.push(leagueId);
+        return new Promise((resolve) => pending.push(resolve));
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 60000,
+  });
+
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft");
+  await flushMicrotasks();
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-two/draft");
+  await flushMicrotasks();
+  assert.deepEqual(requested, ["league-one", "league-two"]);
+  assert.equal(
+    status.snapshot().feedLeagueId,
+    "league-two",
+    "a league change bypasses the same-league cadence bound"
+  );
+
+  pending[1](makeFeedStatus({ draft_id: 22, observation_count: 2 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.draft_id, 22);
+  pending[0](makeFeedStatus({ draft_id: 11, observation_count: 99 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.draft_id, 22);
+  assert.equal(status.snapshot().feedReport.observation_count, 2);
+});
+
+test("feed completion rechecks live page identity before the watcher observes navigation", async () => {
+  const capture = await loadCapture();
+  const page = {
+    url: "https://www.fantrax.com/fantasy/league/league-one/draft",
+  };
+
+  for (const outcome of ["success", "failure"]) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    let settle;
+    const revalidator = capture.createFeedStatusRevalidator({
+      transport: {
+        draftFeedStatus: () =>
+          new Promise((resolve, reject) => {
+            settle = outcome === "success" ? resolve : reject;
+          }),
+      },
+      status,
+      readCurrentUrl: () => page.url,
+    });
+
+    page.url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+    revalidator.recheck(page.url);
+    await flushMicrotasks();
+    assert.equal(status.snapshot().feedStatus, "checking");
+
+    page.url = "https://www.fantrax.com/fantasy/league/league-two/draft";
+    settle(
+      outcome === "success"
+        ? makeFeedStatus({ draft_id: 11, observation_count: 99 })
+        : new Error("league-one request failed")
+    );
+    await flushMicrotasks();
+
+    assert.equal(
+      status.snapshot().feedStatus,
+      "checking",
+      `a stale ${outcome} must not publish before the watcher observes league-two`
+    );
+    assert.equal(status.snapshot().feedReport, null);
+    assert.equal(status.snapshot().feedReason, null);
+    revalidator.stop();
+  }
+});
+
+test("a long-lived visible tab refreshes feed status on the existing watcher only", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  let observationCount = 2;
+  let calls = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+    draftFeedStatus: async () => {
+      calls += 1;
+      return makeFeedStatus({ observation_count: observationCount });
+    },
+  };
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport,
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/league-one/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  assert.equal(status.snapshot().feedReport.observation_count, 2);
+  assert.equal(clock.pendingIntervals(), 1);
+
+  observationCount = 3;
+  clock.advance(999);
+  watcher.checkContext();
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  clock.advance(1);
+  watcher.checkContext();
+  assert.equal(status.snapshot().feedStatus, "checking");
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
+  assert.equal(clock.pendingIntervals(), 1, "feed status adds no recurring timer");
+
+  watcher.uninstall();
+  revalidator.stop();
+});
+
+test("the existing watcher clears feed evidence and invalidates an in-flight response after leaving a league", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  let resolveFeed;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+    draftFeedStatus: () =>
+      new Promise((resolve) => {
+        resolveFeed = resolve;
+      }),
+  };
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport,
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/league-one/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "checking");
+
+  win.location.href = "https://www.fantrax.com/fantasy/home";
+  watcher.checkContext();
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+
+  resolveFeed(makeFeedStatus({ draft_id: 11, observation_count: 99 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+
+  watcher.uninstall();
+  revalidator.stop();
+});
+
 test("an unrelated success cannot clear an automatic board refusal", async () => {
   const capture = await loadCapture();
   const status = capture.createBridgeStatus({ now: () => 1 });
@@ -2721,9 +4429,19 @@ test("installStatusStrip renders into a closed shadow root that cannot intercept
   );
   assert.ok(doc.created.every((node) => node.styleWrites.length >= 0));
 
-  const { headline, detail } = stripNodes(strip);
+  const { box, headline, detail, feed, refusal } = stripNodes(strip);
   assert.match(headline.textContent, /hoops-gm v0\.5\.2 \u00b7 NOT PAIRED/);
   assert.match(detail.textContent, /pair from the Tampermonkey menu/);
+  assert.equal(box.style.getPropertyValue("white-space"), "normal");
+  assert.equal(box.style.getPropertyValue("overflow"), "visible");
+  assert.equal(box.style.getPropertyValue("overflow-wrap"), "anywhere");
+  for (const singleLine of [headline, detail, feed]) {
+    assert.equal(singleLine.style.getPropertyValue("white-space"), "nowrap");
+    assert.equal(singleLine.style.getPropertyValue("overflow"), "hidden");
+    assert.equal(singleLine.style.getPropertyValue("text-overflow"), "ellipsis");
+  }
+  assert.equal(refusal.style.getPropertyValue("white-space"), "normal");
+  assert.equal(refusal.style.getPropertyValue("overflow-wrap"), "anywhere");
 });
 
 test("the status strip re-renders on real transitions and stays silent otherwise", async () => {

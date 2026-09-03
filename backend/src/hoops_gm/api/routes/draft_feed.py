@@ -70,8 +70,11 @@ FantraxLeagueId = Annotated[
     Query(
         min_length=1,
         max_length=64,
-        pattern=r"^\S+$",
-        description="The external Fantrax league identifier present in the browser URL.",
+        pattern=r"^[A-Za-z0-9-]+$",
+        description=(
+            "The external Fantrax league identifier present in the browser URL: "
+            "1-64 ASCII letters, digits, or hyphens."
+        ),
     ),
 ]
 
@@ -293,6 +296,8 @@ class FeedStatusResponse(BaseModel):
     freshness: list[FreshnessOut]
     reconciliation: ReconciliationOut | None
     observation_count: int
+    #: Disjoint terminal disposition count. A permanently skipped observation
+    #: is not applied here even when it retains event linkage for provenance.
     applied_count: int
     pending_count: int
     #: Reasons the last apply run stopped without consuming a still-pending row.

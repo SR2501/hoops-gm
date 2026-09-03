@@ -34146,3 +34146,296 @@ exercised or changed.
 require hosted Code-gate checks, then install 0.5.4 through the existing
 loopback update URL and verify a real current-to-update transition in a
 long-lived mock-draft tab before relying on the strip.
+
+## 2026-09-03 - bridge - Draft-feed evidence in the Fantrax status strip
+
+**Changed:** Completed `bridge-status-strip-feed-counts` from authoritative
+main `432f68d3cdcaeae4656784e3d2f49a6931cb0cf4`. Userscript 0.5.5 now extracts
+the external league id from the current Fantrax league URL and requests only
+`GET /api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=...`. It consumes
+the existing `FeedStatusResponse`; it does not list drafts, choose a newest
+draft, interpret a second payload, expose a secret, or add an action.
+
+**Now true:** The strip's independent feed line names the exact local
+`draft_id` and renders observed, applied, pending, skipped and retryable counts.
+Blocked/refused, context-unavailable, stale/silent, reconciliation,
+uncorroborated-board and board-regression states replace the ordinary count
+line with explicit warnings. Named zero-match and ambiguous-match failures
+render **NO LOCAL DRAFT** and **AMBIGUOUS LOCAL DRAFT** rather than zero picks;
+malformed or absent page identity and unreachable/malformed backend responses
+also clear any prior green/count state. Capture success cannot clear feed or
+version warnings, and version success cannot clear feed failures.
+
+Feed checks borrow the existing visible-tab rendered-view watcher and add no
+recurring timer. An unchanged league starts at most one request per minute; a
+different league refreshes immediately. Every started refresh clears its old
+report, invalid/non-league SPA navigation clears the report without a request,
+and monotonic generations prevent late responses from either a previous league
+or a page already left from publishing. URL validation matches the backend's
+Python `^\S+$`, including the U+001C-U+001F difference from JavaScript `\s`.
+
+Focused userscript tests pass **111/111** and the built artifact reports 0.5.5.
+The cumulative Code gate passes: backend ruff/format/mypy and **2,499 passed, 2
+skipped, 43 deselected**; frontend lint/type-check, **418/418 tests**, build and
+repository JavaScript lint; userscript tests/build; recorded OpenAPI, backlog
+graph, secret scan and document terminators. Backlog recounts to **76 done, 0
+blocked, 116 pending, 192 total**. Independent review found three defects
+(off-league stale response publication, Python/JavaScript whitespace mismatch,
+and a weak no-fallback assertion); all three are fixed and pinned by tests.
+
+**Could not verify:** No live Fantrax draft page, real persisted Draft mapping,
+long-lived Tampermonkey tab, backend disconnect, or changing real feed was
+exercised. The UI remains evidence/health only: no auction price,
+recommendation, NBA auction-board support, Fantrax mutation, account write,
+authority change or automation path was added. Hosted CI is unverified until
+the PR runs.
+
+**Next:** Coordinator should review the exact PR head and hosted Code-gate
+results, then exercise the 0.5.5 strip against the rehearsal draft's real
+Fantrax league id before relying on its feed evidence under a pick clock.
+
+## 2026-09-03 - bridge - Correcting feed identity validation and response publication
+
+**Correction:** The preceding entry says URL validation matches Python
+`^\S+$`. That is false. FastAPI/Pydantic's query-pattern engine is not Python's
+`re`: the live route accepted NUL, U+001C-U+001F, DEL, U+200B and U+FEFF under
+that pattern. The backend contract owner narrowed the shared boundary instead
+of preserving runtime-dependent `\S`: a Fantrax league id is now 1-64 ASCII
+letters, digits or hyphens, expressed as `^[A-Za-z0-9-]+$` in FastAPI/OpenAPI
+and `/^[A-Za-z0-9-]{1,64}$/` in the userscript. Repository evidence establishes
+a real 16-character lowercase alphanumeric id and persisted synthetic ids with
+uppercase and hyphens; it establishes no other character.
+
+**Changed:** Feed response settlement now re-reads an injected current browser
+URL and requires its extracted league id to equal the request id before either
+success or failure can publish. This closes the interval after SPA navigation
+but before the existing one-second watcher increments the generation. The
+ordinary generation and one-minute same-league cadence guards remain. The
+backend route, recorded OpenAPI fixture and both route/client vector suites use
+the explicit ASCII contract. Trust warnings now wrap with visible overflow;
+headline, capture detail and count lines remain individually ellipsized, so a
+late `BOARD REGRESSION` warning can no longer be clipped by the strip box.
+
+**Now true:** Moving A to B while A is in flight suppresses both A success and A
+failure even when the watcher has not run. A focused mutation removing the
+live-URL comparison makes that test fail by publishing A as `available` on B.
+Restoring broad `^\S+$` makes the route vectors fail on NUL and the OpenAPI
+pattern assertion fail. The repaired suites pass **112/112 userscript tests**,
+**2,546 backend tests with 2 skipped and 43 deselected**, and **418/418 frontend
+tests**, with builds, lint, format, mypy, recorded OpenAPI, backlog graph,
+secret scan, document terminators and repository JavaScript lint also clean.
+This remains Code-gate-only read evidence; no action, account write or authority
+changed.
+
+**Could not verify:** No live Fantrax draft, real Draft mapping, long-lived
+Tampermonkey navigation, backend disconnect or changing real feed was exercised.
+The explicit alphabet is intentionally bounded by current evidence; if Fantrax
+issues an id outside it, the strip will refuse before requesting and the backend
+will return 422 until the backend owner expands the contract with new evidence.
+Hosted checks for the repaired head cannot be known until it is pushed.
+
+**Next:** Review the repaired exact PR head and hosted Code-gate results, then
+exercise the strip against the rehearsal league through an A-to-B navigation
+before relying on its evidence under a pick clock.
+---
+
+## 2026-09-03 - bridge - Permanent draft-feed skips are explicit refusals
+
+**Correction:** The preceding status-strip implementation reduced
+`FeedStatusResponse.skipped` to a visible count but did not make a positive count
+unhealthy. A permanent skip such as `player_external_id_unreadable: 1` therefore
+rendered `skipped 1` beside `ok: true` and no refusal. The count was visible, but
+the trust decision was wrong.
+
+**Changed:** Every positive permanent skipped total now publishes **FEED
+SKIPPED** and makes the feed non-healthy. The warning includes every positive
+reason as `reason=count`, sorted lexically for deterministic display and passed
+through the existing status-text sanitizer and secret redaction. There is no
+benign allowlist: the backend has already separated retryable outcomes, and even
+dedupe-shaped permanent reasons can represent a missed pick when identity was
+wrong. Zero-valued reasons contribute neither to the count nor the warning.
+Skipped warnings join, rather than replace, blocked, retryable, stale/silent,
+reconciliation and board-regression warnings.
+
+**Now true:** Focused tests cover `player_external_id_unreadable`,
+`sale_without_amount`, multiple reasons and counts in deterministic order, zero
+skips remaining healthy when all other channels are healthy, sanitization, and
+coexistence with blocked, retryable, stale and regression warnings. Disabling
+the `FEED SKIPPED` branch made both the health-classification and multi-warning
+tests fail; restoring it passes the full userscript suite at **114/114**. The
+cumulative local Code gate also passes backend Ruff, format, strict mypy and the
+full pytest suite, plus frontend lint, type-check, **418/418 tests**, build,
+repository JavaScript lint, and the userscript build. This remains read-only
+status evidence and Code-gate-only: no action, account write or authority
+changed.
+
+**Could not verify:** No live Fantrax draft, real persisted Draft mapping,
+long-lived Tampermonkey tab, backend disconnect, or real permanent skipped event
+was exercised. Hosted CI and a fresh independent cumulative review are pending
+on the new pushed exact head. The unchanged explicit 1-64 ASCII league-id
+contract may refuse a future Fantrax identifier outside the measured alphabet.
+
+**Next:** Review the new exact PR head cumulatively, require hosted Code-gate
+checks, then drive at least one permanent-skip fixture through the rehearsal
+browser strip before trusting the warning under a pick clock. Do not merge from
+this session.
+---
+
+## 2026-09-03 - bridge - Rejecting inconsistent feed skip partitions
+
+**Correction:** The prior permanent-skip repair trusted the aggregate `skipped`
+map after checking only that `skipped_by_participant` was an array. A malformed
+200 with `skipped: {}` and a participant carrying
+`player_external_id_unreadable: 1` was therefore accepted and could still render
+`skipped 0` with no feed warning.
+
+**Changed:** Feed response validation now requires every participant skip entry
+to contain exactly `participant_id`, `team_slot`, `total`, and `reasons`, with
+positive safe-integer identifiers/slots and nonnegative safe-integer counts.
+Each participant total must equal its reason-count sum. `unattributed_skipped`
+and aggregate `skipped` must be nonnegative-integer reason maps. Participant and
+unattributed counts are accumulated by reason and must exactly equal aggregate
+keys and counts as well as the overall total; missing, extra, malformed,
+negative, fractional, string, or overflowed values invalidate the whole
+response. Nothing is coerced or salvaged.
+
+**Now true:** An invalid partition clears prior count evidence when refresh
+starts, settles as `FEED STATUS UNCHECKABLE: invalid local feed status response`,
+and remains non-healthy. Focused tests cover the reported false green, extra
+aggregate and partition reasons (including zero-count extra keys), unattributed-
+only skips, participant total mismatch, negative/fractional/string counts,
+object/array and participant-shape failures, a valid multi-participant plus
+unattributed partition, and a valid zero partition. Replacing reconciliation
+with the former array-only checks makes the reported refresh test fail by
+publishing `available`; restoring it passes **117/117 userscript tests**.
+
+The cumulative local Code gate also passes backend Ruff, format, strict mypy and
+full pytest; frontend lint, type-check, **418/418 tests**, build and repository
+JavaScript lint; userscript build; recorded OpenAPI, backlog graph, secret scan,
+and document terminators. This remains read-only evidence and Code-gate-only;
+no cadence, race guard, identifier contract, action, account write, authority,
+price, recommendation, or auction support changed.
+
+**Could not verify:** No live Fantrax draft, real persisted Draft mapping,
+long-lived Tampermonkey navigation, backend disconnect, changing real feed, or
+malformed live backend response was exercised. Hosted checks and fresh exact-
+head cumulative review remain pending until the new commit is pushed.
+
+**Next:** Require fresh cumulative review and hosted Code-gate checks on the new
+exact PR head, then exercise an inconsistent partition against the rehearsal
+browser before relying on this fail-closed state under a pick clock. Do not
+merge from this session.
+**Review addendum:** Fresh cumulative review of exact head `520faec` found one
+more Medium false-green in the same response boundary. `freshness` entries were
+checked only for transport text, a boolean `silent`, finite threshold, and
+integer instant count. A truncated object with no timestamps or ages and a
+negative threshold could therefore publish `available` and `ok: true`.
+
+Freshness validation now requires the exact `FreshnessOut` key set and the two
+known transport values; parseable nullable timestamps; nonnegative finite ages;
+nonnegative integer instant counts; nonnegative finite silence threshold;
+finite signed claim skew; paired last-seen/age, source-claim/skew, and
+contact/contact-age fields; contact flag agreement; and `silent` agreement with
+the backend rule (zero instants are always silent, otherwise contact age wins
+when known and instant age is the fallback). The reported malformed refresh and
+ten additional shape/clock contradictions now settle uncheckable with no prior
+report retained. The full userscript suite passes **119/119** after this fix. A
+new exact-head cumulative review is still required after the follow-up commit;
+all live boundaries above remain unchanged.
+**Second review addendum:** Exact-head review of `85b3d39` found that a
+structurally valid but empty `freshness` list still passed vacuously. The backend
+always emits exactly one `bridge_capture` and one `official_http` entry, so an
+empty, one-source, or duplicate-source list is omission, not healthy evidence.
+Validation now requires exactly those two distinct transports after validating
+each entry. Focused cases cover empty, missing, duplicate, unknown, and malformed
+sources; the full userscript suite remains **119/119**. Fresh exact-head review
+is required again after this follow-up commit. Live boundaries are unchanged.
+**Third review addendum:** Exact-head review of `3d1adbb` found two adjacent
+false-green paths: source ages were not recomputed from the response `as_of`
+clock, and reconciliation nested objects were only partially shaped. The
+validator now requires timezone-bearing timestamps and reproduces instant age,
+contact age, and signed claim skew within 0.01 seconds. It also validates exact
+top-level, reconciliation, independence, agreement, disagreement, and board-
+regression shapes, including witnessed-count and independent/unwitnessed
+consistency. Tests drive stale timestamps with falsely small ages, the truncated
+reconciliation reproduction, nested and count contradictions, malformed board
+regressions, and a complete valid reconciliation/regression. The full userscript
+suite now passes **121/121**. Another exact-head cumulative review is required
+after this commit; live boundaries remain unchanged.
+**Fourth review addendum:** Exact-head review of `19e573c` found that an
+`independent: true` reconciliation still accepted swapped or empty side
+transports. The route always reconciles bridge capture on the left and official
+HTTP on the right. Independent evidence now requires exactly that orientation,
+the exact backend reason, and no shared artifacts/transports. Non-independent
+reports accept only the route-reachable `one_side_empty` or
+`same_artifact_on_both_sides` shapes with matching evidence. Tests reject
+swapped and empty independent sides and accept a valid one-side-empty warning.
+The full userscript suite remains **121/121**. Fresh exact-head review is required
+again; live boundaries remain unchanged.
+**Fifth review addendum:** Exact-head review of `ff15ca4` found that
+`reconciliation: null` still passed beside positive official freshness. The
+producer creates reconciliation whenever any eligible instant exists, and every
+official instant is eligible. Validation now requires non-null reconciliation
+when `official_http.instant_count > 0`, requires null when both source counts are
+zero, and permits either state only for the bridge-only case where rendered-board
+eligibility cannot be inferred from freshness. Tests reject positive official
+observations without reconciliation and accept a zero-instant null report as
+available but stale/silent. The full suite remains **121/121**. Fresh exact-head
+review is required again; live boundaries remain unchanged.
+**Sixth review addendum:** Exact-head review of `a397cdc` found two more
+source/reconciliation contradictions. Official polling has no persisted proof-
+of-life clock, so `official_http` freshness now requires null contact fields and
+`contact_is_known=false`; fabricated recent contact can no longer hide a stale
+official observation. Reconciliation side presence is now cross-checked against
+freshness: positive official instants require the official right side, zero
+official instants forbid it, and a left side is impossible when bridge instant
+count is zero. One-side-empty reports require exactly one empty side and matching
+nonempty only-source evidence. Tests drive fabricated official contact and an
+empty reconciliation right side beside positive official freshness. The full
+suite remains **121/121**. Fresh exact-head review is required again; live
+boundaries remain unchanged.
+**Seventh review addendum:** Exact-head review of `3131ea2` found two
+remaining receipt-time false greens. The response validator now requires the
+sum of bridge and official instants to fit within persisted observation rows;
+an independent two-sided reconciliation must contain an outcome; and artifact
+pairs cannot contradict claimed independence. A proven shared-artifact report
+remains valid but explicitly uncorroborated. Freshness now ages from backend
+`as_of` on the strip's existing one-second watcher tick: source silence is
+recomputed and any report older than the one-minute refresh floor becomes
+`FEED STATUS STALE`, without adding a timer. Focused reproductions cover excess
+source instants, empty independent outcomes, contradictory and legitimate
+shared artifacts, and transition from current to stale/silent without another
+response. The full userscript suite passes **123/123**. Fresh exact-head review
+is required; live Fantrax DOM/network and real draft timing remain unverified.
+**Eighth review addendum:** Exact-head cumulative review of `1aea921`
+found two remaining count-partition false greens. Feed acceptance now conserves
+every observation exactly as `applied + pending + permanent skipped`, with
+safe-integer overflow refusal; blocked and retryable remain pending
+classifications and are not double-counted. `skipped_by_participant` now rejects
+duplicate participant ids and duplicate team slots before accumulation,
+including zero-count and otherwise-reconciled positive duplicates. Every
+malformed case clears prior feed evidence and renders status uncheckable. Two
+source-mutated validators prove the conservation and uniqueness assertions fail
+when either guard is removed. Userscript tests/build pass (**125/125**); backend
+Ruff/format/mypy/full pytest, scripts Ruff/format, OpenAPI and backlog checks,
+and frontend lint/type-check/**418/418**/build plus scripts ESLint all pass. This
+remains Code-only: no write path or authority changed. Fresh exact-head review
+and hosted checks are still required. Live Fantrax, Tampermonkey, persisted-draft
+mapping, and draft-clock behavior remain unverified.
+**Ninth review addendum:** Review of `e426c92` disproved the preceding
+entry's inherited premise against the actual producer: linked
+`duplicate_within_run` and `already_in_log` rows carried both
+`applied_event_sequence` and a permanent skip, so `applied_count` overlapped
+`skipped`. The backend now preserves that provenance linkage but publishes a
+disjoint applied count, and real ingest/apply plus resolver-route tests prove
+`observed = applied + pending + permanent skipped` for corroboration and
+owner-typed history. The userscript accepts that real four-observation shape.
+Review also flagged a possible status-strip/capture mutation feedback loop.
+Shadow content is outside the document observer and host style attributes were
+not watched, but the watcher now additionally tags the host and ignores any
+status-owned mutation record, with an integration test proving ordinary Fantrax
+mutations still capture. Userscript tests/build pass (**126/126**); focused
+backend producer/route tests and the cumulative backend/Ruff/format/mypy/full
+pytest, scripts, OpenAPI, backlog, frontend and prior document gates pass. This
+is still Code-only read/status behavior. Fresh exact-head review and hosted
+checks remain required; live boundaries are unchanged.
