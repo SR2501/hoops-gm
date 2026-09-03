@@ -33682,3 +33682,39 @@ this reconciliation.
 **Next:** Publish the reconciled exact head without overwriting concurrent
 remote work, retarget PR #150 to `main`, require fresh exact-head independent
 review and hosted checks, and merge only when GitHub reports the PR clean.
+
+---
+
+## 2026-09-02 - frontend - Reconciled category completeness after CI repair
+
+**Changed:** Rebased PR #150 once onto authoritative `origin/main` at
+`bb2faf0aaa56205e2e2d774ea67d1e2514f664e3`, after backend-owned PR #151
+restored the hosted baseline. The merged handoff is preserved byte-for-byte as
+the prefix of this file, including its 149 inherited CR bytes. The main-relative
+PR delta remains exactly 22 docs/frontend files and contains no backend files;
+the dev-only `anyio<4.15` boundary merged by #151 remains inherited and
+unchanged.
+
+The #148 contract recording remains exact: required nullable
+`DraftParticipant.source_seat`, exact nullable
+`fantrax_football_snake_v1` source-board profile, participant skip rows keyed by
+`participant_id` with `team_slot`, `total`, and `reasons`, and a separate
+`unattributed_skipped` map that partitions aggregate `skipped`. Runtime guards
+and category-page mismatch handling remain fail-closed.
+
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests, and the
+production build pass on the repaired baseline. Backlog graph, document
+terminators, commit-aware append-only validation, tracked-file secret scan,
+cumulative whitespace checks, conflict-marker checks, and zero-backend-file
+comparison pass. Main CI run `33696402260` and CodeQL run `33696396759` are
+completed success on exact baseline `bb2faf0`.
+
+**Could not verify:** No real NBA auction feed/profile exists, so non-zero,
+unattributed, mismatch, polling, and failure paths remain contract-shaped
+browser tests rather than observations from a live NBA draft. No manual visual
+browser session was run. Hosted checks and independent review still need to run
+on the eventual post-rebase PR head.
+
+**Next:** Publish with an exact remote-head lease, require fresh cumulative
+review and hosted checks, and merge PR #150 only when GitHub reports the exact
+head clean and mergeable.
