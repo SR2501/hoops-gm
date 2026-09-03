@@ -59,6 +59,7 @@ import {
   formatCounting,
 } from '../components/leagueCategoryModel'
 import { renderedNumbers } from '../test/adr002'
+import currentDraftContract from '../test/fixtures/draft-auction-state.recorded.json'
 import recordedDraft from '../test/fixtures/draft-auction-resolved-state.recorded.json'
 import recordedProjections from '../test/fixtures/projections-current.recorded.json'
 
@@ -84,6 +85,7 @@ describe('the recorded pair', () => {
       // The assertion both fixtures exist for: the predicates production runs,
       // not hand-picked fields. A renamed or retyped field fails here even if
       // nothing below happens to touch it.
+      expect(isDraftState(currentDraftContract)).toBe(true)
       expect(isDraftState(recordedDraft)).toBe(true)
       expect(isCurrentProjections(recordedProjections)).toBe(true)
     },
@@ -425,7 +427,7 @@ describe('ADR-002, against the recorded numbers', () => {
   )
 
   it(
-    'has no column beyond the nine categories, the seat and its player count',
+    'has no decision-number column beyond the categories and feed completeness',
     () => {
       // Independent of the product detector, and for the reason `adr002.ts`
       // gives: the detector asks whether a specific forbidden value is on
@@ -439,6 +441,7 @@ describe('ADR-002, against the recorded numbers', () => {
       expect(headers).toEqual([
         'Team',
         'Players',
+        'Feed skipped',
         'PTS',
         'REB',
         'AST',

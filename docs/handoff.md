@@ -33587,3 +33587,134 @@ had not run when this entry was written.
 **Next:** Obtain a fresh cumulative exact-head review, publish the focused PR,
 and require all hosted backend, migration, Adapter, Model, and PostgreSQL jobs
 to resolve AnyIO 4.14.2 and pass before autonomous ordinary-code merge.
+
+---
+
+## 2026-09-02 - frontend - Exposed category-board feed gaps per seat
+
+**Changed:** `/draft/:draftId/categories` now reads
+`GET /api/v1/drafts/{id}/feed` on the existing poll after the draft state is
+known. Projection and feed reads fail independently: either failure leaves the
+recorded seats visible, and a feed failure marks board completeness unknown
+instead of presenting zero skips as completeness.
+
+The client contract now transcribes `DraftParticipant.source_seat`,
+`source_board_profile = fantrax_football_snake_v1 | null`, and the complete
+feed-status response. Feed guards require exact top-level and nested shapes,
+non-negative integer counts, per-participant reason totals, unique participant
+ids, and an attributed-plus-unattributed partition that exactly reproduces the
+aggregate `skipped` map. The recorded OpenAPI document and draft fixtures were
+refreshed or additively migrated for those backend fields, and a raw no-context
+feed response was recorded from the repaired PR #148 head.
+
+The category table adds one `Feed skipped` column. Counts are joined only by
+stable participant id after draft id, log sequence, participant coverage and
+reported team-slot metadata all agree. A mismatch refuses the whole assignment
+and is published. Valid zeroes render as `0`; participant skips render their
+reason counts and state that the roster may be incomplete; unattributed skips
+get a separate warning and are never added to a seat. No-observation,
+unavailable-context and unreadable-feed states remain distinct. Category
+aggregation, ranks and availability-blind semantics are unchanged.
+
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests and the
+production build pass. The recorded-contract tests cover shuffled diagnostics,
+participant and unattributed skips, valid zeroes, no observations, unavailable
+context, request and contract failure, independent projection/feed failures,
+invalid route ids, settled-cycle polling, slow-feed starvation, abort, mismatch refusal, aggregate partitioning,
+and absent or wrong additive fields. The Model gate does not apply because no
+decision arithmetic or ranking semantics changed.
+
+**Could not verify:** No configured live Fantrax feed with real NBA auction
+observations exists, and PR #148 deliberately defines no NBA auction
+source-board profile. The raw feed recording therefore proves the repaired
+wire shape and no-context state, while non-zero skip and mismatch behaviours
+are driven from contract-shaped test payloads. Hosted checks and a browser
+reading against a live backend have not run in this lane.
+
+**Next:** Publish this as a frontend-only PR based on
+`sr2501-bind-rendered-draft-board`, require fresh exact-head review and hosted
+checks, and do not merge it before PR #148 lands.
+
+---
+
+## 2026-09-02 - frontend - Reconciled category completeness onto merged main
+
+**Changed:** Rebased the frontend-only category completeness work onto
+authoritative `origin/main` at
+`8c746282a982e4558a7f95d3dd6a18805224b685`, after PRs #148 and #149 merged.
+The complete merged handoff blob is preserved byte-for-byte as this file's
+prefix, including its 149 inherited CR bytes, with the two frontend entries
+appended in LF only. The main-relative diff contains docs and frontend files
+only; no backend implementation was replayed.
+
+The recorded OpenAPI contract still matches merged #148:
+`DraftParticipant.source_seat` is required and nullable,
+`source_board_profile` is exactly
+`fantrax_football_snake_v1 | null`, and feed status carries participant rows
+of `participant_id`, `team_slot`, `total`, and `reasons`, plus
+`unattributed_skipped`. Runtime guards require exact consumed shapes, reject
+arrays masquerading as count maps, verify row reason totals, and require the
+participant plus unattributed partition to reproduce aggregate `skipped`.
+
+**Browser-visible behavior:** The category table has a scan-friendly
+`Feed skipped` column with a visible zero for every valid zero. Non-zero seat
+counts say that the roster and ranking may be incomplete and list reason
+counts without naming a missing player. Unattributed skips receive a separate
+prominent warning and are not assigned to a seat. Failed or context-free feed
+reads leave seats and rankings visible while saying completeness is unknown;
+zero observations is stated separately. Projection and feed failures remain
+independent.
+
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests, and the
+production build pass on merged main. Backlog graph, document terminators,
+commit-aware append-only validation, tracked-file secret scan, cumulative
+whitespace checks, and the zero-backend-file comparison pass. Category
+arithmetic and ranking semantics are unchanged, so the Model gate remains
+inapplicable.
+
+**Could not verify:** No configured live Fantrax feed with real NBA auction
+observations or NBA auction source-board profile exists. The raw feed fixture
+proves the backend wire and context-unavailable state; non-zero skip,
+unattributed, mismatch, failure, polling, and abort behavior are exercised by
+contract-shaped browser tests. No manual visual browser session was run in
+this reconciliation.
+
+**Next:** Publish the reconciled exact head without overwriting concurrent
+remote work, retarget PR #150 to `main`, require fresh exact-head independent
+review and hosted checks, and merge only when GitHub reports the PR clean.
+
+---
+
+## 2026-09-02 - frontend - Reconciled category completeness after CI repair
+
+**Changed:** Rebased PR #150 once onto authoritative `origin/main` at
+`bb2faf0aaa56205e2e2d774ea67d1e2514f664e3`, after backend-owned PR #151
+restored the hosted baseline. The merged handoff is preserved byte-for-byte as
+the prefix of this file, including its 149 inherited CR bytes. The main-relative
+PR delta remains exactly 22 docs/frontend files and contains no backend files;
+the dev-only `anyio<4.15` boundary merged by #151 remains inherited and
+unchanged.
+
+The #148 contract recording remains exact: required nullable
+`DraftParticipant.source_seat`, exact nullable
+`fantrax_football_snake_v1` source-board profile, participant skip rows keyed by
+`participant_id` with `team_slot`, `total`, and `reasons`, and a separate
+`unattributed_skipped` map that partitions aggregate `skipped`. Runtime guards
+and category-page mismatch handling remain fail-closed.
+
+**Gates:** Frontend lint, strict type-check, all 412 frontend tests, and the
+production build pass on the repaired baseline. Backlog graph, document
+terminators, commit-aware append-only validation, tracked-file secret scan,
+cumulative whitespace checks, conflict-marker checks, and zero-backend-file
+comparison pass. Main CI run `33696402260` and CodeQL run `33696396759` are
+completed success on exact baseline `bb2faf0`.
+
+**Could not verify:** No real NBA auction feed/profile exists, so non-zero,
+unattributed, mismatch, polling, and failure paths remain contract-shaped
+browser tests rather than observations from a live NBA draft. No manual visual
+browser session was run. Hosted checks and independent review still need to run
+on the eventual post-rebase PR head.
+
+**Next:** Publish with an exact remote-head lease, require fresh cumulative
+review and hosted checks, and merge PR #150 only when GitHub reports the exact
+head clean and mergeable.

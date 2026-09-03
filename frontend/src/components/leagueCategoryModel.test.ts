@@ -56,6 +56,7 @@ function seat(
   return {
     id,
     team_slot: id,
+    source_seat: null,
     display_name: `Seat ${String(id)}`,
     is_owner: options.owner ?? false,
     fantasy_team_id: null,
@@ -78,6 +79,7 @@ function draft(participants: DraftParticipant[]): DraftState {
     name: 'test draft',
     is_mock: true,
     tool_usage: 'blind',
+    source_board_profile: null,
     notes: null,
     status: 'in_progress',
     format: {

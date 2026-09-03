@@ -4,6 +4,7 @@
   "name": "[demo] Auction mock, 12-team $200",
   "is_mock": true,
   "tool_usage": "blind",
+  "source_board_profile": null,
   "notes": "Synthetic. Every seat, name and price in this draft is invented and no part of it records a draft that happened.",
   "status": "in_progress",
   "format": {
@@ -18,6 +19,7 @@
     {
       "id": 1,
       "team_slot": 1,
+      "source_seat": null,
       "display_name": "Bench Mob",
       "is_owner": true,
       "fantasy_team_id": null,
@@ -40,6 +42,7 @@
     {
       "id": 2,
       "team_slot": 2,
+      "source_seat": null,
       "display_name": "Rim Protectors",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -62,6 +65,7 @@
     {
       "id": 3,
       "team_slot": 3,
+      "source_seat": null,
       "display_name": "Free Throw Merchants",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -75,6 +79,7 @@
     {
       "id": 4,
       "team_slot": 4,
+      "source_seat": null,
       "display_name": "Turnover Chain",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -97,6 +102,7 @@
     {
       "id": 5,
       "team_slot": 5,
+      "source_seat": null,
       "display_name": "Load Management",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -119,6 +125,7 @@
     {
       "id": 6,
       "team_slot": 6,
+      "source_seat": null,
       "display_name": "Small Ball Five",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -132,6 +139,7 @@
     {
       "id": 7,
       "team_slot": 7,
+      "source_seat": null,
       "display_name": "Corner Threes",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -154,6 +162,7 @@
     {
       "id": 8,
       "team_slot": 8,
+      "source_seat": null,
       "display_name": "Second Unit",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -167,6 +176,7 @@
     {
       "id": 9,
       "team_slot": 9,
+      "source_seat": null,
       "display_name": "Trade Deadline",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -180,6 +190,7 @@
     {
       "id": 10,
       "team_slot": 10,
+      "source_seat": null,
       "display_name": "Two Way Contract",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -202,6 +213,7 @@
     {
       "id": 11,
       "team_slot": 11,
+      "source_seat": null,
       "display_name": "Buyout Market",
       "is_owner": false,
       "fantasy_team_id": null,
@@ -224,6 +236,7 @@
     {
       "id": 12,
       "team_slot": 12,
+      "source_seat": null,
       "display_name": "Garbage Time",
       "is_owner": false,
       "fantasy_team_id": null,

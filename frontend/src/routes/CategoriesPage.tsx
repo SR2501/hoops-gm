@@ -37,14 +37,18 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getDraft } from '../api/draftEndpoints'
+import { getDraft, getDraftFeed } from '../api/draftEndpoints'
 import { describeDraftError, isRetryableDraftError } from '../api/draftErrors'
-import type { DraftState } from '../api/draftTypes'
+import type { DraftState, FeedStatusResponse } from '../api/draftTypes'
 import { getCurrentProjections } from '../api/endpoints'
 import { describeProjectionsError } from '../api/projectionsErrors'
 import type { CurrentProjections } from '../api/types'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
+import {
+  reconcileCategoryBoardCompleteness,
+  type CategoryBoardCompleteness,
+} from '../components/categoryBoardCompleteness'
 import { LeagueCategoryTable, OwnerCategoryStanding } from '../components/LeagueCategoryTable'
 import {
   buildLeagueCategoryModel,
@@ -70,6 +74,29 @@ interface CategoryBundle {
   projections: CurrentProjections | null
   /** The projections failure, when there was one. The draft is still drawn. */
   projectionsError: Error | null
+  feed: FeedStatusResponse | null
+  /** The feed failure, when there was one. Seats and rankings are still drawn. */
+  feedError: Error | null
+}
+
+interface OptionalRead<T> {
+  data: T | null
+  error: Error | null
+}
+
+async function readOptionally<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<OptionalRead<T>> {
+  try {
+    return { data: await read(), error: null }
+  } catch (cause) {
+    if (signal.aborted) throw cause
+    return {
+      data: null,
+      error: cause instanceof Error ? cause : new Error(String(cause)),
+    }
+  }
 }
 
 export function CategoriesPage() {
@@ -107,19 +134,21 @@ function CategoriesLoader({ draftId }: { draftId: number }) {
   const bundle = useAsync<CategoryBundle>(
     async (options) => {
       const state = await getDraft(draftId, options)
-      try {
-        const projections = await getCurrentProjections(state.league_id, options)
-        return { state, projections, projectionsError: null }
-      } catch (cause) {
-        // Rethrown only for an abort, which is this component unmounting rather
-        // than the cohort being unavailable. Everything else is a fact about
-        // the league worth putting on screen.
-        if (options.signal.aborted) throw cause
-        return {
-          state,
-          projections: null,
-          projectionsError: cause instanceof Error ? cause : new Error(String(cause)),
-        }
+      // Both reads are independently optional. One failure must not suppress
+      // the other signal, and both share the effect's abort controller.
+      const [projectionRead, feedRead] = await Promise.all([
+        readOptionally(
+          () => getCurrentProjections(state.league_id, options),
+          options.signal,
+        ),
+        readOptionally(() => getDraftFeed(state.id, options), options.signal),
+      ])
+      return {
+        state,
+        projections: projectionRead.data,
+        projectionsError: projectionRead.error,
+        feed: feedRead.data,
+        feedError: feedRead.error,
       }
     },
     [draftId, tick],
@@ -127,11 +156,16 @@ function CategoriesLoader({ draftId }: { draftId: number }) {
   )
 
   useEffect(() => {
-    const timer = setInterval(refresh, POLL_INTERVAL_MS)
+    // Start the next cycle only after this one settles. A fixed interval shorter
+    // than the client's timeout would abort a slow optional feed on every tick,
+    // so the page could remain loading forever without ever publishing unknown
+    // completeness.
+    if (bundle.status === 'loading') return
+    const timer = setTimeout(refresh, POLL_INTERVAL_MS)
     return () => {
-      clearInterval(timer)
+      clearTimeout(timer)
     }
-  }, [refresh])
+  }, [bundle.status, refresh])
 
   return (
     <article className="page page--categories">
@@ -150,6 +184,10 @@ function CategoriesLoader({ draftId }: { draftId: number }) {
 function CategoriesView({ bundle, draftId }: { bundle: CategoryBundle; draftId: number }) {
   const model = buildLeagueCategoryModel(bundle.state, bundle.projections)
   const { state } = bundle
+  const completeness: CategoryBoardCompleteness | null =
+    bundle.feed === null
+      ? null
+      : reconcileCategoryBoardCompleteness(state, bundle.feed)
 
   return (
     <>
@@ -200,6 +238,52 @@ function CategoriesView({ bundle, draftId }: { bundle: CategoryBundle; draftId: 
           No projection cohort could be read for league {state.league_id}, so every category
           below is unranked. The seats and their selections are still exactly what was recorded.{' '}
           {describeProjectionsError(bundle.projectionsError).summary}
+        </p>
+      ) : null}
+
+      {bundle.feedError !== null ? (
+        <p className="state state--error" role="status" data-testid="category-feed-unknown">
+          <strong>Board completeness is unknown.</strong> The draft feed status could not be
+          read, so permanent skips cannot be assigned to seats. The seats and category rankings
+          below remain visible, but their recorded holdings may be incomplete.{' '}
+          {describeDraftError(bundle.feedError).summary}
+        </p>
+      ) : null}
+
+      {completeness?.kind === 'context-unavailable' ? (
+        <p className="state state--error" role="status" data-testid="category-feed-no-context">
+          <strong>Board completeness is unknown.</strong> This draft has no usable feed context:{' '}
+          <code>{completeness.detail}</code>. A feed request answering with no configured context
+          does not establish that the recorded holdings are complete.
+        </p>
+      ) : null}
+
+      {completeness?.kind === 'mismatch' ? (
+        <p className="state state--error" role="alert" data-testid="category-feed-mismatch">
+          <strong>Board completeness is unknown.</strong> Feed diagnostics do not match the draft
+          state ({completeness.detail}). No skip count was assigned to any seat, because doing so
+          could attribute missing holdings to the wrong participant.
+        </p>
+      ) : null}
+
+      {completeness?.kind === 'available' && completeness.observationCount === 0 ? (
+        <p className="page__note" role="status" data-testid="category-feed-empty">
+          The feed status is readable but contains no observations. Each seat has zero permanent
+          skips in this valid response, but zero observations do not establish that the recorded
+          board is complete.
+        </p>
+      ) : null}
+
+      {completeness?.kind === 'available' &&
+      completeness.unattributedSkippedTotal > 0 ? (
+        <p className="state state--error" role="alert" data-testid="category-feed-unattributed">
+          <strong>Actual holdings may be missing.</strong>{' '}
+          {completeness.unattributedSkippedTotal} permanently skipped feed observation
+          {completeness.unattributedSkippedTotal === 1 ? '' : 's'} cannot be assigned to a seat:{' '}
+          <ReasonCounts counts={completeness.unattributedSkipped} />. These are separate from the{' '}
+          {completeness.participantSkippedTotal} participant-attributed skip
+          {completeness.participantSkippedTotal === 1 ? '' : 's'} shown in the table and are not
+          added to any seat.
         </p>
       ) : null}
 
@@ -287,7 +371,18 @@ function CategoriesView({ bundle, draftId }: { bundle: CategoryBundle; draftId: 
         </span>
       </p>
 
-      <LeagueCategoryTable model={model} />
+      <LeagueCategoryTable model={model} completeness={completeness ?? undefined} />
     </>
   )
+}
+
+function ReasonCounts({ counts }: { counts: Record<string, number> }) {
+  return Object.entries(counts)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count], index) => (
+      <span key={reason}>
+        {index > 0 ? ' · ' : ''}
+        <code>{reason}</code> × {count}
+      </span>
+    ))
 }
