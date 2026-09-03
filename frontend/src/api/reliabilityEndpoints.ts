@@ -191,9 +191,12 @@ function isLineage(value: unknown): value is ReliabilityLineage {
     typeof value.season_type !== 'string' ||
     !isDate(value.window_start) ||
     !isDate(value.as_of_date) ||
+    typeof value.schedule_source !== 'string' ||
     typeof value.schedule_version !== 'string' ||
     !isTimestamp(value.schedule_refreshed_at) ||
+    typeof value.observation_source !== 'string' ||
     typeof value.source_version !== 'string' ||
+    typeof value.derivation_source !== 'string' ||
     typeof value.derivation_version !== 'string' ||
     !isTimestamp(value.computed_at)
   ) {

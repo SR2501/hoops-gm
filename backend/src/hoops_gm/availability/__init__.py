@@ -50,6 +50,7 @@ from hoops_gm.availability.calibration import (
 from hoops_gm.availability.reliability import (
     OBSERVED_COVERAGE_STATUS,
     RELIABILITY_DERIVATION_KEY,
+    RELIABILITY_OBSERVATION_SOURCE,
     RELIABILITY_SOURCE_KEY,
     AvailabilityEvidence,
     CategoryConsistency,
@@ -82,6 +83,7 @@ __all__ = [
     "LOG_LOSS_CLIP",
     "OBSERVED_COVERAGE_STATUS",
     "RELIABILITY_DERIVATION_KEY",
+    "RELIABILITY_OBSERVATION_SOURCE",
     "RELIABILITY_SOURCE_KEY",
     "WILSON_CONTINUITY_CORRECTION",
     "WILSON_Z_95",

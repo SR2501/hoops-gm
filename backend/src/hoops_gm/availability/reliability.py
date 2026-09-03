@@ -41,6 +41,9 @@ SCHEDULE_KEY: Final = "nba-schedule"
 RELIABILITY_SOURCE_KEY: Final = "reliability-observations"
 RELIABILITY_DERIVATION_KEY: Final = "reliability-derivation"
 OBSERVED_COVERAGE_STATUS: Final = "incomplete_r35"
+RELIABILITY_OBSERVATION_SOURCE: Final = (
+    "nba_games+team_schedule+player_game_logs+player_participation"
+)
 
 RELIABILITY_COUNTING_CATEGORIES: Final = (
     ("fg3m", "three_pointers_made"),
@@ -296,7 +299,7 @@ def publish_reliability_cohorts(
         artifact_key=RELIABILITY_SOURCE_KEY,
         version=source_version,
         season=season,
-        source="nba_games+team_schedule+player_game_logs+player_participation",
+        source=RELIABILITY_OBSERVATION_SOURCE,
         summary={
             "claim": "descriptive direct observations",
             "season_type": season_type.value,

@@ -1,10 +1,10 @@
-"""One database, three screens — driven, not asserted about.
+"""One database, every primary data screen — driven, not asserted about.
 
 The failure this module guards against is not that a seed crashes. It is that
-three seeds each succeed into three different files, one backend serves one
-file, and the dashboard shows a working draft board beside two ``409`` pages.
-Every test here therefore drives the **real routes all three screens call**,
-against **one** database seeded by **one** command. Asserting that
+seeds each succeed into different files, one backend serves one file, and the
+dashboard shows some working tabs beside error pages. Every test here therefore
+drives the **real routes the primary data screens call**, against **one**
+database seeded by **one** command. Asserting that
 ``seed_demo`` returns without raising would reproduce the original blind spot
 exactly: it is the composition, not any individual seeder, that had never been
 exercised.
@@ -43,6 +43,7 @@ from hoops_gm.dev.seed_demo import (
     seed_demo,
 )
 from hoops_gm.dev.seed_draft import CanonicalDraftPlayer, seed_drafts
+from hoops_gm.dev.seed_reliability_demo import DEMO_PLAYER_NAMES
 from hoops_gm.dev.seed_schedule_grid import (
     FANTRAX_LEAGUE_ID,
     LEAGUE_NAME,
@@ -52,13 +53,13 @@ from hoops_gm.dev.seed_schedule_grid import (
 from hoops_gm.identity.names import normalize_name
 
 #: Small on purpose. The cohort size is orthogonal to everything under test
-#: here — what is under test is that three screens read one database — and the
+#: here — what is under test is that every screen reads one database — and the
 #: full 60 costs seconds per test for no extra coverage.
 COHORT = 8
 
 
-def test_one_seeded_database_answers_all_three_screens(client: TestClient) -> None:
-    """The deliverable, end to end: one seed, three routes, three 200s.
+def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient) -> None:
+    """The deliverable, end to end: one seed, every data route answers 200.
 
     This is the assertion the demo did not have. Each of the three seeders
     already had a test proving *its own* endpoint could answer; none of them
@@ -75,10 +76,12 @@ def test_one_seeded_database_answers_all_three_screens(client: TestClient) -> No
     schedule = client.get(f"/api/v1/leagues/{league_id}/schedule-grid/current")
     projections = client.get(f"/api/v1/leagues/{league_id}/projections/current")
     drafts = client.get("/api/v1/drafts")
+    reliability = client.get("/api/v1/reliability/scorecards")
 
     assert schedule.status_code == 200, schedule.text
     assert projections.status_code == 200, projections.text
     assert drafts.status_code == 200, drafts.text
+    assert reliability.status_code == 200, reliability.text
 
     # Presence, counted — not the absence of an error word. Both working
     # screens legitimately render copy containing "not": the schedule says
@@ -88,6 +91,23 @@ def test_one_seeded_database_answers_all_three_screens(client: TestClient) -> No
     assert len(schedule.json()["teams"]) == 30
     assert len(projections.json()["projections"]) == COHORT
     assert len(drafts.json()["drafts"]) == 2
+    assert len(reliability.json()["scorecards"]) == 2
+    assert reliability.json()["counts"] == {
+        "scorecards": 2,
+        "scheduled_team_games": 6,
+        "schedule_context_team_games": 6,
+        "final_games": 3,
+        "player_game_logs": 4,
+        "participation_rows": 2,
+    }
+    assert reliability.json()["lineage"]["schedule_source"].startswith("synthetic-demo:")
+    assert (
+        reliability.json()["lineage"]["observation_source"]
+        == "nba_games+team_schedule+player_game_logs+player_participation"
+    )
+    assert {scorecard["player_name"] for scorecard in reliability.json()["scorecards"]} == set(
+        DEMO_PLAYER_NAMES
+    )
 
 
 def test_both_mock_drafts_are_listed_with_the_selections_the_seed_recorded(
@@ -385,8 +405,10 @@ def test_re_running_against_its_own_output_refuses(database: Database) -> None:
     with database.session() as session:
         seed_demo(session, cohort_size=COHORT)
 
-    with pytest.raises(DemoSeedRefused), database.session() as session:
+    with pytest.raises(DemoSeedRefused) as refusal, database.session() as session:
         seed_demo(session, cohort_size=COHORT)
+
+    assert "which this seed did not create" in str(refusal.value)
 
 
 def test_the_repeat_run_hint_fires_on_our_own_output_and_not_on_a_real_league(

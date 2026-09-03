@@ -2158,6 +2158,11 @@ a:focus-visible {
   border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
 }
 
+.reliability__synthetic-warning {
+  background: color-mix(in srgb, var(--error) 14%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--error) 60%, var(--border));
+}
+
 .reliability__limitation {
   color: var(--text-muted);
   background: var(--bg-sunken);

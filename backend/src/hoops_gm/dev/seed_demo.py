@@ -1,4 +1,4 @@
-"""One command that brings **one** database to the state every screen needs.
+"""One seed that brings **one** database to the state every primary screen needs.
 
 **Why this exists.** The three seeders under this package compose, and until
 2026-08-22 nobody had run them in one order. The demo state lived in three
@@ -17,8 +17,9 @@ Run it::
     python -m hoops_gm.dev.seed_demo --database-url sqlite:///./demo_all.db
     DATABASE_URL=sqlite:///./demo_all.db python -m hoops_gm
 
-Then ``/schedule``, ``/projections`` and ``/draft`` all answer from that one
-file.
+Then ``/schedule``, ``/projections``, ``/draft`` and ``/reliability`` all
+answer from that one file. ``scripts/run_demo.py`` composes this seed with both
+servers so the whole portal is one command and one URL.
 
 **The order is not a preference.**
 
@@ -97,6 +98,10 @@ from hoops_gm.dev.seed_projections import (
     ProjectionsSeedResult,
     seed_projections,
 )
+from hoops_gm.dev.seed_reliability_demo import (
+    ReliabilityDemoSeedResult,
+    seed_reliability_demo,
+)
 from hoops_gm.dev.seed_schedule_grid import (
     DEFAULT_FIXTURES_DIR,
     FANTRAX_LEAGUE_ID,
@@ -122,6 +127,7 @@ class DemoSeedResult:
     """
 
     projections: ProjectionsSeedResult
+    reliability: ReliabilityDemoSeedResult
     drafts: DraftSeedResult
 
 
@@ -131,7 +137,7 @@ def seed_demo(
     fixtures_dir: Path = DEFAULT_FIXTURES_DIR,
     cohort_size: int = DEMO_COHORT_SIZE,
 ) -> DemoSeedResult:
-    """Seed schedule, projections and drafts into one session, in one order.
+    """Seed schedule, projections, reliability and drafts in one transaction.
 
     ``seed_projections`` runs first because it composes the schedule seed and
     because both dashboard screens read league 1; ``seed_drafts`` runs last
@@ -141,6 +147,7 @@ def seed_demo(
     """
 
     projections = seed_projections(session, fixtures_dir=fixtures_dir, cohort_size=cohort_size)
+    reliability = seed_reliability_demo(session)
     auction_players = tuple(
         CanonicalDraftPlayer(player_id=player_id, player_label=player_label)
         for player_id, player_label in session.execute(
@@ -151,7 +158,7 @@ def seed_demo(
         )
     )
     drafts = seed_drafts(session, auction_players=auction_players)
-    return DemoSeedResult(projections=projections, drafts=drafts)
+    return DemoSeedResult(projections=projections, reliability=reliability, drafts=drafts)
 
 
 def looks_like_a_previous_demo_seed(session: Session) -> bool:
@@ -200,6 +207,15 @@ def proof(result: DemoSeedResult, *, database_url: str) -> dict[str, object]:
             "identities_accepted": result.projections.identities_accepted,
             "identities_unresolved": result.projections.identities_unresolved,
             "content_sha256": result.projections.content_sha256,
+        },
+        "reliability_screen": {
+            "season": result.reliability.season,
+            "scorecards": result.reliability.scorecards,
+            "final_games": result.reliability.final_games,
+            "player_game_logs": result.reliability.player_game_logs,
+            "participation_rows": result.reliability.participation_rows,
+            "schedule_source": result.reliability.schedule_source,
+            "observation_source": result.reliability.observation_source,
         },
         "draft_screen": {
             "auction_draft_id": result.drafts.auction_draft_id,
@@ -313,10 +329,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(json.dumps(proof(result, database_url=args.database_url), indent=2))
     print(
-        "\nEvery projection number, seat, selection and price above is invented. Only "
-        "the player names are real, because the projection identity resolver and the "
-        "draft category join need canonical players. A screenshot taken from any of "
-        "these screens proves shape and nothing else.",
+        "\nEvery projection number, reliability observation, box score, seat, selection "
+        "and price above is invented. Projection and draft names are real only because "
+        "their identity join needs canonical players; reliability names explicitly say "
+        "synthetic demo. A screenshot taken from any of these screens proves shape and "
+        "nothing else.",
         file=sys.stderr,
     )
     return 0

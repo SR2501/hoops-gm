@@ -1,52 +1,38 @@
 # Running the demo
 
-**One command, one database, three primary screens plus the draft category
-detail.** If you have never seen this repository before, this page is enough.
+**One command, one fresh throwaway database, one URL, every primary tab.** If
+you have never seen this repository before, this page is enough.
 
-The demo state used to live in three separate SQLite files, each built by a
-different lane, and one backend serves one file — so opening the dashboard gave
-a working draft board next to two `409` error pages. Nothing was broken. The
-three seeders always composed; the composition just existed only as commands
-somebody happened to know. `hoops_gm.dev.seed_demo` is that composition, and
-this page is the other half of the fix.
+The demo state used to live in separate SQLite files, and one backend serves one
+file. The first composition made Draft, Schedule and Projections coexist but
+left Reliability unpublished. `hoops_gm.dev.seed_demo` now builds every
+required cohort atomically, and `scripts/run_demo.py` creates a fresh ephemeral
+database, starts the backend and Vite, and keeps them behind one browser URL.
 
 ---
 
 ## Quick start
 
-No virtualenv is assumed and nothing here touches the network.
+Nothing here calls an external data source. Install the repository dependencies
+once; in particular, `frontend/node_modules` must already exist.
 
 ```powershell
-cd backend
-$env:PYTHONPATH = "$PWD\src"
-
-python -m hoops_gm.dev.seed_demo --database-url "sqlite+pysqlite:///../demo_all.db"
+python scripts\run_demo.py
 ```
 
-If you override `--cohort-size`, it must be at least **7** because the auction
-demo has seven planned lots. Values from 1 through 6 refuse before the
-transaction commits rather than printing success for a partial category board.
+Open the one URL the launcher prints (normally
+**`http://127.0.0.1:5173`**; it chooses an unused loopback port if 5173 or the
+backend's 8000 is already occupied). Dashboard, Draft, Schedule, Projections,
+Reliability and System all have row-bearing or health-bearing non-error states.
+Open the auction draft and follow **League categories**, or go directly to
+`/draft/1/categories`. Press Ctrl+C to stop both services; the temporary
+database is then deleted.
 
-Then serve it, from a **second** shell in `backend/`:
-
-```powershell
-cd backend
-$env:PYTHONPATH = "$PWD\src"
-$env:DATABASE_URL = "sqlite+pysqlite:///../demo_all.db"
-python -m hoops_gm
-```
-
-And the dashboard, from a third shell:
-
-```powershell
-cd frontend
-npm install      # first time only
-npm run dev
-```
-
-`http://127.0.0.1:5173` → `/schedule`, `/projections` and `/draft` all answer
-from `demo_all.db`. Open the auction draft and follow **League categories**, or
-go directly to `/draft/1/categories` on a fresh database.
+The lower-level seed remains available for tests and manual serving:
+`cd backend; $env:PYTHONPATH="$PWD\src"; python -m
+hoops_gm.dev.seed_demo --database-url "sqlite+pysqlite:///../demo_all.db"`.
+If you override its `--cohort-size`, it must be at least **7** because the
+auction demo has seven planned lots.
 
 ---
 
@@ -105,6 +91,9 @@ The seed prints its own proof, grouped by screen:
   "schedule_screen":    { "league_id": 1, "season": "2026-27" },
   "projections_screen": { "cohort_size": 60, "projections_written": 60,
                           "identities_accepted": 60, "identities_unresolved": 0 },
+  "reliability_screen": { "season": "2025-26", "scorecards": 2,
+                          "final_games": 3, "player_game_logs": 4,
+                          "participation_rows": 2 },
   "draft_screen":       { "auction_selections": 7, "snake_selections": 12 },
   "frontend_expects_league_id": 1
 }
@@ -112,7 +101,10 @@ The seed prints its own proof, grouped by screen:
 
 Against the committed fixtures the database holds **30 teams, 10 imported games
 (12 published, 2 pending), 21 scoring periods, 20 team-games, 60 projection rows
-and 2 mock drafts**.
+and 2 mock drafts** for the 2026-27 portal context. The Reliability context is a
+separate, deliberately tiny **2025-26 synthetic cohort: 2 named synthetic
+players, 3 final games, 4 box-score rows and 2 non-play observations**. The
+System tab reports backend/database readiness from that same process.
 
 The composed auction selects seven canonical players from that exact synthetic
 projection import, through the production nomination/sale/void writers. The
@@ -124,6 +116,15 @@ continues to say this is not expected performance. A composed cohort shorter
 than those seven planned lots refuses before any draft write; it never returns
 a successful partial board.
 
+Reliability is descriptive only. Its player names begin `[synthetic demo]`, its
+schedule lineage begins `synthetic-demo:`, and the screen renders a prominent
+disclosure that every game, box score and play/non-play observation is invented
+only to exercise the interface. Observation lineage identifies the unchanged
+production writer chain; the synthetic origin is carried by the schedule source
+and disclosure rather than adding another dynamically sourced refresh call.
+The demo emits no reliability grade, projected games, recommendation, calibrated
+availability, or `p(play)`.
+
 **Do not test a screen by scanning it for error words.** A scan for
 `could not|cannot|failed|no current` returns **true on two working screens**:
 `/schedule` legitimately renders *"this season is not fully scheduled"* — the
@@ -132,12 +133,11 @@ ADR-013 pending-games affordance, which the demo deliberately exercises — and
 is true and correct, because blended projections are a later phase. Count rows.
 Assert the presence you expect.
 
-Backing that up, `backend/tests/test_seed_demo.py` drives the three primary
-routes against **one** seeded database, then combines the auction state and
-current-projections responses exactly as the category page does. It asserts
-both the exact projection-import ID set and the resulting joined-player/ranked-
-seat counts. That is the regression test for this whole page: two individually
-valid responses stayed green in the old state while their join was empty.
+Backing that up, `backend/tests/test_seed_demo.py` drives Schedule, Projections,
+Draft and Reliability against **one** seeded database, then combines the auction
+state and current-projections responses exactly as the category page does. It
+asserts concrete row counts, the exact projection-import ID set, joined-player
+and ranked-seat counts, synthetic Reliability names, and synthetic lineage.
 
 ---
 
@@ -146,12 +146,15 @@ valid responses stayed green in the old state while their join was empty.
 Every seeder here refuses before writing anything, on four separate signals.
 Three protect a database you care about; one protects the demo's own honesty.
 
-**Any `player_participation` row.** The availability ledger, which no seeder
-writes. Its presence means a real ingest happened, so this is a real store
-however empty its `leagues` table looks.
+**Any `player_participation` row outside the unified demo's exact markers.**
+The unified seed writes two synthetic non-play rows through the production
+participation importer. The guard allows only those exact synthetic game ids,
+the reserved synthetic NBA anchor, and the explicit synthetic raw comment.
+Anything else still proves a real ingest happened.
 
-**Any `nba_games` row for a season other than 2026-27.** Every seeder parses
-with `season="2026-27"`, so another season cannot have come from here.
+**Any `nba_games` row for a season other than 2026-27, outside the three exact
+synthetic Reliability game ids.** The additional 2025-26 cohort is narrow and
+self-identifying; another foreign-season game still refuses.
 
 **Any league, or any 2026-27 game, this seed did not create.** The original
 guard. `nba_games`, `team_schedule` and the `nba-schedule` refresh are global
@@ -306,7 +309,9 @@ so you can tell, and do not put it where the service would find it by default.
 |---|---|---|
 | `hoops_gm.dev.seed_schedule_grid` | teams, games, scoring periods, deadline calendar | `seed_projections` |
 | `hoops_gm.dev.seed_projections` | the above, plus players, positions and the synthetic cohort | `seed_demo` |
+| `hoops_gm.dev.seed_reliability_demo` | three synthetic final games, two synthetic players, four box scores, two non-play rows and the published descriptive claim | `seed_demo` |
 | `hoops_gm.dev.seed_draft` | two mock drafts, through the real recorders; standalone names stay unresolved, while `seed_demo` may supply typed canonical auction players | `seed_demo` |
+| `scripts/run_demo.py` | an ephemeral database plus backend and Vite lifecycle | operator entry point |
 
 Running `seed_schedule_grid` before `seed_projections` is **redundant, not
 required** — `seed_projections` already calls it. It is harmless, and a runbook

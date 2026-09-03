@@ -6,9 +6,12 @@
     "season_type": "regular",
     "window_start": "2026-01-05",
     "as_of_date": "2026-01-08",
+    "schedule_source": "test:canonical-schedule",
     "schedule_version": "5315442acef5e950",
     "schedule_refreshed_at": "2026-01-09T00:00:00Z",
+    "observation_source": "nba_games+team_schedule+player_game_logs+player_participation",
     "source_version": "8f3ad8713466d634",
+    "derivation_source": "quant:reliability-descriptive-derivation",
     "derivation_version": "f4ce099a5e84e0f8",
     "computed_at": "2026-09-01T21:10:01.313861Z"
   },

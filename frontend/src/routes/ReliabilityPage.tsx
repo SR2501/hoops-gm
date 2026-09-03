@@ -75,6 +75,9 @@ function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResp
     [filter, query, rows],
   )
   const visible = filtered.slice(0, visibleLimit)
+  const isSyntheticDemo =
+    payload.lineage.schedule_source.startsWith('synthetic-demo:') ||
+    payload.lineage.observation_source.startsWith('synthetic-demo:')
 
   const changeQuery = (value: string) => {
     setQuery(value)
@@ -117,6 +120,18 @@ function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResp
           </div>
         </dl>
       </section>
+
+      {isSyntheticDemo ? (
+        <p
+          className="reliability__warning reliability__synthetic-warning"
+          role="note"
+          data-testid="synthetic-demo-warning"
+        >
+          <strong>Synthetic demo cohort.</strong> Every game, box score, and play/non-play
+          observation is invented solely to exercise the interface. This is not historical
+          evidence, a projection, a recommendation, calibrated availability, or <code>p(play)</code>.
+        </p>
+      ) : null}
 
       <p className="reliability__warning" role="note" data-testid="coverage-warning">
         <strong>Incomplete opportunity coverage.</strong> Rates below use only direct play and
@@ -376,6 +391,7 @@ function Lineage({ payload }: { payload: ReliabilityScorecardsResponse }) {
         <div className="facts__row">
           <dt>Schedule cohort</dt>
           <dd>
+            source <code>{payload.lineage.schedule_source}</code> · version{' '}
             <code>{payload.lineage.schedule_version}</code> · refreshed{' '}
             <code>{payload.lineage.schedule_refreshed_at}</code>
           </dd>
@@ -383,12 +399,14 @@ function Lineage({ payload }: { payload: ReliabilityScorecardsResponse }) {
         <div className="facts__row">
           <dt>Observation cohort</dt>
           <dd>
+            source <code>{payload.lineage.observation_source}</code> · version{' '}
             <code>{payload.lineage.source_version}</code>
           </dd>
         </div>
         <div className="facts__row">
           <dt>Derivation</dt>
           <dd>
+            source <code>{payload.lineage.derivation_source}</code> · version{' '}
             <code>{payload.lineage.derivation_version}</code> · computed{' '}
             <code>{payload.lineage.computed_at}</code>
           </dd>

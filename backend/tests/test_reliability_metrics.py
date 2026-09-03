@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from hoops_gm.availability import (
     OBSERVED_COVERAGE_STATUS,
+    RELIABILITY_SOURCE_KEY,
     CategoryConsistency,
     PlayerReliabilityScorecard,
     ReliabilityConfig,
@@ -246,6 +247,20 @@ def _scorecard(
 
 def _category(scorecard: PlayerReliabilityScorecard, name: str) -> CategoryConsistency:
     return next(row for row in scorecard.production.categories if row.category == name)
+
+
+def test_reliability_observation_source_remains_exact(session: Session) -> None:
+    home, away = _teams(session)
+    game = _game(session, number=0, game_date=date(2026, 1, 1), home=home, away=away)
+    _register_schedule(session)
+    _log(session, player=_player(session, "Default Source"), game=game, team=home)
+
+    publish_reliability_cohorts(session, season=SEASON, as_of_date=game.game_date)
+
+    run = session.scalars(
+        select(RefreshRun).where(RefreshRun.artifact_key == RELIABILITY_SOURCE_KEY)
+    ).one()
+    assert run.source == "nba_games+team_schedule+player_game_logs+player_participation"
 
 
 def test_observed_rates_exclude_unknown_and_missing_rows(session: Session) -> None:
