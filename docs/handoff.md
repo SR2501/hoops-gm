@@ -34237,3 +34237,45 @@ Hosted checks for the repaired head cannot be known until it is pushed.
 **Next:** Review the repaired exact PR head and hosted Code-gate results, then
 exercise the strip against the rehearsal league through an A-to-B navigation
 before relying on its evidence under a pick clock.
+---
+
+## 2026-09-03 - bridge - Permanent draft-feed skips are explicit refusals
+
+**Correction:** The preceding status-strip implementation reduced
+`FeedStatusResponse.skipped` to a visible count but did not make a positive count
+unhealthy. A permanent skip such as `player_external_id_unreadable: 1` therefore
+rendered `skipped 1` beside `ok: true` and no refusal. The count was visible, but
+the trust decision was wrong.
+
+**Changed:** Every positive permanent skipped total now publishes **FEED
+SKIPPED** and makes the feed non-healthy. The warning includes every positive
+reason as `reason=count`, sorted lexically for deterministic display and passed
+through the existing status-text sanitizer and secret redaction. There is no
+benign allowlist: the backend has already separated retryable outcomes, and even
+dedupe-shaped permanent reasons can represent a missed pick when identity was
+wrong. Zero-valued reasons contribute neither to the count nor the warning.
+Skipped warnings join, rather than replace, blocked, retryable, stale/silent,
+reconciliation and board-regression warnings.
+
+**Now true:** Focused tests cover `player_external_id_unreadable`,
+`sale_without_amount`, multiple reasons and counts in deterministic order, zero
+skips remaining healthy when all other channels are healthy, sanitization, and
+coexistence with blocked, retryable, stale and regression warnings. Disabling
+the `FEED SKIPPED` branch made both the health-classification and multi-warning
+tests fail; restoring it passes the full userscript suite at **114/114**. The
+cumulative local Code gate also passes backend Ruff, format, strict mypy and the
+full pytest suite, plus frontend lint, type-check, **418/418 tests**, build,
+repository JavaScript lint, and the userscript build. This remains read-only
+status evidence and Code-gate-only: no action, account write or authority
+changed.
+
+**Could not verify:** No live Fantrax draft, real persisted Draft mapping,
+long-lived Tampermonkey tab, backend disconnect, or real permanent skipped event
+was exercised. Hosted CI and a fresh independent cumulative review are pending
+on the new pushed exact head. The unchanged explicit 1-64 ASCII league-id
+contract may refuse a future Fantrax identifier outside the measured alphabet.
+
+**Next:** Review the new exact PR head cumulatively, require hosted Code-gate
+checks, then drive at least one permanent-skip fixture through the rehearsal
+browser strip before trusting the warning under a pick clock. Do not merge from
+this session.

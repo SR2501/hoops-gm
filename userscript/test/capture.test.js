@@ -2512,6 +2512,7 @@ test("formatStatusLines renders canonical feed counts and trust-changing states"
     "draft 17 feed \u00b7 observed 12 \u00b7 applied 7 \u00b7 pending 5 \u00b7 skipped 2 \u00b7 retryable 1"
   );
   assert.match(lines.refusal, /FEED BLOCKED: ordered_pick_out_of_turn/);
+  assert.match(lines.refusal, /FEED SKIPPED: unreadable_player_id=2/);
   assert.match(lines.refusal, /FEED RETRYING: 1 state conflict still pending/);
   assert.match(lines.refusal, /FEED STALE\/SILENT: bridge_capture 180s old \(limit 60s\)/);
   assert.match(lines.refusal, /FEED RECONCILIATION: 1 disagreement, 1 bridge-only, 2 official-only/);
@@ -2519,6 +2520,105 @@ test("formatStatusLines renders canonical feed counts and trust-changing states"
   assert.match(lines.refusal, /FEED CAVEAT: official source returned a partial view/);
   assert.match(lines.refusal, /BOARD REGRESSION: 1 pick disappeared; prior state retained/);
   assert.equal(lines.ok, false);
+});
+
+test("permanent feed skips are ordered refusal details and zero skips stay healthy", async () => {
+  const capture = await loadCapture();
+  const healthy = {
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 0,
+    duplicates: 0,
+    lastCaptureAtMs: null,
+    lastSource: null,
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+  };
+
+  for (const [reason, count] of [
+    ["player_external_id_unreadable", 1],
+    ["sale_without_amount", 2],
+  ]) {
+    const lines = capture.formatStatusLines({
+      ...healthy,
+      feedReport: makeFeedStatus({ skipped: { [reason]: count } }),
+    });
+    assert.equal(lines.ok, false);
+    assert.equal(lines.refusal, `FEED SKIPPED: ${reason}=${count}`);
+  }
+
+  const multiple = capture.formatStatusLines({
+    ...healthy,
+    feedReport: makeFeedStatus({
+      skipped: {
+        sale_without_amount: 2,
+        player_external_id_unreadable: 1,
+        already_in_log: 3,
+      },
+    }),
+  });
+  assert.equal(
+    multiple.refusal,
+    "FEED SKIPPED: already_in_log=3, player_external_id_unreadable=1, sale_without_amount=2"
+  );
+  assert.equal(multiple.ok, false);
+
+  const zero = capture.formatStatusLines({
+    ...healthy,
+    feedReport: makeFeedStatus({
+      observation_count: 0,
+      applied_count: 0,
+      pending_count: 0,
+      skipped: { player_external_id_unreadable: 0 },
+    }),
+  });
+  assert.equal(zero.feed, "draft 17 feed \u00b7 observed 0 \u00b7 applied 0 \u00b7 pending 0 \u00b7 skipped 0");
+  assert.equal(zero.refusal, null);
+  assert.equal(zero.ok, true);
+});
+
+test("skipped reason text is sanitized without hiding other feed warnings", async () => {
+  const capture = await loadCapture();
+  const secret = "a".repeat(64);
+  const lines = capture.formatStatusLines({
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus({
+      skipped: {
+        sale_without_amount: 2,
+        [`player_${secret}`]: 1,
+      },
+      retryable: { draft_closed: 1 },
+      blocked: ["draft_pick_coordinate_mismatch"],
+      freshness: [
+        {
+          transport: "bridge_capture",
+          age_seconds: 120,
+          silent: true,
+          silence_threshold_seconds: 60,
+          contact_age_seconds: 120,
+          contact_is_known: true,
+        },
+      ],
+      board_regressions: [{}],
+    }),
+  });
+
+  assert.equal(lines.ok, false);
+  assert.match(lines.refusal, /FEED SKIPPED:/);
+  assert.match(lines.refusal, /sale_without_amount=2/);
+  assert.doesNotMatch(lines.refusal, new RegExp(secret));
+  assert.match(lines.refusal, /\[redacted\]=1/);
+  assert.match(lines.refusal, /FEED BLOCKED:/);
+  assert.match(lines.refusal, /FEED RETRYING:/);
+  assert.match(lines.refusal, /FEED STALE\/SILENT:/);
+  assert.match(lines.refusal, /BOARD REGRESSION:/);
 });
 
 test("formatStatusLines makes context and identity failures distinct from zero picks", async () => {

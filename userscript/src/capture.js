@@ -1229,153 +1229,169 @@
   }
 
   function countReasonMap(value) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return 0;
-      }
-      return Object.values(value).reduce(
-        (total, count) => total + (Number.isSafeInteger(count) && count >= 0 ? count : 0),
-        0
-      );
+    return reasonMapEntries(value).reduce((total, [, count]) => total + count, 0);
+  }
+
+  function reasonMapEntries(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [];
     }
+    return Object.entries(value)
+      .filter(
+        ([reason, count]) =>
+          typeof reason === "string" && Number.isSafeInteger(count) && count > 0
+      )
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  }
 
-    function plural(count, singular, pluralValue = `${singular}s`) {
-      return `${count} ${count === 1 ? singular : pluralValue}`;
-    }
+  function plural(count, singular, pluralValue = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : pluralValue}`;
+  }
 
-    function formatFeedState(safe) {
-      const state = typeof safe.feedStatus === "string" ? safe.feedStatus : "checking";
-      const leagueId = sanitizeStatusText(safe.feedLeagueId, 64);
-      const report = safe.feedReport;
-      if (state === "checking") {
-        return {
-          line: leagueId ? `feed ${leagueId}: checking local draft` : "feed: checking page identity",
-          warning: null,
-          ok: false,
-        };
-      }
-      if (state === "invalid_page_id") {
-        return {
-          line: "feed unavailable",
-          warning: "FEED ID UNAVAILABLE: current Fantrax URL has no valid league id",
-          ok: false,
-        };
-      }
-      if (state === "not_found") {
-        return {
-          line: leagueId ? `feed ${leagueId}: no local draft` : "feed: no local draft",
-          warning: "NO LOCAL DRAFT: this Fantrax league is not linked to a persisted draft",
-          ok: false,
-        };
-      }
-      if (state === "ambiguous") {
-        return {
-          line: leagueId ? `feed ${leagueId}: ambiguous local draft` : "feed: ambiguous local draft",
-          warning: "AMBIGUOUS LOCAL DRAFT: multiple persisted drafts match this Fantrax league",
-          ok: false,
-        };
-      }
-      if (state !== "available" || !report) {
-        return {
-          line: leagueId ? `feed ${leagueId}: status uncheckable` : "feed: status uncheckable",
-          warning: `FEED STATUS UNCHECKABLE: ${
-            sanitizeStatusText(safe.feedReason) || "local feed contract unavailable"
-          }`,
-          ok: false,
-        };
-      }
-
-      const skipped = countReasonMap(report.skipped);
-      const retryable = countReasonMap(report.retryable);
-      const lineParts = [
-        `draft ${report.draft_id} feed`,
-        `observed ${report.observation_count}`,
-        `applied ${report.applied_count}`,
-        `pending ${report.pending_count}`,
-        `skipped ${skipped}`,
-      ];
-      if (retryable > 0) {
-        lineParts.push(`retryable ${retryable}`);
-      }
-
-      const warnings = [];
-      if (typeof report.context_unavailable === "string" && report.context_unavailable) {
-        warnings.push(`FEED CONTEXT UNAVAILABLE: ${sanitizeStatusText(report.context_unavailable)}`);
-      }
-      if (Array.isArray(report.blocked) && report.blocked.length > 0) {
-        warnings.push(
-          `FEED BLOCKED: ${report.blocked
-            .map((reason) => sanitizeStatusText(reason))
-            .filter(Boolean)
-            .join(", ")}`
-        );
-      }
-      if (retryable > 0) {
-        warnings.push(`FEED RETRYING: ${plural(retryable, "state conflict")} still pending`);
-      }
-      const silent = Array.isArray(report.freshness)
-        ? report.freshness.filter((source) => source && source.silent === true)
-        : [];
-      if (silent.length > 0) {
-        const sources = silent.map((source) => {
-          const transport = sanitizeStatusText(source.transport, 32) || "unknown source";
-          const age = source.contact_is_known ? source.contact_age_seconds : source.age_seconds;
-          const ageText = Number.isFinite(age) ? `${Math.round(age)}s old` : "never seen";
-          return `${transport} ${ageText} (limit ${Math.round(source.silence_threshold_seconds)}s)`;
-        });
-        warnings.push(`FEED STALE/SILENT: ${sources.join(", ")}`);
-      }
-      const reconciliation = report.reconciliation;
-      if (reconciliation && typeof reconciliation === "object") {
-        const disagreementCount = Array.isArray(reconciliation.disagreements)
-          ? reconciliation.disagreements.length
-          : 0;
-        const bridgeOnly = Array.isArray(reconciliation.only_bridge)
-          ? reconciliation.only_bridge.length
-          : 0;
-        const officialOnly = Array.isArray(reconciliation.only_official)
-          ? reconciliation.only_official.length
-          : 0;
-        const findings = [];
-        if (disagreementCount > 0) {
-          findings.push(plural(disagreementCount, "disagreement"));
-        }
-        if (bridgeOnly > 0) {
-          findings.push(`${bridgeOnly} bridge-only`);
-        }
-        if (officialOnly > 0) {
-          findings.push(`${officialOnly} official-only`);
-        }
-        if (findings.length > 0) {
-          warnings.push(`FEED RECONCILIATION: ${findings.join(", ")}`);
-        }
-        if (reconciliation.independence && reconciliation.independence.independent === false) {
-          warnings.push(
-            `FEED UNCORROBORATED: ${
-              sanitizeStatusText(reconciliation.independence.reason) ||
-              "the readings are not independent"
-            }`
-          );
-        }
-        if (Array.isArray(reconciliation.caveats) && reconciliation.caveats.length > 0) {
-          warnings.push(
-            `FEED CAVEAT: ${sanitizeStatusText(reconciliation.caveats[0]) || "see dashboard"}`
-          );
-        }
-      }
-      const regressions = Array.isArray(report.board_regressions)
-        ? report.board_regressions.length
-        : 0;
-      if (regressions > 0) {
-        warnings.push(
-          `BOARD REGRESSION: ${plural(regressions, "pick")} disappeared; prior state retained`
-        );
-      }
+  function formatFeedState(safe) {
+    const state = typeof safe.feedStatus === "string" ? safe.feedStatus : "checking";
+    const leagueId = sanitizeStatusText(safe.feedLeagueId, 64);
+    const report = safe.feedReport;
+    if (state === "checking") {
       return {
-        line: lineParts.join(" \u00b7 "),
-        warning: warnings.length > 0 ? warnings.join(" | ") : null,
-        ok: warnings.length === 0,
+        line: leagueId ? `feed ${leagueId}: checking local draft` : "feed: checking page identity",
+        warning: null,
+        ok: false,
       };
     }
+    if (state === "invalid_page_id") {
+      return {
+        line: "feed unavailable",
+        warning: "FEED ID UNAVAILABLE: current Fantrax URL has no valid league id",
+        ok: false,
+      };
+    }
+    if (state === "not_found") {
+      return {
+        line: leagueId ? `feed ${leagueId}: no local draft` : "feed: no local draft",
+        warning: "NO LOCAL DRAFT: this Fantrax league is not linked to a persisted draft",
+        ok: false,
+      };
+    }
+    if (state === "ambiguous") {
+      return {
+        line: leagueId ? `feed ${leagueId}: ambiguous local draft` : "feed: ambiguous local draft",
+        warning: "AMBIGUOUS LOCAL DRAFT: multiple persisted drafts match this Fantrax league",
+        ok: false,
+      };
+    }
+    if (state !== "available" || !report) {
+      return {
+        line: leagueId ? `feed ${leagueId}: status uncheckable` : "feed: status uncheckable",
+        warning: `FEED STATUS UNCHECKABLE: ${
+          sanitizeStatusText(safe.feedReason) || "local feed contract unavailable"
+        }`,
+        ok: false,
+      };
+    }
+
+    const skippedEntries = reasonMapEntries(report.skipped);
+    const skipped = skippedEntries.reduce((total, [, count]) => total + count, 0);
+    const retryable = countReasonMap(report.retryable);
+    const lineParts = [
+      `draft ${report.draft_id} feed`,
+      `observed ${report.observation_count}`,
+      `applied ${report.applied_count}`,
+      `pending ${report.pending_count}`,
+      `skipped ${skipped}`,
+    ];
+    if (retryable > 0) {
+      lineParts.push(`retryable ${retryable}`);
+    }
+
+    const warnings = [];
+    if (typeof report.context_unavailable === "string" && report.context_unavailable) {
+      warnings.push(`FEED CONTEXT UNAVAILABLE: ${sanitizeStatusText(report.context_unavailable)}`);
+    }
+    if (skipped > 0) {
+      const reasons = skippedEntries.map(
+        ([reason, count]) => `${sanitizeStatusText(reason, 96) || "unknown"}=${count}`
+      );
+      // The backend classifies every member of `skipped` as permanent. There
+      // is deliberately no benign allowlist: even dedupe-shaped reasons can
+      // represent a missing pick when identity was wrong.
+      warnings.push(`FEED SKIPPED: ${reasons.join(", ")}`);
+    }
+    if (Array.isArray(report.blocked) && report.blocked.length > 0) {
+      warnings.push(
+        `FEED BLOCKED: ${report.blocked
+          .map((reason) => sanitizeStatusText(reason))
+          .filter(Boolean)
+          .join(", ")}`
+      );
+    }
+    if (retryable > 0) {
+      warnings.push(`FEED RETRYING: ${plural(retryable, "state conflict")} still pending`);
+    }
+    const silent = Array.isArray(report.freshness)
+      ? report.freshness.filter((source) => source && source.silent === true)
+      : [];
+    if (silent.length > 0) {
+      const sources = silent.map((source) => {
+        const transport = sanitizeStatusText(source.transport, 32) || "unknown source";
+        const age = source.contact_is_known ? source.contact_age_seconds : source.age_seconds;
+        const ageText = Number.isFinite(age) ? `${Math.round(age)}s old` : "never seen";
+        return `${transport} ${ageText} (limit ${Math.round(source.silence_threshold_seconds)}s)`;
+      });
+      warnings.push(`FEED STALE/SILENT: ${sources.join(", ")}`);
+    }
+    const reconciliation = report.reconciliation;
+    if (reconciliation && typeof reconciliation === "object") {
+      const disagreementCount = Array.isArray(reconciliation.disagreements)
+        ? reconciliation.disagreements.length
+        : 0;
+      const bridgeOnly = Array.isArray(reconciliation.only_bridge)
+        ? reconciliation.only_bridge.length
+        : 0;
+      const officialOnly = Array.isArray(reconciliation.only_official)
+        ? reconciliation.only_official.length
+        : 0;
+      const findings = [];
+      if (disagreementCount > 0) {
+        findings.push(plural(disagreementCount, "disagreement"));
+      }
+      if (bridgeOnly > 0) {
+        findings.push(`${bridgeOnly} bridge-only`);
+      }
+      if (officialOnly > 0) {
+        findings.push(`${officialOnly} official-only`);
+      }
+      if (findings.length > 0) {
+        warnings.push(`FEED RECONCILIATION: ${findings.join(", ")}`);
+      }
+      if (reconciliation.independence && reconciliation.independence.independent === false) {
+        warnings.push(
+          `FEED UNCORROBORATED: ${
+            sanitizeStatusText(reconciliation.independence.reason) ||
+            "the readings are not independent"
+          }`
+        );
+      }
+      if (Array.isArray(reconciliation.caveats) && reconciliation.caveats.length > 0) {
+        warnings.push(
+          `FEED CAVEAT: ${sanitizeStatusText(reconciliation.caveats[0]) || "see dashboard"}`
+        );
+      }
+    }
+    const regressions = Array.isArray(report.board_regressions)
+      ? report.board_regressions.length
+      : 0;
+    if (regressions > 0) {
+      warnings.push(
+        `BOARD REGRESSION: ${plural(regressions, "pick")} disappeared; prior state retained`
+      );
+    }
+    return {
+      line: lineParts.join(" \u00b7 "),
+      warning: warnings.length > 0 ? warnings.join(" | ") : null,
+      ok: warnings.length === 0,
+    };
+  }
 
   /**
    * The whole rendering decision, as a pure function of state. Kept separate

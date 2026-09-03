@@ -410,6 +410,13 @@ establishes underscore, punctuation, Unicode or control characters, so the
 contract refuses them rather than inheriting the broader and runtime-dependent
 meaning of `\S`.
 
+Every positive count in `FeedStatusResponse.skipped` is a permanent skip and
+therefore prevents a healthy feed state. The strip renders **FEED SKIPPED**
+followed by every reason and count in deterministic lexical order. There is no
+benign-reason allowlist: even dedupe-shaped reasons can represent a missed pick
+when identity was wrong. A zero-valued reason contributes neither to the total
+nor to the warning.
+
 Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
 and adds no recurring timer. It starts at most one request per minute for an
 unchanged league, refreshes immediately after navigation to a different valid
