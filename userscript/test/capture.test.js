@@ -2265,7 +2265,7 @@ function makeFeedStatus(overrides = {}) {
         transport: "bridge_capture",
         last_seen_at: "2026-09-03T13:59:58Z",
         age_seconds: 2,
-        instant_count: 8,
+        instant_count: 1,
         silent: false,
         silence_threshold_seconds: 60,
         source_claimed_at: null,
@@ -2278,7 +2278,7 @@ function makeFeedStatus(overrides = {}) {
         transport: "official_http",
         last_seen_at: "2026-09-03T13:59:58Z",
         age_seconds: 2,
-        instant_count: 8,
+        instant_count: 1,
         silent: false,
         silence_threshold_seconds: 60,
         source_claimed_at: null,
@@ -2805,7 +2805,12 @@ test("version currency stays fail-closed across current, update, and malformed r
     reason: null,
   });
   assert.equal(status.snapshot().versionStatus, "current");
-  assert.equal(capture.formatStatusLines(status.snapshot()).refusal, null);
+  assert.equal(
+    capture.formatStatusLines(status.snapshot(), {
+      nowMs: Date.parse(status.snapshot().feedReport.as_of),
+    }).refusal,
+    null
+  );
 
   status.recordVersionStatus({
     status: "current",
@@ -3520,6 +3525,109 @@ test("feed validation rejects malformed reconciliation and board-regression cont
   );
 });
 
+test("feed validation rejects impossible source and reconciliation evidence", async () => {
+  const capture = await loadCapture();
+  const valid = makeFeedStatus();
+  const sameArtifact = {
+    ...valid.reconciliation.agreements[0],
+    official_artifact: valid.reconciliation.agreements[0].bridge_artifact,
+  };
+  const invalidReports = [
+    [
+      "source instant total exceeds observations",
+      makeFeedStatus({ observation_count: 1 }),
+    ],
+    [
+      "independent nonempty sources have no reconciliation outcome",
+      makeFeedStatus({
+        reconciliation: {
+          ...valid.reconciliation,
+          witnessed_by_two_transports: 0,
+          agreements: [],
+        },
+      }),
+    ],
+    [
+      "an agreement reuses one artifact across independent sources",
+      makeFeedStatus({
+        reconciliation: {
+          ...valid.reconciliation,
+          agreements: [sameArtifact],
+        },
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5" });
+    status.recordFeedStatus(report, "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+
+  const sharedArtifactStatus = capture.createBridgeStatus({ version: "0.5.5" });
+  sharedArtifactStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: {
+        ...valid.reconciliation,
+        independence: {
+          ...valid.reconciliation.independence,
+          independent: false,
+          reason: "same_artifact_on_both_sides",
+          shared_artifacts: [sameArtifact.bridge_artifact],
+        },
+        witnessed_by_two_transports: 0,
+        agreements: [],
+        unwitnessed_matches: [sameArtifact],
+      },
+    }),
+    "league-one"
+  );
+  assert.equal(sharedArtifactStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines(
+      {
+        ...sharedArtifactStatus.snapshot(),
+        paired: true,
+        versionStatus: "current",
+      },
+      { nowMs: Date.parse(valid.as_of) }
+    ).refusal,
+    /FEED UNCORROBORATED: same_artifact_on_both_sides/
+  );
+});
+
+test("feed freshness ages on the existing watcher render without another response", async () => {
+  const capture = await loadCapture();
+  const report = makeFeedStatus({
+    freshness: makeFeedStatus().freshness.map((source) => ({
+      ...source,
+      silence_threshold_seconds: 120,
+    })),
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5" });
+  status.recordFeedStatus(report, "league-one");
+  const baseMs = Date.parse(report.as_of);
+  const state = {
+    ...status.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  };
+
+  const current = capture.formatStatusLines(state, { nowMs: baseMs + 59_000 });
+  assert.equal(current.refusal, null);
+  assert.equal(current.ok, true);
+
+  const stale = capture.formatStatusLines(state, { nowMs: baseMs + 61_000 });
+  assert.match(stale.refusal, /FEED STATUS STALE: local report 61s old/);
+  assert.equal(stale.ok, false);
+
+  const silent = capture.formatStatusLines(state, { nowMs: baseMs + 120_000 });
+  assert.match(silent.refusal, /FEED STALE\/SILENT/);
+  assert.match(silent.refusal, /bridge_capture 121s old/);
+  assert.equal(silent.ok, false);
+});
+
 test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
   const capture = await loadCapture();
   const participant = (overrides = {}) => ({
@@ -3634,11 +3742,14 @@ test("feed validation accepts only reconciled participant and unattributed skip 
   const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
   const linesAfter = (report) => {
     status.recordFeedStatus(report, "league-one");
-    return capture.formatStatusLines({
-      ...status.snapshot(),
-      paired: true,
-      versionStatus: "current",
-    });
+    return capture.formatStatusLines(
+      {
+        ...status.snapshot(),
+        paired: true,
+        versionStatus: "current",
+      },
+      { nowMs: Date.parse(report.as_of) }
+    );
   };
 
   const unattributed = linesAfter(
@@ -3790,7 +3901,7 @@ test("a long-lived visible tab refreshes feed status on the existing watcher onl
   const capture = await loadCapture();
   const clock = makeFakeClock();
   const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
-  let observationCount = 1;
+  let observationCount = 2;
   let calls = 0;
   const transport = {
     backendOrigin: "http://127.0.0.1:8000",
@@ -3838,10 +3949,10 @@ test("a long-lived visible tab refreshes feed status on the existing watcher onl
 
   await flushMicrotasks();
   assert.equal(calls, 1);
-  assert.equal(status.snapshot().feedReport.observation_count, 1);
+  assert.equal(status.snapshot().feedReport.observation_count, 2);
   assert.equal(clock.pendingIntervals(), 1);
 
-  observationCount = 2;
+  observationCount = 3;
   clock.advance(999);
   watcher.checkContext();
   await flushMicrotasks();
@@ -3851,7 +3962,7 @@ test("a long-lived visible tab refreshes feed status on the existing watcher onl
   assert.equal(status.snapshot().feedStatus, "checking");
   await flushMicrotasks();
   assert.equal(calls, 2);
-  assert.equal(status.snapshot().feedReport.observation_count, 2);
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
   assert.equal(clock.pendingIntervals(), 1, "feed status adds no recurring timer");
 
   watcher.uninstall();

@@ -34394,3 +34394,16 @@ nonempty only-source evidence. Tests drive fabricated official contact and an
 empty reconciliation right side beside positive official freshness. The full
 suite remains **121/121**. Fresh exact-head review is required again; live
 boundaries remain unchanged.
+**Seventh review addendum:** Exact-head review of `3131ea2` found two
+remaining receipt-time false greens. The response validator now requires the
+sum of bridge and official instants to fit within persisted observation rows;
+an independent two-sided reconciliation must contain an outcome; and artifact
+pairs cannot contradict claimed independence. A proven shared-artifact report
+remains valid but explicitly uncorroborated. Freshness now ages from backend
+`as_of` on the strip's existing one-second watcher tick: source silence is
+recomputed and any report older than the one-minute refresh floor becomes
+`FEED STATUS STALE`, without adding a timer. Focused reproductions cover excess
+source instants, empty independent outcomes, contradictory and legitimate
+shared artifacts, and transition from current to stale/silent without another
+response. The full userscript suite passes **123/123**. Fresh exact-head review
+is required; live Fantrax DOM/network and real draft timing remain unverified.

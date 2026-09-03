@@ -384,8 +384,10 @@ Design constraints, all of them testable:
   swallowing a click meant for the draft board.
 - **No timer of its own.** It rides the rendered-view watcher's existing
   one-second context check and suppresses DOM writes when its rendered text is
-  unchanged, so an unchanged tick costs nothing. Adding a status interval right
-  after removing the Cache Storage interval would have been a wash.
+  unchanged. That tick also ages the server's `as_of` and source clocks, so a
+  report turns stale or silent between minute-floor refreshes instead of keeping
+  its receipt-time green state. Adding a status interval right after removing
+  the Cache Storage interval would have been a wash.
 - **Text only, never markup.** Refusal text is capture-derived and is written
   with `textContent`; any secret-shaped token in it is redacted first.
 - **It shows no number a decision rests on.** No price, no value, no suggested
@@ -621,8 +623,10 @@ bypassing the `/fxpa/req` filter, app-state preference over DOM snapshot,
 script/style stripping, size truncation, and the Tampermonkey menu wiring),
 and the status strip (secret redaction in refusal text, capture/version/feed
 states remaining independent, exact feed counts, named draft-identity
-refusals, stale/silent and reconciliation/regression warnings, long-lived
-refresh, monotonic response generations, a closed shadow root,
+refusals, stale/silent and reconciliation/regression warnings, source instants
+bounded by persisted observations, complete independent reconciliation
+evidence, artifact-pair independence, live aging between long-lived refreshes,
+monotonic response generations, a closed shadow root,
 `pointer-events: none`, `all: initial` written first, no `<style>` element,
 `textContent` rather than markup, deferred mounting before `body` exists,
 suppression of identical re-renders, the menu toggle, and the guarantee that it

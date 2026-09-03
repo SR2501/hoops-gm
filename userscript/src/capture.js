@@ -1248,7 +1248,7 @@
     return `${count} ${count === 1 ? singular : pluralValue}`;
   }
 
-  function formatFeedState(safe) {
+  function formatFeedState(safe, nowMs) {
     const state = typeof safe.feedStatus === "string" ? safe.feedStatus : "checking";
     const leagueId = sanitizeStatusText(safe.feedLeagueId, 64);
     const report = safe.feedReport;
@@ -1328,14 +1328,36 @@
     if (retryable > 0) {
       warnings.push(`FEED RETRYING: ${plural(retryable, "state conflict")} still pending`);
     }
+    const asOfMs = Date.parse(report.as_of);
+    const elapsedSeconds =
+      Number.isFinite(safe.feedReceivedAtMs) &&
+      Number.isFinite(nowMs) &&
+      Number.isFinite(asOfMs)
+        ? Math.max(0, (nowMs - asOfMs) / 1000)
+        : 0;
+    if (elapsedSeconds > FEED_STATUS_MIN_INTERVAL_MS / 1000) {
+      warnings.push(`FEED STATUS STALE: local report ${Math.round(elapsedSeconds)}s old`);
+    }
     const silent = Array.isArray(report.freshness)
-      ? report.freshness.filter((source) => source && source.silent === true)
+      ? report.freshness.filter((source) => {
+        if (!source || source.instant_count === 0) {
+          return true;
+        }
+        const age = source.contact_is_known
+          ? source.contact_age_seconds
+          : source.age_seconds;
+        return !Number.isFinite(age) ||
+          age + elapsedSeconds > source.silence_threshold_seconds;
+      })
       : [];
     if (silent.length > 0) {
       const sources = silent.map((source) => {
         const transport = sanitizeStatusText(source.transport, 32) || "unknown source";
         const age = source.contact_is_known ? source.contact_age_seconds : source.age_seconds;
-        const ageText = Number.isFinite(age) ? `${Math.round(age)}s old` : "never seen";
+        const effectiveAge = Number.isFinite(age) ? age + elapsedSeconds : null;
+        const ageText = Number.isFinite(effectiveAge)
+          ? `${Math.round(effectiveAge)}s old`
+          : "never seen";
         return `${transport} ${ageText} (limit ${Math.round(source.silence_threshold_seconds)}s)`;
       });
       warnings.push(`FEED STALE/SILENT: ${sources.join(", ")}`);
@@ -1413,7 +1435,7 @@
     const sourceVersion = typeof safe.sourceVersion === "string" ? safe.sourceVersion : null;
     const servedVersion = typeof safe.servedVersion === "string" ? safe.servedVersion : null;
     const versionReason = sanitizeStatusText(safe.versionReason);
-    const feed = formatFeedState(safe);
+    const feed = formatFeedState(safe, nowMs);
 
     const currentLabel = versionStatus === "current" ? " \u00b7 update current" : "";
     const headline =
@@ -1785,6 +1807,7 @@
     if (totalInstants === 0) {
       return reconciliation === null;
     }
+
     if (reconciliation === null) {
       return official.instant_count === 0;
     }
@@ -1792,6 +1815,44 @@
     const rightPresent = reconciliation.independence.right_transports.length > 0;
     return rightPresent === (official.instant_count > 0) &&
       !(leftPresent && bridge.instant_count === 0);
+  }
+
+  function reconciliationEvidenceIsConsistent(reconciliation) {
+    if (reconciliation === null) {
+      return true;
+    }
+    const outcomes =
+      reconciliation.agreements.length +
+      reconciliation.unwitnessed_matches.length +
+      reconciliation.disagreements.length +
+      reconciliation.only_bridge.length +
+      reconciliation.only_official.length;
+    if (reconciliation.independence.independent && outcomes === 0) {
+      return false;
+    }
+    if (!reconciliation.independence.independent) {
+      return true;
+    }
+    const bridgeArtifacts = new Set();
+    const officialArtifacts = new Set();
+    for (const match of [
+      ...reconciliation.agreements,
+      ...reconciliation.unwitnessed_matches,
+      ...reconciliation.disagreements,
+    ]) {
+      bridgeArtifacts.add(match.bridge_artifact);
+      officialArtifacts.add(match.official_artifact);
+    }
+    return [...bridgeArtifacts].every((artifact) => !officialArtifacts.has(artifact));
+  }
+
+  function sourceInstantTotalsFitObservations(report) {
+    const instantTotal = report.freshness.reduce(
+      (total, source) => total + source.instant_count,
+      0
+    );
+    return Number.isSafeInteger(instantTotal) &&
+      instantTotal <= report.observation_count;
   }
 
   function isBoardRegressionResponse(value) {
@@ -1899,7 +1960,9 @@
       isCompleteFreshness(report.freshness, report.as_of) &&
       isReconciliationResponse(report.reconciliation) &&
       reconciliationMatchesFreshness(report.reconciliation, report.freshness) &&
+      reconciliationEvidenceIsConsistent(report.reconciliation) &&
       isNonNegativeInteger(report.observation_count) &&
+      sourceInstantTotalsFitObservations(report) &&
       isNonNegativeInteger(report.applied_count) &&
       isNonNegativeInteger(report.pending_count) &&
       Array.isArray(report.blocked) &&
@@ -1934,6 +1997,7 @@
       feedStatus: "checking",
       feedLeagueId: null,
       feedReport: null,
+      feedReceivedAtMs: null,
       feedReason: null,
     };
     const scopedRefusals = new Map();
@@ -2130,12 +2194,14 @@
         state.feedStatus = "checking";
         state.feedLeagueId = sanitizeStatusText(leagueId, 64);
         state.feedReport = null;
+        state.feedReceivedAtMs = null;
         state.feedReason = null;
         emit();
       },
       recordFeedStatus(report, leagueId) {
         state.feedLeagueId = sanitizeStatusText(leagueId, 64);
         state.feedReport = null;
+        state.feedReceivedAtMs = null;
         state.feedReason = null;
         if (!isFeedStatusResponse(report)) {
           state.feedStatus = "uncheckable";
@@ -2143,6 +2209,7 @@
         } else {
           state.feedStatus = "available";
           state.feedReport = report;
+          state.feedReceivedAtMs = now();
         }
         emit();
       },
@@ -2157,6 +2224,7 @@
           : "uncheckable";
         state.feedLeagueId = sanitizeStatusText(leagueId, 64);
         state.feedReport = null;
+        state.feedReceivedAtMs = null;
         state.feedReason = sanitizeStatusText(message) || "local feed contract unavailable";
         emit();
       },
