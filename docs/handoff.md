@@ -34362,3 +34362,13 @@ reconciliation reproduction, nested and count contradictions, malformed board
 regressions, and a complete valid reconciliation/regression. The full userscript
 suite now passes **121/121**. Another exact-head cumulative review is required
 after this commit; live boundaries remain unchanged.
+**Fourth review addendum:** Exact-head review of `19e573c` found that an
+`independent: true` reconciliation still accepted swapped or empty side
+transports. The route always reconciles bridge capture on the left and official
+HTTP on the right. Independent evidence now requires exactly that orientation,
+the exact backend reason, and no shared artifacts/transports. Non-independent
+reports accept only the route-reachable `one_side_empty` or
+`same_artifact_on_both_sides` shapes with matching evidence. Tests reject
+swapped and empty independent sides and accept a valid one-side-empty warning.
+The full userscript suite remains **121/121**. Fresh exact-head review is required
+again; live boundaries remain unchanged.

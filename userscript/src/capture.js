@@ -1653,15 +1653,43 @@
       "shared_artifacts",
       "shared_transports",
     ];
-    return hasExactKeys(value, keys) &&
-      typeof value.independent === "boolean" &&
-      typeof value.reason === "string" &&
-      isTransportArray(value.left_transports) &&
-      isTransportArray(value.right_transports) &&
-      isStringArray(value.shared_artifacts) &&
-      isTransportArray(value.shared_transports) &&
-      (!value.independent ||
-        (value.shared_artifacts.length === 0 && value.shared_transports.length === 0));
+    if (
+      !hasExactKeys(value, keys) ||
+      typeof value.independent !== "boolean" ||
+      typeof value.reason !== "string" ||
+      !isTransportArray(value.left_transports) ||
+      !isTransportArray(value.right_transports) ||
+      !isStringArray(value.shared_artifacts) ||
+      !isTransportArray(value.shared_transports)
+    ) {
+      return false;
+    }
+    const leftIsBridge =
+      value.left_transports.length === 1 &&
+      value.left_transports[0] === "bridge_capture";
+    const rightIsOfficial =
+      value.right_transports.length === 1 &&
+      value.right_transports[0] === "official_http";
+    const noSharedTransport = value.shared_transports.length === 0;
+    if (value.independent) {
+      return value.reason === "distinct_artifacts_and_transports" &&
+        leftIsBridge &&
+        rightIsOfficial &&
+        value.shared_artifacts.length === 0 &&
+        noSharedTransport;
+    }
+    if (value.reason === "one_side_empty") {
+      return (value.left_transports.length === 0 || value.right_transports.length === 0) &&
+        (value.left_transports.length === 0 || leftIsBridge) &&
+        (value.right_transports.length === 0 || rightIsOfficial) &&
+        value.shared_artifacts.length === 0 &&
+        noSharedTransport;
+    }
+    return value.reason === "same_artifact_on_both_sides" &&
+      leftIsBridge &&
+      rightIsOfficial &&
+      value.shared_artifacts.length > 0 &&
+      noSharedTransport;
   }
 
   function isMatchResponse(value) {

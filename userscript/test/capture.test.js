@@ -3280,7 +3280,7 @@ test("feed validation rejects malformed reconciliation and board-regression cont
   };
   const independence = {
     independent: true,
-    reason: "separate transports",
+    reason: "distinct_artifacts_and_transports",
     left_transports: ["bridge_capture"],
     right_transports: ["official_http"],
     shared_artifacts: [],
@@ -3313,6 +3313,32 @@ test("feed validation rejects malformed reconciliation and board-regression cont
       "witness count mismatch",
       makeFeedStatus({
         reconciliation: { ...validReconciliation, witnessed_by_two_transports: 0 },
+      }),
+    ],
+    [
+      "swapped independent transports",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          independence: {
+            ...independence,
+            left_transports: ["official_http"],
+            right_transports: ["bridge_capture"],
+          },
+        },
+      }),
+    ],
+    [
+      "empty independent transports",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          independence: {
+            ...independence,
+            left_transports: [],
+            right_transports: [],
+          },
+        },
       }),
     ],
     [
@@ -3369,6 +3395,39 @@ test("feed validation rejects malformed reconciliation and board-regression cont
   });
   assert.match(validLines.refusal, /BOARD REGRESSION/);
   assert.equal(validLines.ok, false);
+
+  const emptySideStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  emptySideStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: {
+        independence: {
+          independent: false,
+          reason: "one_side_empty",
+          left_transports: [],
+          right_transports: ["official_http"],
+          shared_artifacts: [],
+          shared_transports: [],
+        },
+        witnessed_by_two_transports: 0,
+        agreements: [],
+        unwitnessed_matches: [],
+        disagreements: [],
+        only_bridge: [],
+        only_official: [],
+        caveats: [],
+      },
+    }),
+    "league-one"
+  );
+  assert.equal(emptySideStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines({
+      ...emptySideStatus.snapshot(),
+      paired: true,
+      versionStatus: "current",
+    }).refusal,
+    /FEED UNCORROBORATED: one_side_empty/
+  );
 });
 
 test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
