@@ -106,37 +106,87 @@ test("isFantraxDraftPage scopes only draft routes inside a Fantrax league", asyn
 test("fantraxLeagueIdFromUrl returns only backend-valid external league ids", async () => {
   const capture = await loadCapture();
 
+  for (const leagueId of [
+    "b2gyornvms4606iv",
+    "abc123league",
+    "fantrax-league-one",
+    "LG-BURN",
+    "A",
+    "x".repeat(64),
+  ]) {
+    assert.equal(
+      capture.fantraxLeagueIdFromUrl(
+        `https://www.fantrax.com/fantasy/league/${leagueId}/draft`
+      ),
+      leagueId
+    );
+  }
+
   assert.equal(
     capture.fantraxLeagueIdFromUrl(
-      "https://www.fantrax.com/fantasy/league/fantrax-league-1/draft"
+      "https://fantrax.com/fantasy/league/fantrax-league-one?view=players"
     ),
-    "fantrax-league-1"
+    "fantrax-league-one"
   );
+
+  const invalidCharacters = [
+    "\u0000",
+    "\u0001",
+    "\u0008",
+    "\t",
+    "\n",
+    "\u000b",
+    "\u000c",
+    "\r",
+    "\u000e",
+    "\u001c",
+    "\u001d",
+    "\u001e",
+    "\u001f",
+    "\u007f",
+    "\u0085",
+    "\u00a0",
+    "\u1680",
+    "\u2000",
+    "\u2001",
+    "\u2002",
+    "\u2003",
+    "\u2004",
+    "\u2005",
+    "\u2006",
+    "\u2007",
+    "\u2008",
+    "\u2009",
+    "\u200a",
+    "\u200b",
+    "\u2028",
+    "\u2029",
+    "\u202f",
+    "\u205f",
+    "\u3000",
+    "\ufeff",
+    "/",
+    "?",
+    "&",
+    "=",
+    "%",
+    "_",
+    "é",
+  ];
+  for (const character of invalidCharacters) {
+    const encoded = encodeURIComponent(character);
+    assert.equal(
+      capture.fantraxLeagueIdFromUrl(
+        `https://www.fantrax.com/fantasy/league/contains${encoded}character/draft`
+      ),
+      null,
+      `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")} must be refused`
+    );
+  }
+
   assert.equal(
-    capture.fantraxLeagueIdFromUrl(
-      "https://fantrax.com/fantasy/league/fantrax-league-1?view=players"
-    ),
-    "fantrax-league-1"
-  );
-  assert.equal(
-    capture.fantraxLeagueIdFromUrl(
-      "https://www.fantrax.com/fantasy/league/contains%20whitespace/draft"
-    ),
+    capture.fantraxLeagueIdFromUrl("https://www.fantrax.com/fantasy/league//draft"),
     null
-  );
-  assert.equal(
-    capture.fantraxLeagueIdFromUrl(
-      "https://www.fantrax.com/fantasy/league/contains%1Cseparator/draft"
-    ),
-    null,
-    "Python-only whitespace must be refused before the backend request"
-  );
-  assert.equal(
-    capture.fantraxLeagueIdFromUrl(
-      "https://www.fantrax.com/fantasy/league/contains%EF%BB%BFbom/draft"
-    ),
-    "contains\uFEFFbom",
-    "U+FEFF is not whitespace under the backend's Python regex"
   );
   assert.equal(
     capture.fantraxLeagueIdFromUrl(
@@ -2993,6 +3043,50 @@ test("a league navigation invalidates an older in-flight feed response", async (
   assert.equal(status.snapshot().feedReport.observation_count, 2);
 });
 
+test("feed completion rechecks live page identity before the watcher observes navigation", async () => {
+  const capture = await loadCapture();
+  const page = {
+    url: "https://www.fantrax.com/fantasy/league/league-one/draft",
+  };
+
+  for (const outcome of ["success", "failure"]) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    let settle;
+    const revalidator = capture.createFeedStatusRevalidator({
+      transport: {
+        draftFeedStatus: () =>
+          new Promise((resolve, reject) => {
+            settle = outcome === "success" ? resolve : reject;
+          }),
+      },
+      status,
+      readCurrentUrl: () => page.url,
+    });
+
+    page.url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+    revalidator.recheck(page.url);
+    await flushMicrotasks();
+    assert.equal(status.snapshot().feedStatus, "checking");
+
+    page.url = "https://www.fantrax.com/fantasy/league/league-two/draft";
+    settle(
+      outcome === "success"
+        ? makeFeedStatus({ draft_id: 11, observation_count: 99 })
+        : new Error("league-one request failed")
+    );
+    await flushMicrotasks();
+
+    assert.equal(
+      status.snapshot().feedStatus,
+      "checking",
+      `a stale ${outcome} must not publish before the watcher observes league-two`
+    );
+    assert.equal(status.snapshot().feedReport, null);
+    assert.equal(status.snapshot().feedReason, null);
+    revalidator.stop();
+  }
+});
+
 test("a long-lived visible tab refreshes feed status on the existing watcher only", async () => {
   const capture = await loadCapture();
   const clock = makeFakeClock();
@@ -3282,9 +3376,19 @@ test("installStatusStrip renders into a closed shadow root that cannot intercept
   );
   assert.ok(doc.created.every((node) => node.styleWrites.length >= 0));
 
-  const { headline, detail } = stripNodes(strip);
+  const { box, headline, detail, feed, refusal } = stripNodes(strip);
   assert.match(headline.textContent, /hoops-gm v0\.5\.2 \u00b7 NOT PAIRED/);
   assert.match(detail.textContent, /pair from the Tampermonkey menu/);
+  assert.equal(box.style.getPropertyValue("white-space"), "normal");
+  assert.equal(box.style.getPropertyValue("overflow"), "visible");
+  assert.equal(box.style.getPropertyValue("overflow-wrap"), "anywhere");
+  for (const singleLine of [headline, detail, feed]) {
+    assert.equal(singleLine.style.getPropertyValue("white-space"), "nowrap");
+    assert.equal(singleLine.style.getPropertyValue("overflow"), "hidden");
+    assert.equal(singleLine.style.getPropertyValue("text-overflow"), "ellipsis");
+  }
+  assert.equal(refusal.style.getPropertyValue("white-space"), "normal");
+  assert.equal(refusal.style.getPropertyValue("overflow-wrap"), "anywhere");
 });
 
 test("the status strip re-renders on real transitions and stays silent otherwise", async () => {

@@ -70,8 +70,11 @@ FantraxLeagueId = Annotated[
     Query(
         min_length=1,
         max_length=64,
-        pattern=r"^\S+$",
-        description="The external Fantrax league identifier present in the browser URL.",
+        pattern=r"^[A-Za-z0-9-]+$",
+        description=(
+            "The external Fantrax league identifier present in the browser URL: "
+            "1-64 ASCII letters, digits, or hyphens."
+        ),
     ),
 ]
 

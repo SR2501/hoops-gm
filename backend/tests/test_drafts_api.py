@@ -18,6 +18,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 
 import pytest
 from fastapi import FastAPI
@@ -508,7 +509,9 @@ def test_the_list_reports_enough_to_choose_a_draft(client: TestClient, session: 
 def test_fantrax_league_resolves_to_the_existing_feed_status(
     client: TestClient, session: Session
 ) -> None:
-    league = _league(session, fantrax_league_id="fantrax-league-one")
+    # The only real Fantrax league-id shape committed in this repository is a
+    # 16-character lowercase ASCII alphanumeric id.
+    league = _league(session, fantrax_league_id="b2gyornvms4606iv")
     draft = _create(client, league)
 
     resolved = client.get(
@@ -524,6 +527,26 @@ def test_fantrax_league_resolves_to_the_existing_feed_status(
     resolved_status.pop("as_of")
     by_id_status.pop("as_of")
     assert resolved_status == by_id_status
+
+
+@pytest.mark.parametrize(
+    "fantrax_league_id",
+    ["abc123league", "fantrax-league-one", "LG-BURN", "A", "x" * 64],
+)
+def test_fantrax_league_resolution_accepts_supported_identifier_shapes(
+    client: TestClient,
+    fantrax_league_id: str,
+) -> None:
+    # Uppercase and hyphen are both already used by persisted test leagues (for
+    # example LG-SNAKE in test_draft_feed.py), so this lookup contract must not
+    # make those rows unreachable.
+    response = client.get(
+        "/api/v1/drafts/by-fantrax-league/feed",
+        params={"fantrax_league_id": fantrax_league_id},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "draft_for_fantrax_league_not_found"
 
 
 def test_fantrax_league_resolution_refuses_zero_drafts(
@@ -576,6 +599,57 @@ def test_fantrax_league_resolution_refuses_malformed_identifiers(
     assert response.json()["error"] == "validation_error"
 
 
+@pytest.mark.parametrize(
+    "character",
+    [
+        "\x00",
+        "\x01",
+        "\x08",
+        "\t",
+        "\n",
+        "\v",
+        "\f",
+        "\r",
+        "\x0e",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x1f",
+        "\x7f",
+        "\x85",
+        "\u00a0",
+        "\u1680",
+        *[chr(codepoint) for codepoint in range(0x2000, 0x200B)],
+        "\u200b",
+        "\u2028",
+        "\u2029",
+        "\u202f",
+        "\u205f",
+        "\u3000",
+        "\ufeff",
+        "/",
+        "?",
+        "&",
+        "=",
+        "%",
+        "_",
+        "é",
+    ],
+    ids=lambda character: f"U+{ord(character):04X}",
+)
+def test_fantrax_league_resolution_refuses_characters_outside_the_ascii_contract(
+    client: TestClient,
+    character: str,
+) -> None:
+    encoded_identifier = f"contains{quote(character, safe='')}character"
+    response = client.get(
+        f"/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id={encoded_identifier}"
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+
+
 def test_fantrax_league_resolution_is_local_only(tmp_path: Path) -> None:
     settings = Settings(
         environment="development",
@@ -602,6 +676,23 @@ def test_fantrax_league_resolution_reuses_the_feed_status_schema(client: TestCli
 
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/FeedStatusResponse"
+    }
+
+    league_id_parameter = next(
+        parameter
+        for parameter in operation["parameters"]
+        if parameter["name"] == "fantrax_league_id"
+    )
+    assert league_id_parameter["schema"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9-]+$",
+        "description": (
+            "The external Fantrax league identifier present in the browser URL: "
+            "1-64 ASCII letters, digits, or hyphens."
+        ),
+        "title": "Fantrax League Id",
     }
 
 

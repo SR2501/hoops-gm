@@ -402,13 +402,23 @@ and **AMBIGUOUS LOCAL DRAFT**, never as zero picks. A malformed or missing page
 id is refused before any request. There is no `GET /drafts` fallback, newest-
 draft guess, or all-drafts poll.
 
+The resolver and userscript share an explicit identifier boundary: 1-64 ASCII
+letters, digits or hyphens (`^[A-Za-z0-9-]+$`). The only recorded real Fantrax
+id is a 16-character lowercase alphanumeric token; persisted synthetic/test ids
+also establish uppercase and hyphens. Nothing in repository evidence
+establishes underscore, punctuation, Unicode or control characters, so the
+contract refuses them rather than inheriting the broader and runtime-dependent
+meaning of `\S`.
+
 Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
 and adds no recurring timer. It starts at most one request per minute for an
 unchanged league, refreshes immediately after navigation to a different valid
 league id, clears the prior count while a refresh is pending, and accepts only
-the newest request generation. A failed refresh therefore cannot leave an old
-green/count state visible, and a late response from the previous league cannot
-overwrite the current one.
+the newest request generation. Response settlement also re-reads the current
+browser URL and requires its exact external league id to still match, closing
+the interval before the one-second watcher notices SPA navigation. A failed
+refresh therefore cannot leave an old green/count state visible, and a late
+response from the previous league cannot overwrite the current one.
 
 **hoops-gm: show/hide status strip** toggles it from the Tampermonkey menu,
 which is why the strip itself never needs to accept a click. Hiding is

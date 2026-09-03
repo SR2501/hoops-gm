@@ -32,10 +32,7 @@
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
   const VERSION_STATUS_MIN_INTERVAL_MS = 60000;
   const FEED_STATUS_MIN_INTERVAL_MS = 60000;
-  // FastAPI/Pydantic validates this identifier with Python's Unicode-aware
-  // `\S`; ECMAScript's `\s` omits U+001C-U+001F and includes U+FEFF.
-  const PYTHON_WHITESPACE =
-    /[\t\n\v\f\r \u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u;
+  const FANTRAX_LEAGUE_ID = /^[A-Za-z0-9-]{1,64}$/;
   const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
   const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
   const DRAFT_BOARD_HEADER_SELECTOR = ".league-draft-board__header";
@@ -164,9 +161,7 @@
         .slice(FANTRAX_LEAGUE_PATH_PREFIX.length)
         .split("/")[0];
       const leagueId = decodeURIComponent(encoded);
-      return leagueId.length >= 1 && leagueId.length <= 64 && !PYTHON_WHITESPACE.test(leagueId)
-        ? leagueId
-        : null;
+      return FANTRAX_LEAGUE_ID.test(leagueId) ? leagueId : null;
     } catch {
       return null;
     }
@@ -1860,6 +1855,7 @@
     status,
     now = () => Date.now(),
     minIntervalMs = FEED_STATUS_MIN_INTERVAL_MS,
+    readCurrentUrl,
   } = {}) {
     const interval = Math.max(1000, Number(minIntervalMs) || FEED_STATUS_MIN_INTERVAL_MS);
     let stopped = false;
@@ -1889,6 +1885,20 @@
           error && error.message ? error.message : "local feed status request failed",
           leagueId
         );
+      }
+    }
+
+    function responseStillMatchesPage(generation, leagueId) {
+      if (stopped || generation !== requestGeneration || leagueId !== lastLeagueId) {
+        return false;
+      }
+      if (typeof readCurrentUrl !== "function") {
+        return true;
+      }
+      try {
+        return fantraxLeagueIdFromUrl(readCurrentUrl()) === leagueId;
+      } catch {
+        return false;
       }
     }
 
@@ -1940,12 +1950,12 @@
         .then(() => transport.draftFeedStatus(leagueId))
         .then(
           (report) => {
-            if (!stopped && generation === requestGeneration && leagueId === lastLeagueId) {
+            if (responseStillMatchesPage(generation, leagueId)) {
               status.recordFeedStatus(report, leagueId);
             }
           },
           (error) => {
-            if (!stopped && generation === requestGeneration && leagueId === lastLeagueId) {
+            if (responseStillMatchesPage(generation, leagueId)) {
               publishFailure(error, leagueId);
             }
           }
@@ -1987,8 +1997,14 @@
     ["background", "rgba(17, 19, 24, 0.92)"],
     ["color", "rgb(226, 232, 240)"],
     ["box-shadow", "0 1px 6px rgba(0, 0, 0, 0.35)"],
-    ["white-space", "nowrap"],
+    ["white-space", "normal"],
     ["max-width", "60vw"],
+    ["overflow", "visible"],
+    ["overflow-wrap", "anywhere"],
+  ];
+
+  const STATUS_SINGLE_LINE_STYLES = [
+    ["white-space", "nowrap"],
     ["overflow", "hidden"],
     ["text-overflow", "ellipsis"],
   ];
@@ -2062,7 +2078,14 @@
       detailNode = doc.createElement("div");
       feedNode = doc.createElement("div");
       refusalNode = doc.createElement("div");
-      applyStyles(refusalNode, [["color", "rgb(252, 211, 77)"]]);
+      applyStyles(headlineNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(detailNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(feedNode, STATUS_SINGLE_LINE_STYLES);
+      applyStyles(refusalNode, [
+        ["color", "rgb(252, 211, 77)"],
+        ["white-space", "normal"],
+        ["overflow-wrap", "anywhere"],
+      ]);
       box.appendChild(headlineNode);
       box.appendChild(detailNode);
       box.appendChild(feedNode);
@@ -2660,6 +2683,7 @@
     installed.feedStatusRevalidator = createFeedStatusRevalidator({
       transport,
       status,
+      readCurrentUrl: () => window.location.href,
     });
     installed.feedStatusRevalidator.recheck(window.location.href);
     installed.renderedViewWatcher = installAutomaticRenderedViewCapture({

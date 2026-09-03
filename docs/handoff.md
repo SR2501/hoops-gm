@@ -34193,3 +34193,47 @@ the PR runs.
 **Next:** Coordinator should review the exact PR head and hosted Code-gate
 results, then exercise the 0.5.5 strip against the rehearsal draft's real
 Fantrax league id before relying on its feed evidence under a pick clock.
+
+## 2026-09-03 - bridge - Correcting feed identity validation and response publication
+
+**Correction:** The preceding entry says URL validation matches Python
+`^\S+$`. That is false. FastAPI/Pydantic's query-pattern engine is not Python's
+`re`: the live route accepted NUL, U+001C-U+001F, DEL, U+200B and U+FEFF under
+that pattern. The backend contract owner narrowed the shared boundary instead
+of preserving runtime-dependent `\S`: a Fantrax league id is now 1-64 ASCII
+letters, digits or hyphens, expressed as `^[A-Za-z0-9-]+$` in FastAPI/OpenAPI
+and `/^[A-Za-z0-9-]{1,64}$/` in the userscript. Repository evidence establishes
+a real 16-character lowercase alphanumeric id and persisted synthetic ids with
+uppercase and hyphens; it establishes no other character.
+
+**Changed:** Feed response settlement now re-reads an injected current browser
+URL and requires its extracted league id to equal the request id before either
+success or failure can publish. This closes the interval after SPA navigation
+but before the existing one-second watcher increments the generation. The
+ordinary generation and one-minute same-league cadence guards remain. The
+backend route, recorded OpenAPI fixture and both route/client vector suites use
+the explicit ASCII contract. Trust warnings now wrap with visible overflow;
+headline, capture detail and count lines remain individually ellipsized, so a
+late `BOARD REGRESSION` warning can no longer be clipped by the strip box.
+
+**Now true:** Moving A to B while A is in flight suppresses both A success and A
+failure even when the watcher has not run. A focused mutation removing the
+live-URL comparison makes that test fail by publishing A as `available` on B.
+Restoring broad `^\S+$` makes the route vectors fail on NUL and the OpenAPI
+pattern assertion fail. The repaired suites pass **112/112 userscript tests**,
+**2,546 backend tests with 2 skipped and 43 deselected**, and **418/418 frontend
+tests**, with builds, lint, format, mypy, recorded OpenAPI, backlog graph,
+secret scan, document terminators and repository JavaScript lint also clean.
+This remains Code-gate-only read evidence; no action, account write or authority
+changed.
+
+**Could not verify:** No live Fantrax draft, real Draft mapping, long-lived
+Tampermonkey navigation, backend disconnect or changing real feed was exercised.
+The explicit alphabet is intentionally bounded by current evidence; if Fantrax
+issues an id outside it, the strip will refuse before requesting and the backend
+will return 422 until the backend owner expands the contract with new evidence.
+Hosted checks for the repaired head cannot be known until it is pushed.
+
+**Next:** Review the repaired exact PR head and hosted Code-gate results, then
+exercise the strip against the rehearsal league through an A-to-B navigation
+before relying on its evidence under a pick clock.
