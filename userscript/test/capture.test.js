@@ -103,6 +103,54 @@ test("isFantraxDraftPage scopes only draft routes inside a Fantrax league", asyn
   );
 });
 
+test("fantraxLeagueIdFromUrl returns only backend-valid external league ids", async () => {
+  const capture = await loadCapture();
+
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://www.fantrax.com/fantasy/league/fantrax-league-1/draft"
+    ),
+    "fantrax-league-1"
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://fantrax.com/fantasy/league/fantrax-league-1?view=players"
+    ),
+    "fantrax-league-1"
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://www.fantrax.com/fantasy/league/contains%20whitespace/draft"
+    ),
+    null
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://www.fantrax.com/fantasy/league/contains%1Cseparator/draft"
+    ),
+    null,
+    "Python-only whitespace must be refused before the backend request"
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      "https://www.fantrax.com/fantasy/league/contains%EF%BB%BFbom/draft"
+    ),
+    "contains\uFEFFbom",
+    "U+FEFF is not whitespace under the backend's Python regex"
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl(
+      `https://www.fantrax.com/fantasy/league/${"x".repeat(65)}/draft`
+    ),
+    null
+  );
+  assert.equal(
+    capture.fantraxLeagueIdFromUrl("https://www.fantrax.com/fantasy/league/%E0%A4%A/draft"),
+    null
+  );
+  assert.equal(capture.fantraxLeagueIdFromUrl("https://example.test/fantasy/league/abc"), null);
+});
+
 // ---------------------------------------------------------------------------
 // Normalization: malformed / non-JSON bodies
 // ---------------------------------------------------------------------------
@@ -2148,7 +2196,48 @@ function makeStripWindow(href = "https://www.fantrax.com/fantasy/league/abc/draf
 
 function stripNodes(strip) {
   const box = strip.shadowRoot.children[0];
-  return { box, headline: box.children[0], detail: box.children[1], refusal: box.children[2] };
+  return {
+    box,
+    headline: box.children[0],
+    detail: box.children[1],
+    feed: box.children[2],
+    refusal: box.children[3],
+  };
+}
+
+function makeFeedStatus(overrides = {}) {
+  return {
+    draft_id: 17,
+    as_of: "2026-09-03T14:00:00Z",
+    context_unavailable: null,
+    freshness: [
+      {
+        transport: "bridge_capture",
+        last_seen_at: "2026-09-03T13:59:58Z",
+        age_seconds: 2,
+        instant_count: 8,
+        silent: false,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: "2026-09-03T13:59:59Z",
+        contact_age_seconds: 1,
+        contact_is_known: true,
+      },
+    ],
+    reconciliation: null,
+    observation_count: 8,
+    applied_count: 7,
+    pending_count: 1,
+    blocked: [],
+    retryable: {},
+    skipped: {},
+    skipped_by_participant: [],
+    unattributed_skipped: {},
+    last_sequence: 7,
+    board_regressions: [],
+    ...overrides,
+  };
 }
 
 test("sanitizeStatusText redacts secret-shaped tokens, collapses whitespace, and truncates", async () => {
@@ -2193,6 +2282,10 @@ test("formatStatusLines separates the four ways this bridge fails silently", asy
     lastCaptureAtMs: null,
     lastSource: null,
     lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus(),
+    feedReason: null,
   };
   const at = 1_000_000;
 
@@ -2253,6 +2346,10 @@ test("formatStatusLines reports counts, source and a coarse age", async () => {
     lastCaptureAtMs: capturedAt,
     lastSource: "rendered-view",
     lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus(),
+    feedReason: null,
   };
 
   const fresh = capture.formatStatusLines(state, { nowMs: capturedAt + 5_000 });
@@ -2301,6 +2398,137 @@ test("formatStatusLines never renders a number a decision rests on", async () =>
     const rendered = `${lines.headline} ${lines.detail} ${lines.refusal || ""}`;
     assert.ok(!forbidden.test(rendered), `status text must carry no valuation vocabulary: ${rendered}`);
   }
+});
+
+test("formatStatusLines renders canonical feed counts and trust-changing states", async () => {
+  const capture = await loadCapture();
+  const report = makeFeedStatus({
+    observation_count: 12,
+    applied_count: 7,
+    pending_count: 5,
+    skipped: { unreadable_player_id: 2 },
+    retryable: { state_version_changed: 1 },
+    blocked: ["ordered_pick_out_of_turn"],
+    freshness: [
+      {
+        transport: "bridge_capture",
+        last_seen_at: "2026-09-03T13:57:00Z",
+        age_seconds: 180,
+        instant_count: 12,
+        silent: true,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: "2026-09-03T13:57:00Z",
+        contact_age_seconds: 180,
+        contact_is_known: true,
+      },
+    ],
+    reconciliation: {
+      independence: {
+        independent: false,
+        reason: "same_transport_on_both_sides",
+        left_transports: ["bridge_capture"],
+        right_transports: ["bridge_capture"],
+        shared_artifacts: [],
+        shared_transports: ["bridge_capture"],
+      },
+      witnessed_by_two_transports: 0,
+      agreements: [],
+      unwitnessed_matches: [],
+      disagreements: [{}],
+      only_bridge: ["Player One"],
+      only_official: ["Player Two", "Player Three"],
+      caveats: ["official source returned a partial view"],
+    },
+    board_regressions: [{}],
+  });
+  const lines = capture.formatStatusLines({
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 1,
+    duplicates: 0,
+    lastCaptureAtMs: 1,
+    lastSource: "rendered-view",
+    lastRefusal: null,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: report,
+  });
+
+  assert.equal(
+    lines.feed,
+    "draft 17 feed \u00b7 observed 12 \u00b7 applied 7 \u00b7 pending 5 \u00b7 skipped 2 \u00b7 retryable 1"
+  );
+  assert.match(lines.refusal, /FEED BLOCKED: ordered_pick_out_of_turn/);
+  assert.match(lines.refusal, /FEED RETRYING: 1 state conflict still pending/);
+  assert.match(lines.refusal, /FEED STALE\/SILENT: bridge_capture 180s old \(limit 60s\)/);
+  assert.match(lines.refusal, /FEED RECONCILIATION: 1 disagreement, 1 bridge-only, 2 official-only/);
+  assert.match(lines.refusal, /FEED UNCORROBORATED: same_transport_on_both_sides/);
+  assert.match(lines.refusal, /FEED CAVEAT: official source returned a partial view/);
+  assert.match(lines.refusal, /BOARD REGRESSION: 1 pick disappeared; prior state retained/);
+  assert.equal(lines.ok, false);
+});
+
+test("formatStatusLines makes context and identity failures distinct from zero picks", async () => {
+  const capture = await loadCapture();
+  const base = {
+    version: "0.5.5",
+    versionStatus: "current",
+    paired: true,
+    forwarded: 0,
+    duplicates: 0,
+    lastCaptureAtMs: null,
+    lastSource: null,
+    lastRefusal: null,
+  };
+
+  const noDraft = capture.formatStatusLines({
+    ...base,
+    feedStatus: "not_found",
+    feedLeagueId: "league-one",
+    feedReason: "draft_for_fantrax_league_not_found",
+  });
+  assert.equal(noDraft.feed, "feed league-one: no local draft");
+  assert.match(noDraft.refusal, /^NO LOCAL DRAFT:/);
+
+  const ambiguous = capture.formatStatusLines({
+    ...base,
+    feedStatus: "ambiguous",
+    feedLeagueId: "league-one",
+    feedReason: "draft_for_fantrax_league_ambiguous",
+  });
+  assert.match(ambiguous.refusal, /^AMBIGUOUS LOCAL DRAFT:/);
+
+  const invalid = capture.formatStatusLines({
+    ...base,
+    feedStatus: "invalid_page_id",
+    feedLeagueId: null,
+  });
+  assert.match(invalid.refusal, /^FEED ID UNAVAILABLE:/);
+
+  const unavailable = capture.formatStatusLines({
+    ...base,
+    feedStatus: "uncheckable",
+    feedLeagueId: "league-one",
+    feedReason: "backend unreachable",
+  });
+  assert.match(unavailable.refusal, /^FEED STATUS UNCHECKABLE: backend unreachable/);
+
+  const context = capture.formatStatusLines({
+    ...base,
+    feedStatus: "available",
+    feedLeagueId: "league-one",
+    feedReport: makeFeedStatus({
+      observation_count: 0,
+      applied_count: 0,
+      pending_count: 0,
+      context_unavailable: "draft_source_context_unavailable",
+    }),
+  });
+  assert.match(context.feed, /observed 0/);
+  assert.match(context.refusal, /FEED CONTEXT UNAVAILABLE: draft_source_context_unavailable/);
 });
 
 test("createBridgeStatus records deliveries, duplicates and refusals, and notifies once each", async () => {
@@ -2373,6 +2601,14 @@ test("version currency stays fail-closed across current, update, and malformed r
     reason: "installed_version_behind",
   });
   assert.equal(status.snapshot().versionStatus, "update_available");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
+
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+  assert.equal(
+    status.snapshot().versionStatus,
+    "update_available",
+    "feed success cannot clear update currency"
+  );
   assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
 
   status.recordVersionStatus({
@@ -2568,6 +2804,331 @@ test("an older deferred currency response cannot overwrite a newer result", asyn
     "only the latest request generation may publish"
   );
   assert.equal(status.snapshot().sourceVersion, "0.5.4");
+});
+
+test("feed revalidation uses the page league id, clears stale counts, and stays bounded", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const reports = [
+    makeFeedStatus({ observation_count: 3, applied_count: 3, pending_count: 0 }),
+    makeFeedStatus({ observation_count: 4, applied_count: 3, pending_count: 1 }),
+  ];
+  const requested = [];
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: async (leagueId) => {
+        requested.push(leagueId);
+        return reports.shift();
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    true
+  );
+  assert.equal(status.snapshot().feedStatus, "checking");
+  assert.equal(status.snapshot().feedReport, null);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
+  assert.deepEqual(requested, ["league-one"]);
+
+  clock.advance(999);
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    false
+  );
+  assert.equal(status.snapshot().feedReport.observation_count, 3);
+
+  clock.advance(1);
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft"),
+    true
+  );
+  assert.equal(status.snapshot().feedStatus, "checking");
+  assert.equal(
+    status.snapshot().feedReport,
+    null,
+    "an expired refresh cannot retain a previous green count"
+  );
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.observation_count, 4);
+  assert.deepEqual(requested, ["league-one", "league-one"]);
+});
+
+test("feed revalidation names zero-match, ambiguity, invalid page id, and network failures", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const failures = [
+    Object.assign(new Error("backend returned HTTP 404"), {
+      code: "draft_for_fantrax_league_not_found",
+    }),
+    Object.assign(new Error("backend returned HTTP 409"), {
+      code: "draft_for_fantrax_league_ambiguous",
+    }),
+    new Error("backend unreachable"),
+  ];
+  let calls = 0;
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: async () => {
+        calls += 1;
+        throw failures.shift();
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "not_found");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /NO LOCAL DRAFT/);
+
+  clock.advance(1000);
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "ambiguous");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /AMBIGUOUS LOCAL DRAFT/);
+
+  clock.advance(1000);
+  revalidator.recheck(url);
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /backend unreachable/);
+
+  assert.equal(
+    revalidator.recheck(
+      "https://www.fantrax.com/fantasy/league/contains%20whitespace/draft"
+    ),
+    false
+  );
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.equal(calls, 3, "a malformed or absent page id must never reach the backend");
+
+  assert.equal(
+    revalidator.recheck("https://www.fantrax.com/fantasy/home"),
+    false
+  );
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(calls, 3, "a page without a league id must never reach the backend");
+});
+
+test("feed revalidation rejects malformed success and capture or update changes cannot erase it", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => ({ draft_id: 17 }) },
+    status,
+  });
+
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft");
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.match(
+    capture.formatStatusLines(status.snapshot()).refusal,
+    /invalid local feed status response/
+  );
+
+  status.recordDelivered("rendered-view");
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.5",
+    source_version: "0.5.5",
+    served_version: "0.5.5",
+    reason: null,
+  });
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.match(
+    capture.formatStatusLines(status.snapshot()).refusal,
+    /invalid local feed status response/
+  );
+});
+
+test("a league navigation invalidates an older in-flight feed response", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const pending = [];
+  const requested = [];
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: {
+      draftFeedStatus: (leagueId) => {
+        requested.push(leagueId);
+        return new Promise((resolve) => pending.push(resolve));
+      },
+    },
+    status,
+    now: clock.now,
+    minIntervalMs: 60000,
+  });
+
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-one/draft");
+  await flushMicrotasks();
+  revalidator.recheck("https://www.fantrax.com/fantasy/league/league-two/draft");
+  await flushMicrotasks();
+  assert.deepEqual(requested, ["league-one", "league-two"]);
+  assert.equal(
+    status.snapshot().feedLeagueId,
+    "league-two",
+    "a league change bypasses the same-league cadence bound"
+  );
+
+  pending[1](makeFeedStatus({ draft_id: 22, observation_count: 2 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.draft_id, 22);
+  pending[0](makeFeedStatus({ draft_id: 11, observation_count: 99 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedReport.draft_id, 22);
+  assert.equal(status.snapshot().feedReport.observation_count, 2);
+});
+
+test("a long-lived visible tab refreshes feed status on the existing watcher only", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  let observationCount = 1;
+  let calls = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+    draftFeedStatus: async () => {
+      calls += 1;
+      return makeFeedStatus({ observation_count: observationCount });
+    },
+  };
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport,
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/league-one/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  assert.equal(status.snapshot().feedReport.observation_count, 1);
+  assert.equal(clock.pendingIntervals(), 1);
+
+  observationCount = 2;
+  clock.advance(999);
+  watcher.checkContext();
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  clock.advance(1);
+  watcher.checkContext();
+  assert.equal(status.snapshot().feedStatus, "checking");
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  assert.equal(status.snapshot().feedReport.observation_count, 2);
+  assert.equal(clock.pendingIntervals(), 1, "feed status adds no recurring timer");
+
+  watcher.uninstall();
+  revalidator.stop();
+});
+
+test("the existing watcher clears feed evidence and invalidates an in-flight response after leaving a league", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  let resolveFeed;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+    draftFeedStatus: () =>
+      new Promise((resolve) => {
+        resolveFeed = resolve;
+      }),
+  };
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport,
+    status,
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/league-one/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "checking");
+
+  win.location.href = "https://www.fantrax.com/fantasy/home";
+  watcher.checkContext();
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+
+  resolveFeed(makeFeedStatus({ draft_id: 11, observation_count: 99 }));
+  await flushMicrotasks();
+  assert.equal(status.snapshot().feedStatus, "invalid_page_id");
+  assert.equal(status.snapshot().feedReport, null);
+
+  watcher.uninstall();
+  revalidator.stop();
 });
 
 test("an unrelated success cannot clear an automatic board refusal", async () => {

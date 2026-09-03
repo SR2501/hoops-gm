@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**75 done - 0 blocked - 117 pending - 192 total**
+**76 done - 0 blocked - 116 pending - 192 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2471,7 +2471,7 @@ which carries the Model gate, fails loudly rather than quietly.
 
 ### `bridge-status-strip-feed-counts` - Showing recognised picks on the strip, once a draft can be identified from the browser
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `bridge-status-strip`, `draft-tracker-bridge-feed`
 
 `bridge-status-strip` shipped without the one field its own description asked
@@ -2509,6 +2509,19 @@ indexed local lookup and returns the existing `FeedStatusResponse`, whose
 non-blank and at most 64 characters. This does not list drafts, change any
 source-board or source-profile provenance, or claim auction-board support. The
 item remains pending until the userscript consumes this contract.
+
+DONE. Userscript 0.5.5 extracts only a backend-valid external league id from the
+current Fantrax league URL and calls the resolver at a one-minute minimum cadence
+through the existing visible-page watcher, with no new timer and no draft-list
+fallback. The strip renders the exact resolved `draft_id`, observed/applied/
+pending/skipped/retryable counts, and the existing feed contract's blocked,
+context-unavailable, stale/silent, reconciliation and board-regression states.
+Zero-match, ambiguous-match, malformed-page and unreachable states replace any
+prior count rather than looking like zero picks. Feed, capture and installed-
+version currency use independent state channels, and monotonic generations stop
+late responses or cross-league navigation from restoring stale state. This is
+read-only evidence UI: it adds no action, price, recommendation or auction-board
+claim.
 
 ### `contingent-value` - Building the contingent value graph
 

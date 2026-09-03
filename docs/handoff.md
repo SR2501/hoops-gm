@@ -34146,3 +34146,50 @@ exercised or changed.
 require hosted Code-gate checks, then install 0.5.4 through the existing
 loopback update URL and verify a real current-to-update transition in a
 long-lived mock-draft tab before relying on the strip.
+
+## 2026-09-03 - bridge - Draft-feed evidence in the Fantrax status strip
+
+**Changed:** Completed `bridge-status-strip-feed-counts` from authoritative
+main `432f68d3cdcaeae4656784e3d2f49a6931cb0cf4`. Userscript 0.5.5 now extracts
+the external league id from the current Fantrax league URL and requests only
+`GET /api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=...`. It consumes
+the existing `FeedStatusResponse`; it does not list drafts, choose a newest
+draft, interpret a second payload, expose a secret, or add an action.
+
+**Now true:** The strip's independent feed line names the exact local
+`draft_id` and renders observed, applied, pending, skipped and retryable counts.
+Blocked/refused, context-unavailable, stale/silent, reconciliation,
+uncorroborated-board and board-regression states replace the ordinary count
+line with explicit warnings. Named zero-match and ambiguous-match failures
+render **NO LOCAL DRAFT** and **AMBIGUOUS LOCAL DRAFT** rather than zero picks;
+malformed or absent page identity and unreachable/malformed backend responses
+also clear any prior green/count state. Capture success cannot clear feed or
+version warnings, and version success cannot clear feed failures.
+
+Feed checks borrow the existing visible-tab rendered-view watcher and add no
+recurring timer. An unchanged league starts at most one request per minute; a
+different league refreshes immediately. Every started refresh clears its old
+report, invalid/non-league SPA navigation clears the report without a request,
+and monotonic generations prevent late responses from either a previous league
+or a page already left from publishing. URL validation matches the backend's
+Python `^\S+$`, including the U+001C-U+001F difference from JavaScript `\s`.
+
+Focused userscript tests pass **111/111** and the built artifact reports 0.5.5.
+The cumulative Code gate passes: backend ruff/format/mypy and **2,499 passed, 2
+skipped, 43 deselected**; frontend lint/type-check, **418/418 tests**, build and
+repository JavaScript lint; userscript tests/build; recorded OpenAPI, backlog
+graph, secret scan and document terminators. Backlog recounts to **76 done, 0
+blocked, 116 pending, 192 total**. Independent review found three defects
+(off-league stale response publication, Python/JavaScript whitespace mismatch,
+and a weak no-fallback assertion); all three are fixed and pinned by tests.
+
+**Could not verify:** No live Fantrax draft page, real persisted Draft mapping,
+long-lived Tampermonkey tab, backend disconnect, or changing real feed was
+exercised. The UI remains evidence/health only: no auction price,
+recommendation, NBA auction-board support, Fantrax mutation, account write,
+authority change or automation path was added. Hosted CI is unverified until
+the PR runs.
+
+**Next:** Coordinator should review the exact PR head and hosted Code-gate
+results, then exercise the 0.5.5 strip against the rehearsal draft's real
+Fantrax league id before relying on its feed evidence under a pick clock.

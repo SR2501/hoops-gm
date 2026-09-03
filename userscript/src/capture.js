@@ -31,6 +31,11 @@
   const AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS = 60000;
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
   const VERSION_STATUS_MIN_INTERVAL_MS = 60000;
+  const FEED_STATUS_MIN_INTERVAL_MS = 60000;
+  // FastAPI/Pydantic validates this identifier with Python's Unicode-aware
+  // `\S`; ECMAScript's `\s` omits U+001C-U+001F and includes U+FEFF.
+  const PYTHON_WHITESPACE =
+    /[\t\n\v\f\r \u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u;
   const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
   const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
   const DRAFT_BOARD_HEADER_SELECTOR = ".league-draft-board__header";
@@ -146,6 +151,24 @@
       return DRAFT_PAGE_PATH.test(new URL(url, CAPTURE_BASE).pathname);
     } catch {
       return false;
+    }
+  }
+
+  function fantraxLeagueIdFromUrl(url) {
+    if (!isFantraxLeaguePage(url)) {
+      return null;
+    }
+    try {
+      const parsed = new URL(url, CAPTURE_BASE);
+      const encoded = parsed.pathname
+        .slice(FANTRAX_LEAGUE_PATH_PREFIX.length)
+        .split("/")[0];
+      const leagueId = decodeURIComponent(encoded);
+      return leagueId.length >= 1 && leagueId.length <= 64 && !PYTHON_WHITESPACE.test(leagueId)
+        ? leagueId
+        : null;
+    } catch {
+      return null;
     }
   }
 
@@ -1117,13 +1140,9 @@
   // It reports only what this userscript observed directly: its own running
   // @version, its own pairing state, and the outcome of its own forwards. It
   // deliberately does NOT report picks the feed recognised. That number is
-  // draft-scoped -- it needs a `draft_id` for `GET /drafts/{id}/feed`, and
-  // the userscript has no honest way to learn one. A Fantrax league page URL
-  // carries Fantrax's external league id, while `GET /drafts` returns our
-  // internal `league_id`, so the two cannot be joined here; guessing "the
-  // newest draft" would render a confident number for the wrong draft, which
-  // is worse than rendering none. Widening it needs a backend contract that
-  // `backend` owns, not a heuristic here.
+  // Feed status is resolved only through the backend's external-league-id
+  // contract. Never list drafts or guess "the newest": a confident count for
+  // the wrong draft is worse than an explicit identity refusal.
   //
   // Hard boundary: this must never show a price, a value, a suggested bid or
   // a ranking. Those belong to `bridge-overlay` and carry the Model gate with
@@ -1214,12 +1233,161 @@
     return `${Math.round(minutes / 60)}h ago`;
   }
 
+  function countReasonMap(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return 0;
+      }
+      return Object.values(value).reduce(
+        (total, count) => total + (Number.isSafeInteger(count) && count >= 0 ? count : 0),
+        0
+      );
+    }
+
+    function plural(count, singular, pluralValue = `${singular}s`) {
+      return `${count} ${count === 1 ? singular : pluralValue}`;
+    }
+
+    function formatFeedState(safe) {
+      const state = typeof safe.feedStatus === "string" ? safe.feedStatus : "checking";
+      const leagueId = sanitizeStatusText(safe.feedLeagueId, 64);
+      const report = safe.feedReport;
+      if (state === "checking") {
+        return {
+          line: leagueId ? `feed ${leagueId}: checking local draft` : "feed: checking page identity",
+          warning: null,
+          ok: false,
+        };
+      }
+      if (state === "invalid_page_id") {
+        return {
+          line: "feed unavailable",
+          warning: "FEED ID UNAVAILABLE: current Fantrax URL has no valid league id",
+          ok: false,
+        };
+      }
+      if (state === "not_found") {
+        return {
+          line: leagueId ? `feed ${leagueId}: no local draft` : "feed: no local draft",
+          warning: "NO LOCAL DRAFT: this Fantrax league is not linked to a persisted draft",
+          ok: false,
+        };
+      }
+      if (state === "ambiguous") {
+        return {
+          line: leagueId ? `feed ${leagueId}: ambiguous local draft` : "feed: ambiguous local draft",
+          warning: "AMBIGUOUS LOCAL DRAFT: multiple persisted drafts match this Fantrax league",
+          ok: false,
+        };
+      }
+      if (state !== "available" || !report) {
+        return {
+          line: leagueId ? `feed ${leagueId}: status uncheckable` : "feed: status uncheckable",
+          warning: `FEED STATUS UNCHECKABLE: ${
+            sanitizeStatusText(safe.feedReason) || "local feed contract unavailable"
+          }`,
+          ok: false,
+        };
+      }
+
+      const skipped = countReasonMap(report.skipped);
+      const retryable = countReasonMap(report.retryable);
+      const lineParts = [
+        `draft ${report.draft_id} feed`,
+        `observed ${report.observation_count}`,
+        `applied ${report.applied_count}`,
+        `pending ${report.pending_count}`,
+        `skipped ${skipped}`,
+      ];
+      if (retryable > 0) {
+        lineParts.push(`retryable ${retryable}`);
+      }
+
+      const warnings = [];
+      if (typeof report.context_unavailable === "string" && report.context_unavailable) {
+        warnings.push(`FEED CONTEXT UNAVAILABLE: ${sanitizeStatusText(report.context_unavailable)}`);
+      }
+      if (Array.isArray(report.blocked) && report.blocked.length > 0) {
+        warnings.push(
+          `FEED BLOCKED: ${report.blocked
+            .map((reason) => sanitizeStatusText(reason))
+            .filter(Boolean)
+            .join(", ")}`
+        );
+      }
+      if (retryable > 0) {
+        warnings.push(`FEED RETRYING: ${plural(retryable, "state conflict")} still pending`);
+      }
+      const silent = Array.isArray(report.freshness)
+        ? report.freshness.filter((source) => source && source.silent === true)
+        : [];
+      if (silent.length > 0) {
+        const sources = silent.map((source) => {
+          const transport = sanitizeStatusText(source.transport, 32) || "unknown source";
+          const age = source.contact_is_known ? source.contact_age_seconds : source.age_seconds;
+          const ageText = Number.isFinite(age) ? `${Math.round(age)}s old` : "never seen";
+          return `${transport} ${ageText} (limit ${Math.round(source.silence_threshold_seconds)}s)`;
+        });
+        warnings.push(`FEED STALE/SILENT: ${sources.join(", ")}`);
+      }
+      const reconciliation = report.reconciliation;
+      if (reconciliation && typeof reconciliation === "object") {
+        const disagreementCount = Array.isArray(reconciliation.disagreements)
+          ? reconciliation.disagreements.length
+          : 0;
+        const bridgeOnly = Array.isArray(reconciliation.only_bridge)
+          ? reconciliation.only_bridge.length
+          : 0;
+        const officialOnly = Array.isArray(reconciliation.only_official)
+          ? reconciliation.only_official.length
+          : 0;
+        const findings = [];
+        if (disagreementCount > 0) {
+          findings.push(plural(disagreementCount, "disagreement"));
+        }
+        if (bridgeOnly > 0) {
+          findings.push(`${bridgeOnly} bridge-only`);
+        }
+        if (officialOnly > 0) {
+          findings.push(`${officialOnly} official-only`);
+        }
+        if (findings.length > 0) {
+          warnings.push(`FEED RECONCILIATION: ${findings.join(", ")}`);
+        }
+        if (reconciliation.independence && reconciliation.independence.independent === false) {
+          warnings.push(
+            `FEED UNCORROBORATED: ${
+              sanitizeStatusText(reconciliation.independence.reason) ||
+              "the readings are not independent"
+            }`
+          );
+        }
+        if (Array.isArray(reconciliation.caveats) && reconciliation.caveats.length > 0) {
+          warnings.push(
+            `FEED CAVEAT: ${sanitizeStatusText(reconciliation.caveats[0]) || "see dashboard"}`
+          );
+        }
+      }
+      const regressions = Array.isArray(report.board_regressions)
+        ? report.board_regressions.length
+        : 0;
+      if (regressions > 0) {
+        warnings.push(
+          `BOARD REGRESSION: ${plural(regressions, "pick")} disappeared; prior state retained`
+        );
+      }
+      return {
+        line: lineParts.join(" \u00b7 "),
+        warning: warnings.length > 0 ? warnings.join(" | ") : null,
+        ok: warnings.length === 0,
+      };
+    }
+
   /**
    * The whole rendering decision, as a pure function of state. Kept separate
    * from the DOM so the wording of every failure mode is testable without a
    * browser.
    *
-   * @returns {{headline: string, detail: string, refusal: string|null, ok: boolean}}
+   * @returns {{headline: string, detail: string, feed: string, refusal: string|null, ok: boolean}}
    */
   function formatStatusLines(state, { nowMs = Date.now() } = {}) {
     const safe = state || {};
@@ -1234,6 +1402,7 @@
     const sourceVersion = typeof safe.sourceVersion === "string" ? safe.sourceVersion : null;
     const servedVersion = typeof safe.servedVersion === "string" ? safe.servedVersion : null;
     const versionReason = sanitizeStatusText(safe.versionReason);
+    const feed = formatFeedState(safe);
 
     const currentLabel = versionStatus === "current" ? " \u00b7 update current" : "";
     const headline =
@@ -1285,13 +1454,64 @@
     const warnings = [
       versionWarning,
       refusal ? `refused: ${refusal}` : null,
+      feed.warning,
     ].filter(Boolean);
     return {
       headline,
       detail,
+      feed: feed.line,
       refusal: warnings.length > 0 ? warnings.join(" | ") : null,
-      ok: paired && refusal === null && versionStatus === "current",
+      ok: paired && refusal === null && versionStatus === "current" && feed.ok,
     };
+  }
+
+  function isNonNegativeInteger(value) {
+    return Number.isSafeInteger(value) && value >= 0;
+  }
+
+  function isReasonMap(value) {
+    return Boolean(value) &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.values(value).every(isNonNegativeInteger);
+  }
+
+  function isFeedStatusResponse(report) {
+    return Boolean(report) &&
+      isNonNegativeInteger(report.draft_id) &&
+      report.draft_id > 0 &&
+      typeof report.as_of === "string" &&
+      !Number.isNaN(Date.parse(report.as_of)) &&
+      (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
+      Array.isArray(report.freshness) &&
+      report.freshness.every(
+        (source) =>
+          source &&
+          typeof source.transport === "string" &&
+          typeof source.silent === "boolean" &&
+          Number.isFinite(source.silence_threshold_seconds) &&
+          isNonNegativeInteger(source.instant_count)
+      ) &&
+      (report.reconciliation === null ||
+        (typeof report.reconciliation === "object" &&
+          report.reconciliation !== null &&
+          Array.isArray(report.reconciliation.disagreements) &&
+          Array.isArray(report.reconciliation.only_bridge) &&
+          Array.isArray(report.reconciliation.only_official) &&
+          Array.isArray(report.reconciliation.caveats) &&
+          report.reconciliation.independence &&
+          typeof report.reconciliation.independence.independent === "boolean")) &&
+      isNonNegativeInteger(report.observation_count) &&
+      isNonNegativeInteger(report.applied_count) &&
+      isNonNegativeInteger(report.pending_count) &&
+      Array.isArray(report.blocked) &&
+      report.blocked.every((reason) => typeof reason === "string") &&
+      isReasonMap(report.retryable) &&
+      isReasonMap(report.skipped) &&
+      Array.isArray(report.skipped_by_participant) &&
+      isReasonMap(report.unattributed_skipped) &&
+      isNonNegativeInteger(report.last_sequence) &&
+      Array.isArray(report.board_regressions);
   }
 
   /**
@@ -1314,6 +1534,10 @@
       lastRefusal: null,
       lastRefusalSource: null,
       lastRefusalAtMs: null,
+      feedStatus: "checking",
+      feedLeagueId: null,
+      feedReport: null,
+      feedReason: null,
     };
     const scopedRefusals = new Map();
     let unscopedRefusal = null;
@@ -1505,6 +1729,40 @@
         state.versionReason = sanitizeStatusText(message) || "local version contract unavailable";
         emit();
       },
+      recordFeedChecking(leagueId) {
+        state.feedStatus = "checking";
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReason = null;
+        emit();
+      },
+      recordFeedStatus(report, leagueId) {
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReason = null;
+        if (!isFeedStatusResponse(report)) {
+          state.feedStatus = "uncheckable";
+          state.feedReason = "invalid local feed status response";
+        } else {
+          state.feedStatus = "available";
+          state.feedReport = report;
+        }
+        emit();
+      },
+      recordFeedUnavailable(kind, message, leagueId = null) {
+        state.feedStatus = [
+          "invalid_page_id",
+          "not_found",
+          "ambiguous",
+          "uncheckable",
+        ].includes(kind)
+          ? kind
+          : "uncheckable";
+        state.feedLeagueId = sanitizeStatusText(leagueId, 64);
+        state.feedReport = null;
+        state.feedReason = sanitizeStatusText(message) || "local feed contract unavailable";
+        emit();
+      },
     };
   }
 
@@ -1578,6 +1836,119 @@
             generation,
             () => status.recordVersionUncheckable(error && error.message)
           )
+        );
+      return true;
+    }
+
+    return {
+      recheck,
+      stop() {
+        stopped = true;
+        requestGeneration += 1;
+      },
+    };
+  }
+
+  /**
+   * Resolves feed status for the current page's exact external league id.
+   * It borrows the rendered-view watcher lifecycle, owns no timer, clears a
+   * previous report before refreshing, and lets only the newest generation
+   * publish.
+   */
+  function createFeedStatusRevalidator({
+    transport,
+    status,
+    now = () => Date.now(),
+    minIntervalMs = FEED_STATUS_MIN_INTERVAL_MS,
+  } = {}) {
+    const interval = Math.max(1000, Number(minIntervalMs) || FEED_STATUS_MIN_INTERVAL_MS);
+    let stopped = false;
+    let lastAttemptAt = Number.NEGATIVE_INFINITY;
+    let lastLeagueId = null;
+    let lastContextKey = null;
+    let requestGeneration = 0;
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function publishFailure(error, leagueId) {
+      const code = error && typeof error.code === "string" ? error.code : null;
+      if (code === "draft_for_fantrax_league_not_found") {
+        status.recordFeedUnavailable("not_found", code, leagueId);
+      } else if (code === "draft_for_fantrax_league_ambiguous") {
+        status.recordFeedUnavailable("ambiguous", code, leagueId);
+      } else {
+        status.recordFeedUnavailable(
+          "uncheckable",
+          error && error.message ? error.message : "local feed status request failed",
+          leagueId
+        );
+      }
+    }
+
+    function recheck(url) {
+      if (
+        stopped ||
+        !transport ||
+        typeof transport.draftFeedStatus !== "function" ||
+        !status ||
+        typeof status.recordFeedChecking !== "function" ||
+        typeof status.recordFeedStatus !== "function" ||
+        typeof status.recordFeedUnavailable !== "function"
+      ) {
+        if (!stopped && status && typeof status.recordFeedUnavailable === "function") {
+          status.recordFeedUnavailable(
+            "uncheckable",
+            "local feed status transport unavailable"
+          );
+        }
+        return false;
+      }
+
+      const leagueId = fantraxLeagueIdFromUrl(url);
+      const contextKey = leagueId === null ? `invalid:${String(url || "")}` : `league:${leagueId}`;
+      if (leagueId === null) {
+        if (contextKey !== lastContextKey) {
+          requestGeneration += 1;
+          lastContextKey = contextKey;
+          lastLeagueId = null;
+          status.recordFeedUnavailable(
+            "invalid_page_id",
+            "current Fantrax URL has no valid league id"
+          );
+        }
+        return false;
+      }
+
+      const current = nowMs();
+      const leagueChanged = leagueId !== lastLeagueId;
+      if (!leagueChanged && current - lastAttemptAt < interval) {
+        return false;
+      }
+      lastContextKey = contextKey;
+      lastLeagueId = leagueId;
+      lastAttemptAt = current;
+      const generation = requestGeneration += 1;
+      status.recordFeedChecking(leagueId);
+      Promise.resolve()
+        .then(() => transport.draftFeedStatus(leagueId))
+        .then(
+          (report) => {
+            if (!stopped && generation === requestGeneration && leagueId === lastLeagueId) {
+              status.recordFeedStatus(report, leagueId);
+            }
+          },
+          (error) => {
+            if (!stopped && generation === requestGeneration && leagueId === lastLeagueId) {
+              publishFailure(error, leagueId);
+            }
+          }
         );
       return true;
     }
@@ -1676,6 +2047,7 @@
     let box;
     let headlineNode;
     let detailNode;
+    let feedNode;
     let refusalNode;
     try {
       host = doc.createElement("div");
@@ -1688,10 +2060,12 @@
       applyStyles(box, STATUS_BOX_STYLES);
       headlineNode = doc.createElement("div");
       detailNode = doc.createElement("div");
+      feedNode = doc.createElement("div");
       refusalNode = doc.createElement("div");
       applyStyles(refusalNode, [["color", "rgb(252, 211, 77)"]]);
       box.appendChild(headlineNode);
       box.appendChild(detailNode);
+      box.appendChild(feedNode);
       box.appendChild(refusalNode);
       shadow.appendChild(box);
     } catch (err) {
@@ -1742,7 +2116,8 @@
       // document-start would depend entirely on the DOMContentLoaded listener.
       mount();
       const lines = formatStatusLines(state, { nowMs: nowMs() });
-      const signature = `${visible}|${lines.headline}|${lines.detail}|${lines.refusal || ""}`;
+      const signature =
+        `${visible}|${lines.headline}|${lines.detail}|${lines.feed}|${lines.refusal || ""}`;
       if (signature === lastRendered) {
         // The watcher tick calls this once a second for the whole draft.
         // Skipping an identical write keeps that from being a DOM mutation
@@ -1753,6 +2128,7 @@
       try {
         headlineNode.textContent = lines.headline;
         detailNode.textContent = lines.detail;
+        feedNode.textContent = lines.feed;
         refusalNode.textContent = lines.refusal || "";
         applyStyles(refusalNode, [["display", lines.refusal ? "block" : "none"]]);
         applyStyles(box, [["border", lines.ok ? STATUS_OK_BORDER : STATUS_ALERT_BORDER]]);
@@ -2057,11 +2433,12 @@
       reportContext(paired);
       if (
         doc.visibilityState !== "hidden" &&
-        isFantraxLeaguePage(nextUrl) &&
         typeof onRelevantContext === "function"
       ) {
         try {
-          onRelevantContext();
+          // Invalid/non-league SPA navigation is relevant because it must clear
+          // the old league's evidence and invalidate any in-flight response.
+          onRelevantContext(nextUrl);
         } catch {
           // A status recheck must never stop the capture watcher.
         }
@@ -2117,7 +2494,7 @@
       typeof onRelevantContext === "function"
     ) {
       try {
-        onRelevantContext();
+        onRelevantContext(win.location.href);
       } catch {
         // As above: currency reporting cannot stop capture.
       }
@@ -2224,6 +2601,7 @@
     shouldCapture,
     isFantraxLeaguePage,
     isFantraxDraftPage,
+    fantraxLeagueIdFromUrl,
     normalizeBody,
     buildEnvelope,
     computeDedupeKey,
@@ -2246,6 +2624,7 @@
     formatStatusLines,
     createBridgeStatus,
     createVersionStatusRevalidator,
+    createFeedStatusRevalidator,
     installStatusStrip,
     installStatusStripMenu,
     captureManualSnapshot,
@@ -2278,13 +2657,23 @@
       installedVersion: runningVersion,
     });
     installed.versionStatusRevalidator.recheck();
+    installed.feedStatusRevalidator = createFeedStatusRevalidator({
+      transport,
+      status,
+    });
+    installed.feedStatusRevalidator.recheck(window.location.href);
     installed.renderedViewWatcher = installAutomaticRenderedViewCapture({
       capture: installed,
       transport,
       win: window,
       doc: document,
       status,
-      onRelevantContext: installed.versionStatusRevalidator.recheck,
+      onRelevantContext: (url) => {
+        if (isFantraxLeaguePage(url)) {
+          installed.versionStatusRevalidator.recheck();
+        }
+        installed.feedStatusRevalidator.recheck(url);
+      },
     });
     capture.instance = installed;
     installStatusStripMenu({
