@@ -88,11 +88,14 @@ browser-to-backend round trip.
 The build's metadata now includes `@updateURL` and `@downloadURL`, both
 pointing at `GET http://127.0.0.1:8000/bridge/userscript.user.js` — an
 unauthenticated, loopback-only backend route that serves whatever
-`userscript/dist/hoops-gm.user.js` currently contains on this machine (see
-`backend/src/hoops_gm/api/routes/userscript.py`). No secret is ever in that
-file; the bridge secret lives only in Tampermonkey's own storage, populated by
-the pairing flow above, never in the script source. Concretely, once the
-script is installed by *either* method above:
+`userscript/dist/hoops-gm.user.js` currently contains on this machine **only
+when its `@version` agrees with `userscript/package.json`** (see
+`backend/src/hoops_gm/api/routes/userscript.py`). Missing, unreadable,
+unversioned, or mismatched bytes are refused rather than served as a
+success-shaped stale update. No secret is ever in that file; the bridge secret
+lives only in Tampermonkey's own storage, populated by the pairing flow above,
+never in the script source. Concretely, once the script is installed by
+*either* method above:
 
 1. A maintainer bumps the single version source and rebuilds:
    `npm version patch --no-git-tag-version`, then `npm run build`.
@@ -106,6 +109,16 @@ script is installed by *either* method above:
    the local backend running and reachable being the only requirement.
 3. Reload the Fantrax tab afterward so the new `document-start` script
    actually takes over the page.
+
+On each Fantrax page load, the installed script also sends its own
+`GM_info.script.version` to the loopback-only, unauthenticated
+`GET /bridge/userscript-status.json` endpoint. That endpoint compares the
+installed value with both `package.json` and the `@version` parsed from the
+exact artifact bytes the update route would serve. The status strip is green
+only for three-way agreement. It otherwise names an available update, refuses
+a source/artifact mismatch with the rebuild command, or says explicitly that
+update currency is uncheckable. This status read is independent of capture
+delivery and grants no draft or account action authority.
 
 Once 0.5.0 has been approved in place, step 2 requires no owner click:
 Tampermonkey, not the running userscript, performs the fetch and replacement.
@@ -123,10 +136,10 @@ restore a one-time owner approval to the release instructions.
   it also checks once per browser start). A rebuilt script is not live until
   that check fires or you trigger one by hand with **Check for userscript
   updates now**.
-- **Requires the backend running at check time.** If `http://127.0.0.1:8000`
-  is down when Tampermonkey checks, that check simply fails silently and
-  retries at the next interval — there is no error dialog and no action is
-  taken, which is the fail-safe behaviour this bridge otherwise requires.
+- **Requires the backend running at check time.** Tampermonkey's native check
+  still has no error dialog when loopback is down, but the Fantrax status strip
+  now reports `UPDATE STATUS UNCHECKABLE` instead of presenting a green
+  currency claim. No action is taken.
 - **This machine only.** `dist/` is gitignored on purpose (see "Local
   development loop" below) — the served file always reflects whatever was
   most recently built *on this machine*. A second leaguemate running their
@@ -327,8 +340,9 @@ exactly like one that did.
 From 0.5.2 the userscript renders a small strip in the bottom-left corner of
 any Fantrax league page, showing:
 
-- the **running `@version`**, read from `GM_info` — the one thing that makes a
-  stale served artifact visible where the owner actually is;
+- the **running `@version`**, read from `GM_info`, compared against both the
+  repository source version and the metadata parsed from the exact served
+  artifact;
 - **paired or not**, with the remedy named rather than implied;
 - **how many envelopes the backend has acknowledged**, how many were dropped as
   byte-identical to one already sent, when the last capture happened, and
@@ -340,6 +354,9 @@ any Fantrax league page, showing:
   draft-board build refusal is scoped to `rendered-view`, so a manual export or
   unrelated RPC delivery cannot turn the strip green while automatic board
   capture remains unsafe; a safe rendered delivery or duplicate clears it.
+- a persistent **update warning/refusal** when the installed version is behind,
+  the source and served artifact disagree, or the three-way check is
+  unavailable. Capture success cannot clear this separate state.
 
 Design constraints, all of them testable:
 
@@ -564,4 +581,6 @@ header field and that the page's real response and live DOM remain intact.
 storage key, match/grant/connect/noframes permission surface, metadata order,
 package/package-lock version agreement, exact loopback update/download URL,
 single-file output, and ADR-010's guarantee that no hex-64 or base64url-43
-secret-shaped literal appears in the build.
+secret-shaped literal appears in the build. Backend serving tests parse the
+actual artifact bytes at the route boundary and cover matching, stale,
+uncheckable, installed-behind, and installed-ahead version states.

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**74 done - 0 blocked - 118 pending - 192 total**
+**75 done - 0 blocked - 117 pending - 192 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1791,7 +1791,7 @@ the pre-archive question rather than for this item.
 
 ### `userscript-served-version-check` - Failing when the served bridge build is older than the source
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `userscript-foundation`
 
 **Found live on 2026-08-28.** The owner asked whether his browser showing
@@ -1823,6 +1823,18 @@ a browser, not at CI.
 unpaired script and a refused envelope, and all three look identical from the
 Fantrax page: nothing happens. See `bridge-status-strip`, which surfaces the
 other two.
+
+DONE. `userscript/package.json` remains the source version; `build.mjs` stamps
+the same value into the artifact's `@version`; and the installed script reports
+`GM_info.script.version` to the loopback-only
+`GET /bridge/userscript-status.json` contract. The backend reads the exact
+artifact bytes it would serve and refuses `GET /bridge/userscript.user.js` when
+their metadata is missing, invalid, or different from source. The Fantrax status
+strip reports `current`, `UPDATE AVAILABLE`, `UPDATE REFUSED`, or
+`UPDATE STATUS UNCHECKABLE`; capture delivery can neither clear nor disguise
+that independent version state. Tests drive matching, stale, unavailable,
+invalid, installed-behind, and installed-ahead cases through the serving route
+and run the real build.
 
 ### `draft-board-dom-parser` - Reading the draft board from the rendered page, because nothing else can
 

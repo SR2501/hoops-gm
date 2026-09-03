@@ -39,6 +39,7 @@ def test_launcher_replaces_ambient_backend_settings(
     monkeypatch.setenv("FANTRAX_USER_SECRET_ID", "live-user-secret")
     monkeypatch.setenv("FANTRAX_LEAGUE_ID", "live-league")
     monkeypatch.setenv("FANTRAX_COOKIE_KEY", "live-cookie-key")
+    monkeypatch.setenv("USERSCRIPT_PACKAGE_PATH", str(tmp_path / "wrong-package.json"))
     monkeypatch.setenv("HOOPS_GM_DATABASE_URL", "sqlite:///also-wrong.db")
     monkeypatch.setenv("database_url", "sqlite:///case-folded-wrong.db")
     monkeypatch.setenv("hoops_gm_disable_dotenv", "0")
@@ -62,6 +63,7 @@ def test_launcher_replaces_ambient_backend_settings(
     assert env["BRIDGE_MAX_PAYLOAD_BYTES"] == "1048576"
     assert env["CORS_ORIGINS"] == '["http://127.0.0.1:5173"]'
     assert env["BRIDGE_SECRET_PATH"] == str(bridge_secret_path)
+    assert env["USERSCRIPT_PACKAGE_PATH"] == str(module.REPO_ROOT / "userscript" / "package.json")
     assert env["HOOPS_GM_DISABLE_DOTENV"] == "1"
     for name in (
         "BRIDGE_SECRET",

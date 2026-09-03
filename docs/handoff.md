@@ -34091,3 +34091,50 @@ backlog graph and diff whitespace passed.
 **Next:** The bridge lane should call the resolver only on a Fantrax league
 page, render its existing feed fields, and surface both named 404/409 refusals;
 it must not fall back to `GET /drafts` or infer auction-board support.
+
+## 2026-09-03 — bridge, backend — Served userscript version contract
+
+**Changed:** Closed `userscript-served-version-check` and bumped the bridge to
+0.5.4. `userscript/package.json` is the source version, `build.mjs` stamps it
+into the artifact's `@version`, and the backend now parses the complete metadata
+block from the exact bytes requested at `GET /bridge/userscript.user.js`.
+Missing, unreadable, malformed, or source-mismatched artifacts are refused
+instead of being served. Added the loopback-only, read-only
+`GET /bridge/userscript-status.json` contract, which compares an installed
+`GM_info.script.version` with source and served metadata. The existing Fantrax
+status strip now renders explicit `update current`, `UPDATE AVAILABLE`,
+`UPDATE REFUSED`, or `UPDATE STATUS UNCHECKABLE` state that capture success
+cannot clear. The unified demo now clears and replaces the new package-path
+setting alongside the existing artifact path, so ambient configuration cannot
+defeat its isolation. Updated the recorded OpenAPI contract and operator
+documentation.
+
+**Now true:** Tampermonkey cannot fetch stale repository-local artifact bytes as
+a successful update response: source/artifact disagreement returns 409, while a
+matching artifact is still returned byte-for-byte with `Cache-Control:
+no-store`. The installed bridge checks all three versions once per page load,
+without authentication data, a new timer, DOM action, draft action, or widened
+authority. Targeted tests drive matching, stale, missing, malformed,
+installed-behind, installed-ahead, and invalid-status cases through the route
+and strip. The cumulative backend lint, format, strict type-check and test suite;
+frontend lint, type-check, 418 tests and production build; userscript 97 tests
+and real build; OpenAPI, backlog graph, secret scan, document terminators and
+whitespace checks all pass. After final review tightened metadata delimiters and
+demo isolation, the focused serving/demo tests, repository-wide strict mypy and
+userscript suite passed again; a fresh exact-head review found no significant
+issue. A deliberate mutation disabling the source/artifact equality guard
+changed the stale-artifact route test from green to a 200-vs-409 failure;
+restoring the guard restored green.
+
+**Could not verify:** A real Tampermonkey install/update cycle and the rendered
+0.5.4 warning states in a live Fantrax tab were not exercised. Hosted CI and
+native PostgreSQL remain unverified until the commit is pushed. An already
+installed pre-0.5.4 script cannot gain the new in-page comparison until
+Tampermonkey installs 0.5.4 once; the backend refusal still prevents the stale
+artifact from being served in the meantime. No external source, live account,
+model output, draft action, account write, ToS change, or Automation-gate
+surface was exercised or changed.
+
+**Next:** Review the exact PR head, require hosted Code-gate checks, then install
+0.5.4 through the existing loopback update URL and verify one real
+current/update-available transition before relying on the strip during a mock.

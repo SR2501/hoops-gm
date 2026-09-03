@@ -153,6 +153,12 @@ control or browser-page storage.
    if you forget to bump the version, or the backend isn't reachable when the
    check runs.
 
+The backend refuses to serve a build whose `@version` differs from
+`userscript/package.json`. On Fantrax, the bridge status strip independently
+compares that source version, the exact artifact metadata, and the installed
+`GM_info.script.version`; it names an available update or an uncheckable/
+mismatched build instead of showing a green currency state.
+
 The served file never contains a bridge secret: pairing (above) is the only
 way the userscript ever obtains one, and the serving endpoint is loopback-only
 like every other local surface here (see

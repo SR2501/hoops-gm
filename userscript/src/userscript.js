@@ -7,6 +7,7 @@
   const PAYLOADS_PATH = "/api/v1/bridge/payloads";
   const PAIRING_CODE_PATH = "/api/v1/bridge/pairing";
   const PAIR_PATH = "/api/v1/bridge/pair";
+  const USERSCRIPT_STATUS_PATH = "/bridge/userscript-status.json";
 
   function isStoredSecret(value) {
     return typeof value === "string" && (
@@ -99,6 +100,13 @@
         undefined,
         { "X-Hoops-GM-Pairing-Code": code }
       ),
+      userscriptStatus: (installedVersion) =>
+        send(
+          "GET",
+          `${USERSCRIPT_STATUS_PATH}?installed_version=${encodeURIComponent(
+            typeof installedVersion === "string" ? installedVersion : ""
+          )}`
+        ),
     };
   }
 
@@ -168,6 +176,7 @@
     PAYLOADS_PATH,
     PAIRING_CODE_PATH,
     PAIR_PATH,
+    USERSCRIPT_STATUS_PATH,
   };
   globalThis.HoopsGmBridge = bridge;
 

@@ -1137,6 +1137,27 @@
   // that reaches the DOM, so the guarantee is enforced here rather than
   // assumed of every future error path.
   const SECRET_SHAPED = /[0-9a-fA-F]{32,}|[A-Za-z0-9_-]{43,}/g;
+  const THREE_PART_VERSION = /^\d+\.\d+\.\d+$/;
+
+  function versionParts(value) {
+    return typeof value === "string" && THREE_PART_VERSION.test(value)
+      ? value.split(".").map(Number)
+      : null;
+  }
+
+  function compareVersions(left, right) {
+    const leftParts = versionParts(left);
+    const rightParts = versionParts(right);
+    if (!leftParts || !rightParts) {
+      return null;
+    }
+    for (let index = 0; index < leftParts.length; index += 1) {
+      if (leftParts[index] !== rightParts[index]) {
+        return leftParts[index] < rightParts[index] ? -1 : 1;
+      }
+    }
+    return 0;
+  }
 
   /**
    * Collapses an error message to one short, printable, secret-free line.
@@ -1206,8 +1227,16 @@
     const forwarded = Number.isSafeInteger(safe.forwarded) ? safe.forwarded : 0;
     const duplicates = Number.isSafeInteger(safe.duplicates) ? safe.duplicates : 0;
     const refusal = sanitizeStatusText(safe.lastRefusal);
+    const versionStatus = typeof safe.versionStatus === "string"
+      ? safe.versionStatus
+      : "uncheckable";
+    const sourceVersion = typeof safe.sourceVersion === "string" ? safe.sourceVersion : null;
+    const servedVersion = typeof safe.servedVersion === "string" ? safe.servedVersion : null;
+    const versionReason = sanitizeStatusText(safe.versionReason);
 
-    const headline = `hoops-gm ${version} \u00b7 ${paired ? "paired" : "NOT PAIRED"}`;
+    const currentLabel = versionStatus === "current" ? " \u00b7 update current" : "";
+    const headline =
+      `hoops-gm ${version} \u00b7 ${paired ? "paired" : "NOT PAIRED"}${currentLabel}`;
 
     let detail;
     if (!paired) {
@@ -1237,11 +1266,30 @@
       detail = parts.join(" \u00b7 ");
     }
 
+    let versionWarning = null;
+    if (versionStatus === "checking") {
+      versionWarning = "update currency: checking local source and served build";
+    } else if (versionStatus === "update_available") {
+      versionWarning = sourceVersion
+        ? `UPDATE AVAILABLE: installed v${safe.version}; source/served v${sourceVersion} \u00b7 run Tampermonkey update check, then reload`
+        : "UPDATE AVAILABLE: run Tampermonkey update check, then reload";
+    } else if (versionStatus === "mismatch") {
+      versionWarning = sourceVersion && servedVersion && sourceVersion !== servedVersion
+        ? `UPDATE REFUSED: served v${servedVersion} does not match source v${sourceVersion} \u00b7 run npm run build`
+        : `UPDATE STATUS MISMATCH: ${versionReason || "installed and source versions disagree"}`;
+    } else if (versionStatus !== "current") {
+      versionWarning = `UPDATE STATUS UNCHECKABLE: ${versionReason || "local version contract unavailable"}`;
+    }
+
+    const warnings = [
+      versionWarning,
+      refusal ? `refused: ${refusal}` : null,
+    ].filter(Boolean);
     return {
       headline,
       detail,
-      refusal: refusal ? `refused: ${refusal}` : null,
-      ok: paired && refusal === null,
+      refusal: warnings.length > 0 ? warnings.join(" | ") : null,
+      ok: paired && refusal === null && versionStatus === "current",
     };
   }
 
@@ -1253,6 +1301,10 @@
   function createBridgeStatus({ version = null, now = () => Date.now() } = {}) {
     const state = {
       version: typeof version === "string" && version ? version : null,
+      versionStatus: "checking",
+      sourceVersion: null,
+      servedVersion: null,
+      versionReason: null,
       paired: false,
       forwarded: 0,
       duplicates: 0,
@@ -1387,6 +1439,62 @@
         // Emitted unconditionally: the strip needs a tick to re-age its
         // "last capture" line, and it suppresses DOM writes itself when the
         // rendered text is unchanged.
+        emit();
+      },
+      recordVersionStatus(report) {
+        const knownStatus = report && [
+          "current",
+          "update_available",
+          "mismatch",
+          "uncheckable",
+        ].includes(report.status);
+        const installedMatches = report && report.installed_version === state.version;
+        const sourceVersion =
+          report && versionParts(report.source_version) ? report.source_version : null;
+        const servedVersion =
+          report && versionParts(report.served_version) ? report.served_version : null;
+        const currentIsConsistent =
+          report && report.status !== "current"
+            ? true
+            : installedMatches && sourceVersion === state.version && servedVersion === state.version;
+        const updateIsConsistent =
+          report && report.status !== "update_available"
+            ? true
+            : installedMatches &&
+              sourceVersion !== null &&
+              sourceVersion === servedVersion &&
+              compareVersions(state.version, sourceVersion) === -1;
+        const mismatchIsConsistent =
+          report && report.status !== "mismatch"
+            ? true
+            : installedMatches && sourceVersion !== null && servedVersion !== null;
+
+        if (
+          !knownStatus ||
+          !currentIsConsistent ||
+          !updateIsConsistent ||
+          !mismatchIsConsistent
+        ) {
+          state.versionStatus = "uncheckable";
+          state.sourceVersion = sourceVersion;
+          state.servedVersion = servedVersion;
+          state.versionReason = "invalid local version status response";
+        } else {
+          state.versionStatus = report.status;
+          state.sourceVersion = sourceVersion;
+          state.servedVersion = servedVersion;
+          state.versionReason =
+            typeof report.reason === "string" && report.reason
+              ? report.reason.replaceAll("_", " ")
+              : null;
+        }
+        emit();
+      },
+      recordVersionUncheckable(message) {
+        state.versionStatus = "uncheckable";
+        state.sourceVersion = null;
+        state.servedVersion = null;
+        state.versionReason = sanitizeStatusText(message) || "local version contract unavailable";
         emit();
       },
     };
@@ -2057,6 +2165,14 @@
     });
     installed.status = status;
     installed.statusStrip = installStatusStrip({ status, win: window, doc: document });
+    if (transport && typeof transport.userscriptStatus === "function") {
+      void transport.userscriptStatus(runningVersion).then(
+        (report) => status.recordVersionStatus(report),
+        (error) => status.recordVersionUncheckable(error && error.message)
+      );
+    } else {
+      status.recordVersionUncheckable("local version status transport unavailable");
+    }
     capture.instance = installed;
     installStatusStripMenu({
       registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,
