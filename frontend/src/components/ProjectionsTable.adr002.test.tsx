@@ -42,7 +42,11 @@ import {
   tableColumnHeaders,
 } from '../test/adr002'
 import { ProjectionsTable } from './ProjectionsTable'
-import { buildProjectionsModel, RATE_LABELS } from './projectionsModel'
+import {
+  buildProjectionsModel,
+  PROJECTION_SORT_KEYS,
+  RATE_LABELS,
+} from './projectionsModel'
 
 /** Realistic per-game rates against a realistic, awkward games assumption. */
 const RATES: ProjectionRates = {
@@ -234,6 +238,28 @@ describe('ADR-002: the screen never multiplies a rate by the games assumption', 
       ...PROJECTION_RATE_FIELDS.map((field) => RATE_LABELS[field]),
       'Source GP',
     ])
+  })
+
+  it('offers only existing labels, published rates, and the separate source assumption as sort keys', () => {
+    expect(PROJECTION_SORT_KEYS).toEqual([
+      'player_name',
+      'nba_team',
+      ...PROJECTION_RATE_FIELDS,
+      'source_games_played',
+    ])
+
+    const forbiddenDecisionFields = [
+      'per_36',
+      'percentage',
+      'rank',
+      'valuation',
+      'availability',
+      'recommendation',
+      'expected_games',
+      'z_score',
+      'g_score',
+    ]
+    expect(PROJECTION_SORT_KEYS.filter((key) => forbiddenDecisionFields.includes(key))).toEqual([])
   })
 
   it('shows the assumption itself, because displaying it is the point', () => {

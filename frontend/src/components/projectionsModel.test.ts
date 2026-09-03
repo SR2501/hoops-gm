@@ -16,7 +16,13 @@ import type {
   ProjectionRates,
   SourceGamesPlayedClaim,
 } from '../api/types'
-import { buildProjectionsModel, formatRate, NOT_PUBLISHED } from './projectionsModel'
+import {
+  buildProjectionsModel,
+  formatRate,
+  NOT_PUBLISHED,
+  projectionTeamOptions,
+  selectProjectionRows,
+} from './projectionsModel'
 import type { ProjectionRow, ProjectionsModel } from './projectionsModel'
 
 /**
@@ -85,6 +91,46 @@ function payload(overrides: Partial<CurrentProjections> = {}): CurrentProjection
     source_games_played_assumptions: [],
     ...overrides,
   }
+}
+
+function browserPayload(): CurrentProjections {
+  const projections = [
+    rates(6, { points_per_game: 30 }),
+    rates(4, { points_per_game: 10 }),
+    rates(2, { points_per_game: 20 }),
+    rates(5, { points_per_game: 20 }),
+    rates(3, { points_per_game: 20 }),
+    rates(1, { points_per_game: null }),
+  ]
+  const base = payload({ projections })
+  return {
+    ...base,
+    players: [
+      { ...player(1, 'Alpha Player'), team_abbreviation: 'BOS' },
+      { ...player(2, 'Bravo Player'), team_abbreviation: 'NYK' },
+      { ...player(3, 'Charlie Player'), team_abbreviation: null },
+      { ...player(4, 'Delta Player'), team_abbreviation: 'LAL' },
+      { ...player(5, 'Echo Player'), team_abbreviation: 'BOS' },
+    ],
+    source_games_played_assumptions: [
+      { player_id: 1, assumed_games_played: 70, assumed_games_played_raw: '70' },
+      { player_id: 2, assumed_games_played: null, assumed_games_played_raw: 'many' },
+      { player_id: 3, assumed_games_played: null, assumed_games_played_raw: null },
+      { player_id: 5, assumed_games_played: 0, assumed_games_played_raw: '0' },
+      { player_id: 6, assumed_games_played: 70, assumed_games_played_raw: '70' },
+    ],
+    lineage: {
+      ...base.lineage,
+      projection_import: {
+        ...base.lineage.projection_import,
+        projection_count: projections.length,
+      },
+    },
+  }
+}
+
+function ids(rows: readonly ProjectionRow[]): number[] {
+  return rows.map((candidate) => candidate.playerId)
 }
 
 describe('buildProjectionsModel', () => {
@@ -282,6 +328,135 @@ describe('buildProjectionsModel', () => {
     )
 
     expect(model.rows.map((row) => row.playerId)).toEqual([9, 3, 5])
+  })
+})
+
+describe('selectProjectionRows', () => {
+  it('combines player search and NBA-team filtering without mutating or dropping the cohort', () => {
+    const source = browserPayload()
+    const sourceBefore = JSON.stringify(source)
+    const model = buildProjectionsModel(source)
+    const originalIds = ids(model.rows)
+
+    const selected = selectProjectionRows(model.rows, {
+      searchQuery: '  alpha  ',
+      teamFilter: { kind: 'team', abbreviation: 'BOS' },
+      sort: null,
+    })
+    const missingLabel = selectProjectionRows(model.rows, {
+      searchQuery: 'player 6',
+      teamFilter: { kind: 'missing' },
+      sort: null,
+    })
+    const reset = selectProjectionRows(model.rows, {
+      searchQuery: '',
+      teamFilter: { kind: 'all' },
+      sort: null,
+    })
+
+    expect(ids(selected)).toEqual([1])
+    expect(ids(missingLabel)).toEqual([6])
+    expect(ids(reset)).toEqual(originalIds)
+    expect(reset).not.toBe(model.rows)
+    expect(new Set(reset)).toEqual(new Set(model.rows))
+    expect(ids(model.rows)).toEqual(originalIds)
+    expect(JSON.stringify(source)).toBe(sourceBefore)
+  })
+
+  it('sorts player and NBA-team labels in both directions with missing labels last', () => {
+    const rows = buildProjectionsModel(browserPayload()).rows
+
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'player_name', direction: 'ascending' },
+        }),
+      ),
+    ).toEqual([1, 2, 3, 4, 5, 6])
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'player_name', direction: 'descending' },
+        }),
+      ),
+    ).toEqual([5, 4, 3, 2, 1, 6])
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'nba_team', direction: 'ascending' },
+        }),
+      ),
+    ).toEqual([1, 5, 4, 2, 3, 6])
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'nba_team', direction: 'descending' },
+        }),
+      ),
+    ).toEqual([2, 4, 1, 5, 3, 6])
+  })
+
+  it('sorts a published rate in both directions, with null last and deterministic ties', () => {
+    const rows = buildProjectionsModel(browserPayload()).rows
+
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'points_per_game', direction: 'ascending' },
+        }),
+      ),
+    ).toEqual([4, 2, 3, 5, 6, 1])
+    expect(
+      ids(
+        selectProjectionRows(rows, {
+          searchQuery: '',
+          teamFilter: { kind: 'all' },
+          sort: { key: 'points_per_game', direction: 'descending' },
+        }),
+      ),
+    ).toEqual([6, 2, 3, 5, 4, 1])
+  })
+
+  it('sorts only stated Source GP numbers and keeps every unavailable state after them', () => {
+    const rows = buildProjectionsModel(browserPayload()).rows
+    const ascending = selectProjectionRows(rows, {
+      searchQuery: '',
+      teamFilter: { kind: 'all' },
+      sort: { key: 'source_games_played', direction: 'ascending' },
+    })
+    const descending = selectProjectionRows(rows, {
+      searchQuery: '',
+      teamFilter: { kind: 'all' },
+      sort: { key: 'source_games_played', direction: 'descending' },
+    })
+
+    expect(ids(ascending)).toEqual([5, 1, 6, 2, 3, 4])
+    expect(ids(descending)).toEqual([1, 6, 5, 2, 3, 4])
+    expect(ascending.map((candidate) => candidate.assumption.kind)).toEqual([
+      'stated',
+      'stated',
+      'stated',
+      'unreadable',
+      'unexplained',
+      'absent',
+    ])
+  })
+
+  it('builds deterministic team choices and preserves a separate missing-label option', () => {
+    expect(projectionTeamOptions(buildProjectionsModel(browserPayload()).rows)).toEqual({
+      abbreviations: ['BOS', 'LAL', 'NYK'],
+      hasMissingLabel: true,
+    })
   })
 })
 

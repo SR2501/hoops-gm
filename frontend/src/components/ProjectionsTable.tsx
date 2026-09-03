@@ -23,7 +23,13 @@
  * backstop.
  */
 
-import type { AssumptionState, ProjectionRow, ProjectionsModel } from './projectionsModel'
+import type {
+  AssumptionState,
+  ProjectionRow,
+  ProjectionSort,
+  ProjectionSortKey,
+  ProjectionsModel,
+} from './projectionsModel'
 import {
   NO_LABEL,
   NOT_PUBLISHED,
@@ -33,7 +39,19 @@ import {
   formatRate,
 } from './projectionsModel'
 
-export function ProjectionsTable({ model }: { model: ProjectionsModel }) {
+interface ProjectionsTableProps {
+  model: ProjectionsModel
+  rows?: readonly ProjectionRow[]
+  sort?: ProjectionSort | null
+  onSort?: (key: ProjectionSortKey) => void
+}
+
+export function ProjectionsTable({
+  model,
+  rows = model.rows,
+  sort = null,
+  onSort,
+}: ProjectionsTableProps) {
   return (
     /* `grid-scroll` is reused rather than renamed. It carries the height
        constraint that makes `position: sticky` engage at all, and
@@ -41,30 +59,50 @@ export function ProjectionsTable({ model }: { model: ProjectionsModel }) {
        exact class — so a differently-named wrapper would silently lose both.
        The height budget for this page is set separately; see `styles.css`. */
     <div className="grid-scroll">
-      <table className="grid projections" data-testid="projections-table">
+      <table
+        id="projections-table"
+        className="grid projections"
+        data-testid="projections-table"
+      >
         <caption className="grid__caption">
           Basketball Monster&apos;s published per-game rates for the {model.season} season,
           exactly as imported.{' '}
           <strong className="grid__caption-caveat">These are not our numbers.</strong> Nothing
           here is ranked, valued or adjusted for availability, and no shooting percentage is
-          computed — makes and attempts are shown so volume stays visible.
+          computed — makes and attempts are shown so volume stays visible. Search, team filter
+          and sort change only which imported rows are visible and their order.
         </caption>
 
         <thead>
           <tr>
-            <th scope="col" className="grid__corner projections__player-head">
-              Player
-            </th>
-            <th scope="col" className="projections__team-head">
-              Team
-            </th>
+            <SortableHeader
+              label="Player"
+              accessibleLabel="player name"
+              sortKey="player_name"
+              sort={sort}
+              onSort={onSort}
+              className="grid__corner projections__player-head"
+            />
+            <SortableHeader
+              label="Team"
+              accessibleLabel="NBA team"
+              sortKey="nba_team"
+              sort={sort}
+              onSort={onSort}
+              className="projections__team-head"
+              title="NBA team label held in our player record."
+            />
             <th scope="col" className="projections__pos-head" title="NBA's own label, not Fantrax eligibility">
               Pos
             </th>
             {PROJECTION_RATE_FIELDS.map((field) => (
-              <th
+              <SortableHeader
                 key={field}
-                scope="col"
+                label={RATE_LABELS[field]}
+                accessibleLabel={`${RATE_LABELS[field]} per game`}
+                sortKey={field}
+                sort={sort}
+                onSort={onSort}
                 className={
                   VOLUME_PAIR_STARTS.has(field)
                     ? 'projections__rate-head projections__rate-head--pair-start'
@@ -72,27 +110,82 @@ export function ProjectionsTable({ model }: { model: ProjectionsModel }) {
                 }
                 title={field}
                 data-testid={`rate-header-${field}`}
-              >
-                {RATE_LABELS[field]}
-              </th>
+              />
             ))}
-            <th
-              scope="col"
+            <SortableHeader
+              label="Source GP"
+              accessibleLabel="Basketball Monster source games played"
+              sortKey="source_games_played"
+              sort={sort}
+              onSort={onSort}
               className="projections__assumption-head"
               title="What Basketball Monster assumed about games played. Displayed, never multiplied by a rate."
-            >
-              Source GP
-            </th>
+            />
           </tr>
         </thead>
 
         <tbody>
-          {model.rows.map((row) => (
-            <ProjectionTableRow key={row.playerId} row={row} />
-          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td className="projections__no-results" colSpan={PROJECTION_RATE_FIELDS.length + 4}>
+                No imported players match the current search and NBA team filter.
+              </td>
+            </tr>
+          ) : (
+            rows.map((row) => <ProjectionTableRow key={row.playerId} row={row} />)
+          )}
         </tbody>
       </table>
     </div>
+  )
+}
+
+interface SortableHeaderProps {
+  label: string
+  accessibleLabel: string
+  sortKey: ProjectionSortKey
+  sort: ProjectionSort | null
+  onSort: ((key: ProjectionSortKey) => void) | undefined
+  className: string
+  title?: string
+  'data-testid'?: string
+}
+
+function SortableHeader({
+  label,
+  accessibleLabel,
+  sortKey,
+  sort,
+  onSort,
+  className,
+  title,
+  'data-testid': testId,
+}: SortableHeaderProps) {
+  const activeDirection = sort?.key === sortKey ? sort.direction : null
+  const nextDirection = activeDirection === 'ascending' ? 'descending' : 'ascending'
+
+  return (
+    <th
+      scope="col"
+      className={className}
+      title={title}
+      data-testid={testId}
+      aria-sort={activeDirection ?? undefined}
+    >
+      {onSort === undefined ? (
+        label
+      ) : (
+        <button
+          type="button"
+          className="projections__sort"
+          data-direction={activeDirection ?? 'none'}
+          onClick={() => onSort(sortKey)}
+          aria-label={`Sort by ${accessibleLabel} ${nextDirection}`}
+        >
+          {label}
+        </button>
+      )}
+    </th>
   )
 }
 

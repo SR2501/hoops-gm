@@ -34439,3 +34439,52 @@ backend producer/route tests and the cumulative backend/Ruff/format/mypy/full
 pytest, scripts, OpenAPI, backlog, frontend and prior document gates pass. This
 is still Code-only read/status behavior. Fresh exact-head review and hosted
 checks remain required; live boundaries are unchanged.
+
+## 2026-09-03 - Client-side projection search, filtering, and sorting
+
+**Delivered:** `/projections` now searches the displayed player label, filters
+the already-loaded cohort by displayed NBA-team label, and sorts that exact
+cohort by player, NBA team, any canonical published per-game rate, or the
+separately displayed Basketball Monster Source GP assumption. Reset restores
+response order. Native labelled controls, live counts, `aria-sort`, deterministic
+player-name/`player_id` tie-breakers, and 100-row progressive mounting keep the
+large cohort operable without virtualisation or another dependency. Missing
+labels and numeric values stay last in both directions; unreadable, unexplained,
+and absent Source GP states are never coerced to zero.
+
+**Boundary evidence:** The route still makes its existing single request and
+keeps the Basketball Monster import notice visible. Sorting and filtering create
+a new view array and tests prove the response payload is unchanged and every row
+returns after reset. The allowed-sort-key guard is derived from the existing
+canonical rate vocabulary and excludes per-36, percentage, z-score, G-score,
+rank, valuation, availability, recommendation, and expected-games fields.
+Position remains the NBA source label, is neither sortable nor filterable, and
+is not presented as Fantrax eligibility. No rate is multiplied by Source GP.
+No backend, OpenAPI, ingestion, dependency, or external-source code changed.
+
+**Code gate and controls:** From `frontend/`, `npm run lint`,
+`npm run typecheck`, the CI-form `npm test -- --reporter=default
+--reporter=json --outputFile.json=vitest-report.json` (**428/428**), and
+`npm run build` passed; `scripts/` ESLint passed from its own directory.
+`python scripts/backlog_graph.py`, `python scripts/check_no_secrets.py`, and
+`python scripts/check_doc_terminators.py` passed. Focused model, component,
+ADR-002, and recorded-fixture tests cover search, combined team filtering,
+ascending/descending sorts, stable ties, missing labels/rates, all four Source
+GP states, counts/reset, payload immutability, recovery of filtered rows, and a
+101-row progressive-rendering cohort. The committed synthetic demo was driven
+in a real Chromium browser at 1280x720 through search, MIL filtering, Source GP
+ascending/descending, reset/count, scrolling, and ARIA sort state; the final
+60-row demo response rendered all 60 rows. A fresh cumulative diff review found
+no significant issue after progressive mounting was added.
+
+**Backlog:** Added completed `projections-client-controls`; the finished file
+recounts **77 done, 0 blocked, 116 pending, 193 total**, with no dropped slug and
+one added slug relative to the merge base.
+
+**Could not verify:** Per-36 was deliberately not delivered because deriving it
+would cross the `quant`/Model-gate boundary and create a new analytical number.
+The browser exercise proves the committed synthetic response shape only; it did
+not use a live Basketball Monster export, Fantrax account, or real draft. Hosted
+PR checks, live data scale and labels, and production network/error timing were
+not exercised locally. This Code-only unit has no independent Model, Adapter, or
+Automation sign-off because it adds no model, source call, or write path.
