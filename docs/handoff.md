@@ -34488,3 +34488,50 @@ not use a live Basketball Monster export, Fantrax account, or real draft. Hosted
 PR checks, live data scale and labels, and production network/error timing were
 not exercised locally. This Code-only unit has no independent Model, Adapter, or
 Automation sign-off because it adds no model, source call, or write path.
+
+## 2026-09-03 - Projection controls review corrections
+
+**Correction:** Independent review of exact head `d883eed` found two truthful-
+label defects in the client controls. The lineage panel received
+`model.rows.length` while calling it rows "drawn on this screen", even though
+progressive mounting and filtering could leave most of those rows outside the
+DOM. Its required prop is now `availableRateRowCount`, and both the prop contract
+and visible fact say these are rate rows available to the browser. A page-level
+101-row test proves the initial 100-row mount and a one-row filtered state both
+retain the truthful 101-row available cohort without claiming hidden rows are
+drawn.
+
+The NBA-team selection is now validated against each refreshed model's derived
+options before use. One `effectiveTeamSelection` drives the `<select>`, filtering,
+and active-control state: a selected abbreviation missing from the new option
+set, or the missing-label sentinel after the last missing label disappears,
+becomes All NBA teams in the same render. Rerender tests for both paths prove the
+visible selection, three-row result count, reset state, and rendered rows agree
+immediately rather than showing All NBA teams beside a stale zero-row filter.
+
+**Negative controls and Code gate:** Temporarily restoring the old lineage copy
+made the new 101-row test fail with received text `101 drawn on this screen`.
+Temporarily restoring the old raw team selection for the `<select>` and filter
+made both refreshed-model tests fail with `Showing 0 of 0` instead of `Showing 3
+of 3`. Both mutations were reversed before the passing run. The focused suite
+then passed **30/30**. From `frontend/`, `npm run lint`, `npm run typecheck`, the
+CI-form `npm test -- --reporter=default --reporter=json
+--outputFile.json=vitest-report.json` (**431/431**), and `npm run build` passed;
+`scripts/` ESLint also passed from its own directory.
+
+**Browser evidence:** The committed 60-row synthetic demo was reopened in real
+Chromium. After filtering to Precious Achiuwa, the DOM carried one projection
+row and `Showing 1 of 1 matches from 60 imported players`, while the lineage
+fact reported 60 verified/carried rows and 60 rate rows available to this
+browser. This drives the repaired copy under a real filtered mount; refreshed
+model replacement remains component-test evidence because the static demo does
+not change cohorts while open.
+
+**Could not verify:** No live Basketball Monster export, Fantrax page/account,
+or real draft was used. The disappearing-team refresh paths were driven through
+React rerender tests, not a production import changing while Chromium remained
+open. Per-36 remains deliberately undelivered because deriving it would cross
+the `quant`/Model-gate boundary. Live cohort scale/labels and production
+network/error timing remain unverified. Hosted checks and the requested fresh
+independent cumulative review remain pending for the corrected exact head; do
+not merge or self-approve it before those complete.

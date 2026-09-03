@@ -174,4 +174,51 @@ describe('ProjectionsBrowser', () => {
       )} matches`,
     )
   })
+
+  it('clears a selected NBA team immediately when a refreshed cohort no longer offers it', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<ProjectionsBrowser model={buildProjectionsModel(payload())} />)
+    const team = screen.getByRole('combobox', { name: 'NBA team' })
+
+    await user.selectOptions(team, 'BOS')
+    expect(team).toHaveValue('BOS')
+    expect(renderedIds()).toEqual([3, 1])
+
+    const refreshed = payload()
+    refreshed.players = refreshed.players.map((player) => ({
+      ...player,
+      team_abbreviation: 'LAL',
+    }))
+    rerender(<ProjectionsBrowser model={buildProjectionsModel(refreshed)} />)
+
+    expect(team).toHaveValue('')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 3 of 3 matches from 3 imported players',
+    )
+    expect(renderedIds()).toEqual([3, 1, 2])
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
+  })
+
+  it('clears the missing-team filter immediately when a refreshed cohort has no missing labels', async () => {
+    const user = userEvent.setup()
+    const initial = payload()
+    initial.players = initial.players.map((player) =>
+      player.player_id === 3 ? { ...player, team_abbreviation: null } : player,
+    )
+    const { rerender } = render(<ProjectionsBrowser model={buildProjectionsModel(initial)} />)
+    const team = screen.getByRole('combobox', { name: 'NBA team' })
+
+    await user.selectOptions(team, screen.getByRole('option', { name: 'No NBA team label' }))
+    expect(renderedIds()).toEqual([3])
+
+    rerender(<ProjectionsBrowser model={buildProjectionsModel(payload())} />)
+
+    expect(team).toHaveValue('')
+    expect(screen.queryByRole('option', { name: 'No NBA team label' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 3 of 3 matches from 3 imported players',
+    )
+    expect(renderedIds()).toEqual([3, 1, 2])
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
+  })
 })

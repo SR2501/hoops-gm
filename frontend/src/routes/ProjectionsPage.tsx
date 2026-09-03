@@ -92,7 +92,10 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
 
   return (
     <>
-      <ProjectionLineagePanel lineage={model.lineage} drawnRowCount={model.rows.length} />
+      <ProjectionLineagePanel
+        lineage={model.lineage}
+        availableRateRowCount={model.rows.length}
+      />
 
       {!integrity.isConsistent ? (
         <p

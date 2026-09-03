@@ -26,20 +26,27 @@ export function ProjectionsBrowser({ model }: { model: ProjectionsModel }) {
   const [visibleLimit, setVisibleLimit] = useState(PROJECTION_PAGE_SIZE)
 
   const teams = useMemo(() => projectionTeamOptions(model.rows), [model.rows])
+  const effectiveTeamSelection =
+    teamSelection === ALL_TEAMS ||
+    (teamSelection === MISSING_TEAM
+      ? teams.hasMissingLabel
+      : teams.abbreviations.includes(teamSelection))
+      ? teamSelection
+      : ALL_TEAMS
   const rows = useMemo(
     () =>
       selectProjectionRows(model.rows, {
         searchQuery,
-        teamFilter: teamFilter(teamSelection),
+        teamFilter: teamFilter(effectiveTeamSelection),
         sort,
       }),
-    [model.rows, searchQuery, sort, teamSelection],
+    [effectiveTeamSelection, model.rows, searchQuery, sort],
   )
   const visibleRows = rows.slice(0, visibleLimit)
 
   const controlsActive =
     searchQuery !== '' ||
-    teamSelection !== ALL_TEAMS ||
+    effectiveTeamSelection !== ALL_TEAMS ||
     sort !== null ||
     visibleLimit > PROJECTION_PAGE_SIZE
 
@@ -79,7 +86,7 @@ export function ProjectionsBrowser({ model }: { model: ProjectionsModel }) {
         <label>
           <span>NBA team</span>
           <select
-            value={teamSelection}
+            value={effectiveTeamSelection}
             onChange={(event) => {
               setTeamSelection(event.target.value)
               setVisibleLimit(PROJECTION_PAGE_SIZE)

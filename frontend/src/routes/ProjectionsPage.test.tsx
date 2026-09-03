@@ -9,6 +9,7 @@
  */
 
 import { act, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROJECTIONS_ERRORS, RETRYABLE_PROJECTIONS_ERROR } from '../api/projectionsErrors'
 import type { CurrentProjections, ProjectionRates } from '../api/types'
@@ -84,6 +85,43 @@ describe('ProjectionsPage', () => {
     expect(await screen.findByTestId('projections-table')).toBeInTheDocument()
     expect(screen.getByText('Alpha Player')).toBeInTheDocument()
     expect(screen.getByTestId('projections-lineage')).toBeInTheDocument()
+  })
+
+  it('describes the full browser cohort, not progressively mounted or filtered rows, in lineage', async () => {
+    const user = userEvent.setup()
+    const projections = Array.from({ length: 101 }, (_, index) => rates(index + 1))
+    const body = payload({
+      projections,
+      players: projections.map((row) => ({
+        player_id: row.player_id,
+        full_name: `Player ${String(row.player_id).padStart(3, '0')}`,
+        team_abbreviation: 'BOS',
+        primary_position: 'G',
+      })),
+    })
+    body.lineage.projection_import.row_count = projections.length
+    body.lineage.projection_import.matched_count = projections.length
+    mockFetch({ [PATH]: { body } })
+    renderWithRouter(<ProjectionsPage />)
+
+    await screen.findByTestId('projections-table')
+    const lineageCount = screen.getByTestId('projections-row-counts')
+    expect(screen.getAllByTestId(/^projection-row-/)).toHaveLength(100)
+    expect(lineageCount).toHaveTextContent(
+      '101 verified and carried · 101 rate rows available to this browser',
+    )
+    expect(lineageCount).not.toHaveTextContent(/drawn on this screen/i)
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search players' }), 'Player 101')
+
+    expect(screen.getAllByTestId(/^projection-row-/)).toHaveLength(1)
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 1 of 1 matches from 101 imported players',
+    )
+    expect(lineageCount).toHaveTextContent(
+      '101 verified and carried · 101 rate rows available to this browser',
+    )
+    expect(lineageCount).not.toHaveTextContent(/drawn on this screen/i)
   })
 
   it('uses no em dash as punctuation in the key, so the defined mark is unambiguous', async () => {

@@ -31,15 +31,19 @@ import type { ProjectionLineage } from '../api/types'
 interface ProjectionLineagePanelProps {
   lineage: ProjectionLineage
   /**
-   * Rows the table actually drew, so the two can be seen together.
+   * Rate rows available to the browser after the response is joined.
    *
-   * Required rather than optional: a cross-check a caller can silently omit
-   * without a type error is not a cross-check.
+   * This is deliberately independent of transient filters and progressive
+   * mounting: lineage describes the imported cohort the browser can inspect,
+   * not the subset of DOM rows mounted at this instant.
    */
-  drawnRowCount: number
+  availableRateRowCount: number
 }
 
-export function ProjectionLineagePanel({ lineage, drawnRowCount }: ProjectionLineagePanelProps) {
+export function ProjectionLineagePanel({
+  lineage,
+  availableRateRowCount,
+}: ProjectionLineagePanelProps) {
   const { projection_import: imported } = lineage
   const partitionTotal =
     imported.matched_count +
@@ -108,8 +112,8 @@ export function ProjectionLineagePanel({ lineage, drawnRowCount }: ProjectionLin
         <div className="facts__row">
           <dt>Rows</dt>
           <dd data-testid="projections-row-counts">
-            {imported.projection_count} verified and carried · {drawnRowCount} drawn on this
-            screen
+            {imported.projection_count} verified and carried · {availableRateRowCount} rate rows
+            available to this browser
           </dd>
         </div>
         <div className="facts__row">
