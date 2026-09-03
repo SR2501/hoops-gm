@@ -420,6 +420,9 @@ carry the exact identifier, slot, total and reason-map shape; participant totals
 and the complete participant-plus-unattributed partition must reconcile exactly
 to the aggregate by reason. A malformed or inconsistent partition invalidates
 the whole response rather than salvaging its aggregate.
+Freshness entries are likewise accepted only with the complete backend shape,
+paired timestamps and ages, and a `silent` value consistent with the backend's
+instant/contact clock rule; malformed freshness cannot produce a green strip.
 
 Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
 and adds no recurring timer. It starts at most one request per minute for an

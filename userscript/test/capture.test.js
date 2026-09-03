@@ -3147,6 +3147,86 @@ test("feed refresh rejects a participant skip omitted from the aggregate", async
   assert.equal(lines.ok, false);
 });
 
+test("feed refresh rejects malformed freshness instead of publishing a false green", async () => {
+  const capture = await loadCapture();
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+  const malformed = makeFeedStatus({
+    freshness: [
+      {
+        transport: "bridge_capture",
+        silent: false,
+        silence_threshold_seconds: -1,
+        instant_count: 0,
+      },
+    ],
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => malformed },
+    status,
+    readCurrentUrl: () => url,
+  });
+  revalidator.recheck(url);
+  await flushMicrotasks();
+
+  const snapshot = status.snapshot();
+  const lines = capture.formatStatusLines({
+    ...snapshot,
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(snapshot.feedStatus, "uncheckable");
+  assert.equal(snapshot.feedReport, null);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed validation enforces the complete freshness contract and clock relationships", async () => {
+  const capture = await loadCapture();
+  const valid = makeFeedStatus().freshness[0];
+  const invalidFreshness = [
+    ["extra field", { ...valid, unexpected: true }],
+    ["unknown transport", { ...valid, transport: "browser_guess" }],
+    ["negative age", { ...valid, age_seconds: -1 }],
+    ["fractional instant count", { ...valid, instant_count: 1.5 }],
+    ["last-seen pair mismatch", { ...valid, age_seconds: null }],
+    ["claim pair mismatch", { ...valid, claim_skew_seconds: 0 }],
+    ["contact pair mismatch", { ...valid, contact_age_seconds: null }],
+    ["contact flag mismatch", { ...valid, contact_is_known: false }],
+    [
+      "silent decision mismatch",
+      {
+        ...valid,
+        age_seconds: 120,
+        contact_is_known: false,
+        contact_at: null,
+        contact_age_seconds: null,
+      },
+    ],
+    [
+      "zero instants cannot be healthy",
+      {
+        ...valid,
+        last_seen_at: null,
+        age_seconds: null,
+        instant_count: 0,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        silent: false,
+      },
+    ],
+  ];
+
+  for (const [name, freshness] of invalidFreshness) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(makeFeedStatus({ freshness: [freshness] }), "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+});
+
 test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
   const capture = await loadCapture();
   const participant = (overrides = {}) => ({

@@ -1525,6 +1525,73 @@
       keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
   }
 
+  function isTimestampOrNull(value) {
+    return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
+  }
+
+  function isFiniteNonNegativeOrNull(value) {
+    return value === null || (Number.isFinite(value) && value >= 0);
+  }
+
+  function isFreshnessResponse(source) {
+    const keys = [
+      "transport",
+      "last_seen_at",
+      "age_seconds",
+      "instant_count",
+      "silent",
+      "silence_threshold_seconds",
+      "source_claimed_at",
+      "claim_skew_seconds",
+      "contact_at",
+      "contact_age_seconds",
+      "contact_is_known",
+    ];
+    if (
+      !hasExactKeys(source, keys) ||
+      !["bridge_capture", "official_http"].includes(source.transport) ||
+      !isTimestampOrNull(source.last_seen_at) ||
+      !isFiniteNonNegativeOrNull(source.age_seconds) ||
+      !isNonNegativeInteger(source.instant_count) ||
+      typeof source.silent !== "boolean" ||
+      !Number.isFinite(source.silence_threshold_seconds) ||
+      source.silence_threshold_seconds < 0 ||
+      !isTimestampOrNull(source.source_claimed_at) ||
+      !(
+        source.claim_skew_seconds === null ||
+        Number.isFinite(source.claim_skew_seconds)
+      ) ||
+      !isTimestampOrNull(source.contact_at) ||
+      !isFiniteNonNegativeOrNull(source.contact_age_seconds) ||
+      typeof source.contact_is_known !== "boolean"
+    ) {
+      return false;
+    }
+
+    const hasInstants = source.instant_count > 0;
+    const hasLastSeen = source.last_seen_at !== null && source.age_seconds !== null;
+    const hasSourceClaim =
+      source.source_claimed_at !== null && source.claim_skew_seconds !== null;
+    const hasContact = source.contact_at !== null && source.contact_age_seconds !== null;
+    if (
+      hasInstants !== hasLastSeen ||
+      (source.last_seen_at === null) !== (source.age_seconds === null) ||
+      (source.source_claimed_at === null) !== (source.claim_skew_seconds === null) ||
+      (!hasInstants && hasSourceClaim) ||
+      source.contact_is_known !== hasContact ||
+      (source.contact_at === null) !== (source.contact_age_seconds === null)
+    ) {
+      return false;
+    }
+
+    const ageForSilence = source.contact_is_known
+      ? source.contact_age_seconds
+      : source.age_seconds;
+    const expectedSilent =
+      !hasInstants || ageForSilence > source.silence_threshold_seconds;
+    return source.silent === expectedSilent;
+  }
+
   function isConsistentSkipPartition(report) {
     const aggregateEntries = reasonEntries(report.skipped);
     const unattributedEntries = reasonEntries(report.unattributed_skipped);
@@ -1595,14 +1662,7 @@
       !Number.isNaN(Date.parse(report.as_of)) &&
       (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
       Array.isArray(report.freshness) &&
-      report.freshness.every(
-        (source) =>
-          source &&
-          typeof source.transport === "string" &&
-          typeof source.silent === "boolean" &&
-          Number.isFinite(source.silence_threshold_seconds) &&
-          isNonNegativeInteger(source.instant_count)
-      ) &&
+      report.freshness.every(isFreshnessResponse) &&
       (report.reconciliation === null ||
         (typeof report.reconciliation === "object" &&
           report.reconciliation !== null &&

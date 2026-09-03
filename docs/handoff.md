@@ -34325,3 +34325,20 @@ head cumulative review remain pending until the new commit is pushed.
 exact PR head, then exercise an inconsistent partition against the rehearsal
 browser before relying on this fail-closed state under a pick clock. Do not
 merge from this session.
+**Review addendum:** Fresh cumulative review of exact head `520faec` found one
+more Medium false-green in the same response boundary. `freshness` entries were
+checked only for transport text, a boolean `silent`, finite threshold, and
+integer instant count. A truncated object with no timestamps or ages and a
+negative threshold could therefore publish `available` and `ok: true`.
+
+Freshness validation now requires the exact `FreshnessOut` key set and the two
+known transport values; parseable nullable timestamps; nonnegative finite ages;
+nonnegative integer instant counts; nonnegative finite silence threshold;
+finite signed claim skew; paired last-seen/age, source-claim/skew, and
+contact/contact-age fields; contact flag agreement; and `silent` agreement with
+the backend rule (zero instants are always silent, otherwise contact age wins
+when known and instant age is the fallback). The reported malformed refresh and
+ten additional shape/clock contradictions now settle uncheckable with no prior
+report retained. The full userscript suite passes **119/119** after this fix. A
+new exact-head cumulative review is still required after the follow-up commit;
+all live boundaries above remain unchanged.
