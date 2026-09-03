@@ -110,15 +110,23 @@ never in the script source. Concretely, once the script is installed by
 3. Reload the Fantrax tab afterward so the new `document-start` script
    actually takes over the page.
 
-On each Fantrax page load, the installed script also sends its own
-`GM_info.script.version` to the loopback-only, unauthenticated
-`GET /bridge/userscript-status.json` endpoint. That endpoint compares the
-installed value with both `package.json` and the `@version` parsed from the
-exact artifact bytes the update route would serve. The status strip is green
-only for three-way agreement. It otherwise names an available update, refuses
-a source/artifact mismatch with the rebuild command, or says explicitly that
-update currency is uncheckable. This status read is independent of capture
-delivery and grants no draft or account action authority.
+On initial load and while a Fantrax league tab remains visible, the installed
+script sends its own `GM_info.script.version` to the loopback-only,
+unauthenticated `GET /bridge/userscript-status.json` endpoint. Navigation,
+visibility return, and the existing rendered-view context watcher all
+reconsider the check, with one shared one-minute minimum request interval and
+no additional recurring timer. Before an expired result is rechecked, the
+strip returns to an explicit checking state; a failed or unreadable response
+becomes `UPDATE STATUS UNCHECKABLE`. Only the newest in-flight request may
+publish, so a late response cannot restore stale `update current` state.
+
+The endpoint compares the installed value with both `package.json` and the
+`@version` parsed from the exact artifact bytes the update route would serve.
+The status strip is green only for three-way agreement. It otherwise names an
+available update, refuses a source/artifact mismatch with the rebuild command,
+or says explicitly that update currency is uncheckable. This status read is
+independent of capture delivery and grants no draft or account action
+authority.
 
 Once 0.5.0 has been approved in place, step 2 requires no owner click:
 Tampermonkey, not the running userscript, performs the fetch and replacement.

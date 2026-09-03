@@ -30,6 +30,7 @@
   const AUTO_SNAPSHOT_NAV_MIN_INTERVAL_MS = 5000;
   const AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS = 60000;
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
+  const VERSION_STATUS_MIN_INTERVAL_MS = 60000;
   const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
   const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
   const DRAFT_BOARD_HEADER_SELECTOR = ".league-draft-board__header";
@@ -1441,6 +1442,13 @@
         // rendered text is unchanged.
         emit();
       },
+      recordVersionChecking() {
+        state.versionStatus = "checking";
+        state.sourceVersion = null;
+        state.servedVersion = null;
+        state.versionReason = null;
+        emit();
+      },
       recordVersionStatus(report) {
         const knownStatus = report && [
           "current",
@@ -1496,6 +1504,89 @@
         state.servedVersion = null;
         state.versionReason = sanitizeStatusText(message) || "local version contract unavailable";
         emit();
+      },
+    };
+  }
+
+  /**
+   * Revalidates update currency without owning a timer. Callers lend it an
+   * existing lifecycle tick; the minimum interval bounds requests, and only
+   * the newest request generation may publish a result.
+   */
+  function createVersionStatusRevalidator({
+    transport,
+    status,
+    installedVersion = null,
+    now = () => Date.now(),
+    minIntervalMs = VERSION_STATUS_MIN_INTERVAL_MS,
+  } = {}) {
+    const interval = Math.max(1000, Number(minIntervalMs) || VERSION_STATUS_MIN_INTERVAL_MS);
+    let stopped = false;
+    let lastAttemptAt = Number.NEGATIVE_INFINITY;
+    let requestGeneration = 0;
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function recordIfCurrent(generation, callback) {
+      if (!stopped && generation === requestGeneration) {
+        callback();
+      }
+    }
+
+    function recheck() {
+      if (
+        stopped ||
+        !transport ||
+        typeof transport.userscriptStatus !== "function" ||
+        !status ||
+        typeof status.recordVersionChecking !== "function" ||
+        typeof status.recordVersionStatus !== "function" ||
+        typeof status.recordVersionUncheckable !== "function"
+      ) {
+        if (
+          !stopped &&
+          status &&
+          typeof status.recordVersionUncheckable === "function"
+        ) {
+          status.recordVersionUncheckable("local version status transport unavailable");
+        }
+        return false;
+      }
+
+      const current = nowMs();
+      if (current - lastAttemptAt < interval) {
+        return false;
+      }
+      lastAttemptAt = current;
+      const generation = requestGeneration += 1;
+      status.recordVersionChecking();
+      Promise.resolve()
+        .then(() => transport.userscriptStatus(installedVersion))
+        .then(
+          (report) => recordIfCurrent(
+            generation,
+            () => status.recordVersionStatus(report)
+          ),
+          (error) => recordIfCurrent(
+            generation,
+            () => status.recordVersionUncheckable(error && error.message)
+          )
+        );
+      return true;
+    }
+
+    return {
+      recheck,
+      stop() {
+        stopped = true;
+        requestGeneration += 1;
       },
     };
   }
@@ -1755,6 +1846,7 @@
     mutationMinIntervalMs = AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS,
     locationPollMs = AUTO_SNAPSHOT_LOCATION_POLL_MS,
     status = null,
+    onRelevantContext = null,
     logger = console,
   } = {}) {
     const notInstalled = { installed: false, uninstall: () => {} };
@@ -1963,6 +2055,17 @@
       // Storage poll was about. The strip suppresses DOM writes when its
       // rendered text is unchanged, so an unchanged tick costs nothing.
       reportContext(paired);
+      if (
+        doc.visibilityState !== "hidden" &&
+        isFantraxLeaguePage(nextUrl) &&
+        typeof onRelevantContext === "function"
+      ) {
+        try {
+          onRelevantContext();
+        } catch {
+          // A status recheck must never stop the capture watcher.
+        }
+      }
       if (nextUrl !== lastUrl) {
         lastUrl = nextUrl;
         resetPending();
@@ -2009,6 +2112,16 @@
 
     attachObserver();
     reportContext(wasPaired);
+    if (
+      doc.visibilityState !== "hidden" &&
+      typeof onRelevantContext === "function"
+    ) {
+      try {
+        onRelevantContext();
+      } catch {
+        // As above: currency reporting cannot stop capture.
+      }
+    }
     if (doc.readyState !== "loading") {
       requestSnapshot("navigation");
     }
@@ -2132,6 +2245,7 @@
     formatAge,
     formatStatusLines,
     createBridgeStatus,
+    createVersionStatusRevalidator,
     installStatusStrip,
     installStatusStripMenu,
     captureManualSnapshot,
@@ -2156,23 +2270,22 @@
     const status = createBridgeStatus({ version: runningVersion });
     const installed = createCapture({ transport, status });
     installed.pageBridge = installPageWorldBridge({ capture: installed, win: window, doc: document });
+    installed.status = status;
+    installed.statusStrip = installStatusStrip({ status, win: window, doc: document });
+    installed.versionStatusRevalidator = createVersionStatusRevalidator({
+      transport,
+      status,
+      installedVersion: runningVersion,
+    });
+    installed.versionStatusRevalidator.recheck();
     installed.renderedViewWatcher = installAutomaticRenderedViewCapture({
       capture: installed,
       transport,
       win: window,
       doc: document,
       status,
+      onRelevantContext: installed.versionStatusRevalidator.recheck,
     });
-    installed.status = status;
-    installed.statusStrip = installStatusStrip({ status, win: window, doc: document });
-    if (transport && typeof transport.userscriptStatus === "function") {
-      void transport.userscriptStatus(runningVersion).then(
-        (report) => status.recordVersionStatus(report),
-        (error) => status.recordVersionUncheckable(error && error.message)
-      );
-    } else {
-      status.recordVersionUncheckable("local version status transport unavailable");
-    }
     capture.instance = installed;
     installStatusStripMenu({
       registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,

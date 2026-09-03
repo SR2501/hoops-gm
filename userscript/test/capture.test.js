@@ -2396,6 +2396,180 @@ test("version currency stays fail-closed across current, update, and malformed r
   assert.match(capture.formatStatusLines(status.snapshot()).refusal, /invalid local version status/);
 });
 
+test("a long-lived visible tab revalidates currency on the existing watcher tick", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  let sourceVersion = "0.5.3";
+  let calls = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    userscriptStatus: async (installedVersion) => {
+      calls += 1;
+      return {
+        status: sourceVersion === installedVersion ? "current" : "update_available",
+        installed_version: installedVersion,
+        source_version: sourceVersion,
+        served_version: sourceVersion,
+        reason: sourceVersion === installedVersion ? null : "installed_version_behind",
+      };
+    },
+  };
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport,
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "current");
+  assert.equal(calls, 1);
+  assert.equal(clock.pendingIntervals(), 1, "revalidation adds no recurring timer");
+
+  sourceVersion = "0.5.4";
+  clock.advance(999);
+  watcher.checkContext();
+  await flushMicrotasks();
+  assert.equal(calls, 1, "the watcher tick cannot exceed the currency request bound");
+  assert.equal(status.snapshot().versionStatus, "current");
+
+  clock.advance(1);
+  watcher.checkContext();
+  assert.equal(status.snapshot().versionStatus, "checking", "expired currency is not shown as current");
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  assert.equal(status.snapshot().versionStatus, "update_available");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
+
+  watcher.uninstall();
+  revalidator.stop();
+});
+
+test("a failed currency recheck replaces prior current state with uncheckable", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  let fail = false;
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport: {
+      userscriptStatus: async (installedVersion) => {
+        if (fail) {
+          throw new Error("backend request timed out");
+        }
+        return {
+          status: "current",
+          installed_version: installedVersion,
+          source_version: installedVersion,
+          served_version: installedVersion,
+          reason: null,
+        };
+      },
+    },
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  revalidator.recheck();
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "current");
+
+  fail = true;
+  clock.advance(1000);
+  revalidator.recheck();
+  assert.equal(status.snapshot().versionStatus, "checking");
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "uncheckable");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /request timed out/);
+
+  status.recordDelivered("rendered-view");
+  assert.equal(
+    status.snapshot().versionStatus,
+    "uncheckable",
+    "capture success cannot clear update currency"
+  );
+});
+
+test("an older deferred currency response cannot overwrite a newer result", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  const pending = [];
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport: {
+      userscriptStatus: () => new Promise((resolve) => pending.push(resolve)),
+    },
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  revalidator.recheck();
+  await flushMicrotasks();
+  clock.advance(1000);
+  revalidator.recheck();
+  await flushMicrotasks();
+  assert.equal(pending.length, 2);
+
+  pending[1]({
+    status: "update_available",
+    installed_version: "0.5.3",
+    source_version: "0.5.4",
+    served_version: "0.5.4",
+    reason: "installed_version_behind",
+  });
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "update_available");
+
+  pending[0]({
+    status: "current",
+    installed_version: "0.5.3",
+    source_version: "0.5.3",
+    served_version: "0.5.3",
+    reason: null,
+  });
+  await flushMicrotasks();
+  assert.equal(
+    status.snapshot().versionStatus,
+    "update_available",
+    "only the latest request generation may publish"
+  );
+  assert.equal(status.snapshot().sourceVersion, "0.5.4");
+});
+
 test("an unrelated success cannot clear an automatic board refusal", async () => {
   const capture = await loadCapture();
   const status = capture.createBridgeStatus({ now: () => 1 });
