@@ -59,6 +59,9 @@ describe('ReliabilityPage recorded contract', () => {
       'must not be read as season games played or predictions',
     )
     expect(screen.queryByTestId('synthetic-demo-warning')).not.toBeInTheDocument()
+    expect(screen.getByText(/whether its evidence is historical or synthetic/)).toBeInTheDocument()
+    expect(screen.getByText('Internal player record 1')).toBeInTheDocument()
+    expect(screen.queryByText(/NBA player id/)).not.toBeInTheDocument()
   })
 
   it('shows all source labels in the lineage detail', async () => {
@@ -89,7 +92,7 @@ describe('ReliabilityPage recorded contract', () => {
       const warning = await screen.findByTestId('synthetic-demo-warning')
       expect(warning).toHaveTextContent('Synthetic demo cohort')
       expect(warning).toHaveTextContent(
-        'Every game, box score, and play/non-play observation is invented solely to exercise the interface',
+        'Every game, box score, and resulting played-game observation is invented solely to exercise the interface',
       )
       expect(warning).toHaveTextContent(
         'not historical evidence, a projection, a recommendation, calibrated availability, or p(play)',

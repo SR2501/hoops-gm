@@ -31,7 +31,7 @@ from hoops_gm.db.models.enums import (
     GameStatus,
     ParticipationOutcome,
 )
-from hoops_gm.db.models.identity import NbaTeam, Player
+from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection
 from hoops_gm.db.models.stats import NbaGame
@@ -43,6 +43,7 @@ from hoops_gm.dev.seed_demo import (
     seed_demo,
 )
 from hoops_gm.dev.seed_draft import CanonicalDraftPlayer, seed_drafts
+from hoops_gm.dev.seed_reliability_demo import DEMO_PLAYER_IDS as RELIABILITY_DEMO_PLAYER_IDS
 from hoops_gm.dev.seed_reliability_demo import DEMO_PLAYER_NAMES
 from hoops_gm.dev.seed_schedule_grid import (
     FANTRAX_LEAGUE_ID,
@@ -98,7 +99,7 @@ def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient
         "schedule_context_team_games": 6,
         "final_games": 3,
         "player_game_logs": 4,
-        "participation_rows": 2,
+        "participation_rows": 0,
     }
     assert reliability.json()["lineage"]["schedule_source"].startswith("synthetic-demo:")
     assert (
@@ -108,6 +109,20 @@ def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient
     assert {scorecard["player_name"] for scorecard in reliability.json()["scorecards"]} == set(
         DEMO_PLAYER_NAMES
     )
+
+    with database.session() as session:
+        synthetic_links = list(
+            session.scalars(
+                select(PlayerExternalId).where(
+                    PlayerExternalId.external_id.in_(
+                        tuple(str(player_id) for player_id in RELIABILITY_DEMO_PLAYER_IDS)
+                    )
+                )
+            )
+        )
+    assert len(synthetic_links) == 2
+    assert all(link.source_detail == "synthetic-demo" for link in synthetic_links)
+    assert all(link.confidence == 0.0 for link in synthetic_links)
 
 
 def test_both_mock_drafts_are_listed_with_the_selections_the_seed_recorded(

@@ -79,19 +79,11 @@ from hoops_gm.calendar import (
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
 from hoops_gm.db.models.availability import PlayerParticipation
-from hoops_gm.db.models.enums import ExternalSource
-from hoops_gm.db.models.identity import PlayerExternalId
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_reliability_demo import (
     DEMO_GAME_IDS as RELIABILITY_DEMO_GAME_IDS,
-)
-from hoops_gm.dev.seed_reliability_demo import (
-    DEMO_NON_PLAY_COMMENT as RELIABILITY_DEMO_NON_PLAY_COMMENT,
-)
-from hoops_gm.dev.seed_reliability_demo import (
-    DEMO_PLAYER_IDS as RELIABILITY_DEMO_PLAYER_IDS,
 )
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_league_settings, import_schedule, import_teams
@@ -174,10 +166,9 @@ def _require_no_real_ingest(session: Session) -> None:
     Neither is written by any module under ``hoops_gm.dev``, which is what
     makes their presence conclusive rather than suggestive:
 
-    * **any ``player_participation`` row outside the unified demo's exact
-      synthetic reliability markers.** The reliability demo writes two rows
-      through the production importer; their synthetic game ids, NBA anchor,
-      and raw comment must all agree. Anything else is real evidence.
+    * **any ``player_participation`` row.** The unified Reliability demo writes
+      played-game logs only, because the participation writer correctly labels
+      its input as NBA evidence and must not receive invented observations.
     * **any ``nba_games`` row for a season other than this one, outside the
       unified demo's three synthetic reliability game ids.**
 
@@ -205,31 +196,14 @@ def _require_no_real_ingest(session: Session) -> None:
     tables = set(inspect(session.get_bind()).get_table_names())
 
     if PlayerParticipation.__tablename__ in tables:
-        synthetic_player_ids = select(PlayerExternalId.player_id).where(
-            PlayerExternalId.source == ExternalSource.NBA,
-            PlayerExternalId.external_id.in_(
-                tuple(str(player_id) for player_id in RELIABILITY_DEMO_PLAYER_IDS)
-            ),
-        )
-        participation = session.scalar(
-            select(PlayerParticipation.id)
-            .join(NbaGame, NbaGame.id == PlayerParticipation.game_id)
-            .where(
-                or_(
-                    NbaGame.nba_game_id.not_in(RELIABILITY_DEMO_GAME_IDS),
-                    PlayerParticipation.player_id.not_in(synthetic_player_ids),
-                    PlayerParticipation.raw_comment != RELIABILITY_DEMO_NON_PLAY_COMMENT,
-                )
-            )
-            .limit(1)
-        )
+        participation = session.scalar(select(PlayerParticipation.id).limit(1))
         if participation is not None:
             raise DemoSeedRefused(
-                "this database holds player_participation rows outside the unified demo's "
-                "exact synthetic reliability markers. That makes it a real store rather than "
-                "a throwaway, whether or not it holds a league: seeding would register a "
-                "synthetic 2026-27 schedule cohort and a synthetic Basketball Monster "
-                "crosswalk inside it. Nothing was written. Use a throwaway --database-url."
+                "this database holds player_participation rows, the availability ledger, "
+                "which no seeder writes. That makes it a real store rather than a throwaway, "
+                "whether or not it holds a league: seeding would register a synthetic 2026-27 "
+                "schedule cohort and a synthetic Basketball Monster crosswalk inside it. "
+                "Nothing was written. Use a throwaway --database-url."
             )
 
     if NbaGame.__tablename__ in tables:

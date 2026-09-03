@@ -46,8 +46,8 @@ export function ReliabilityPage() {
         <h1>Reliability</h1>
         <p className="page__lede">
           Direct availability observations and played-game production consistency, kept separate.
-          These are historical descriptions, not durability grades, season games played, projected
-          games, or <code>p(play)</code>.
+          Each cohort below states whether its evidence is historical or synthetic. Nothing here is
+          a durability grade, season games played, projected games, or <code>p(play)</code>.
         </p>
       </header>
 
@@ -127,9 +127,10 @@ function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResp
           role="note"
           data-testid="synthetic-demo-warning"
         >
-          <strong>Synthetic demo cohort.</strong> Every game, box score, and play/non-play
-          observation is invented solely to exercise the interface. This is not historical
-          evidence, a projection, a recommendation, calibrated availability, or <code>p(play)</code>.
+          <strong>Synthetic demo cohort.</strong> Every game, box score, and resulting
+          played-game observation is invented solely to exercise the interface. This is not
+          historical evidence, a projection, a recommendation, calibrated availability, or{' '}
+          <code>p(play)</code>.
         </p>
       ) : null}
 
@@ -225,7 +226,7 @@ function ReliabilityPlayer({ row }: { row: ReliabilityRow }) {
       <summary>
         <span className="reliability-card__player">
           <strong>{row.displayName}</strong>
-          <small>NBA player id {card.player_id}</small>
+          <small>Internal player record {card.player_id}</small>
         </span>
         <EvidenceSummary evidence={card.availability.overall} />
         <B2BSummary evidence={card.availability.back_to_back} />

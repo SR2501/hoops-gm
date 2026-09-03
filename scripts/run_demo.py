@@ -19,11 +19,29 @@ FRONTEND = REPO_ROOT / "frontend"
 STARTUP_TIMEOUT_SECONDS = 45.0
 
 
-def _python_env(database_url: str | None = None, *, port: int | None = None) -> dict[str, str]:
+def _base_env() -> dict[str, str]:
     env = os.environ.copy()
+    for key in tuple(env):
+        if key.upper().startswith("HOOPS_GM_"):
+            env.pop(key)
+    return env
+
+
+def _remove_env(env: dict[str, str], *names: str) -> None:
+    targets = {name.upper() for name in names}
+    for key in tuple(env):
+        if key.upper() in targets:
+            env.pop(key)
+
+
+def _python_env(database_url: str | None = None, *, port: int | None = None) -> dict[str, str]:
+    env = _base_env()
     source = str(BACKEND / "src")
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = source if not existing else os.pathsep.join((source, existing))
+    _remove_env(env, "DATABASE_URL", "ENVIRONMENT", "HOST", "PORT")
+    env["ENVIRONMENT"] = "development"
+    env["HOST"] = "127.0.0.1"
     if database_url is not None:
         env["DATABASE_URL"] = database_url
     if port is not None:
@@ -35,11 +53,20 @@ def _sqlite_url(path: Path) -> str:
     return f"sqlite+pysqlite:///{path.resolve().as_posix()}"
 
 
-def _npm_command() -> str:
-    executable = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+def _node_command() -> str:
+    executable = shutil.which("node.exe" if os.name == "nt" else "node")
     if executable is None:
-        raise RuntimeError("npm is not on PATH; install Node.js before running the demo")
+        raise RuntimeError("node is not on PATH; install Node.js before running the demo")
     return executable
+
+
+def _frontend_env(backend_url: str) -> dict[str, str]:
+    env = _base_env()
+    _remove_env(env, "DEV_SERVER_HOST", "VITE_API_BASE_URL", "VITE_API_PROXY_TARGET")
+    env["DEV_SERVER_HOST"] = "127.0.0.1"
+    env["VITE_API_BASE_URL"] = ""
+    env["VITE_API_PROXY_TARGET"] = backend_url
+    return env
 
 
 def _available_port(preferred: int) -> int:
@@ -121,14 +148,10 @@ def main() -> int:
                 env=_python_env(database_url, port=backend_port),
             )
             processes.append(backend)
-            frontend_env = os.environ.copy()
-            frontend_env["VITE_API_PROXY_TARGET"] = backend_url
             frontend = subprocess.Popen(
                 [
-                    _npm_command(),
-                    "run",
-                    "dev",
-                    "--",
+                    _node_command(),
+                    str(FRONTEND / "node_modules" / "vite" / "bin" / "vite.js"),
                     "--host",
                     "127.0.0.1",
                     "--port",
@@ -136,13 +159,13 @@ def main() -> int:
                     "--strictPort",
                 ],
                 cwd=FRONTEND,
-                env=frontend_env,
+                env=_frontend_env(backend_url),
             )
             processes.append(frontend)
 
             deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
             _wait_for_url(
-                f"{backend_url}/health/ready",
+                f"{portal_url}/health/ready",
                 processes=tuple(processes),
                 deadline=deadline,
             )

@@ -28,6 +28,11 @@ Open the auction draft and follow **League categories**, or go directly to
 `/draft/1/categories`. Press Ctrl+C to stop both services; the temporary
 database is then deleted.
 
+The launcher replaces ambient database, host, port, mode, Vite host, proxy, and
+API-base settings rather than inheriting them. It starts Python and Node
+directly, so shutdown targets only those exact child processes and does not
+leave a package-manager wrapper with a surviving Vite child.
+
 The lower-level seed remains available for tests and manual serving:
 `cd backend; $env:PYTHONPATH="$PWD\src"; python -m
 hoops_gm.dev.seed_demo --database-url "sqlite+pysqlite:///../demo_all.db"`.
@@ -93,7 +98,7 @@ The seed prints its own proof, grouped by screen:
                           "identities_accepted": 60, "identities_unresolved": 0 },
   "reliability_screen": { "season": "2025-26", "scorecards": 2,
                           "final_games": 3, "player_game_logs": 4,
-                          "participation_rows": 2 },
+                          "participation_rows": 0 },
   "draft_screen":       { "auction_selections": 7, "snake_selections": 12 },
   "frontend_expects_league_id": 1
 }
@@ -103,7 +108,8 @@ Against the committed fixtures the database holds **30 teams, 10 imported games
 (12 published, 2 pending), 21 scoring periods, 20 team-games, 60 projection rows
 and 2 mock drafts** for the 2026-27 portal context. The Reliability context is a
 separate, deliberately tiny **2025-26 synthetic cohort: 2 named synthetic
-players, 3 final games, 4 box-score rows and 2 non-play observations**. The
+players, 3 final games, 4 played-game box-score rows and no invented non-play
+observations**. The
 System tab reports backend/database readiness from that same process.
 
 The composed auction selects seven canonical players from that exact synthetic
@@ -118,7 +124,7 @@ a successful partial board.
 
 Reliability is descriptive only. Its player names begin `[synthetic demo]`, its
 schedule lineage begins `synthetic-demo:`, and the screen renders a prominent
-disclosure that every game, box score and play/non-play observation is invented
+disclosure that every game and box score is invented
 only to exercise the interface. Observation lineage identifies the unchanged
 production writer chain; the synthetic origin is carried by the schedule source
 and disclosure rather than adding another dynamically sourced refresh call.
@@ -146,11 +152,11 @@ and ranked-seat counts, synthetic Reliability names, and synthetic lineage.
 Every seeder here refuses before writing anything, on four separate signals.
 Three protect a database you care about; one protects the demo's own honesty.
 
-**Any `player_participation` row outside the unified demo's exact markers.**
-The unified seed writes two synthetic non-play rows through the production
-participation importer. The guard allows only those exact synthetic game ids,
-the reserved synthetic NBA anchor, and the explicit synthetic raw comment.
-Anything else still proves a real ingest happened.
+**Any `player_participation` row.** The unified seed deliberately writes no
+invented non-play rows: the production participation writer labels its inputs
+as NBA evidence, so using it for synthetic observations would make persisted
+provenance false. Any participation row therefore still proves a real ingest
+happened.
 
 **Any `nba_games` row for a season other than 2026-27, outside the three exact
 synthetic Reliability game ids.** The additional 2025-26 cohort is narrow and
@@ -309,7 +315,7 @@ so you can tell, and do not put it where the service would find it by default.
 |---|---|---|
 | `hoops_gm.dev.seed_schedule_grid` | teams, games, scoring periods, deadline calendar | `seed_projections` |
 | `hoops_gm.dev.seed_projections` | the above, plus players, positions and the synthetic cohort | `seed_demo` |
-| `hoops_gm.dev.seed_reliability_demo` | three synthetic final games, two synthetic players, four box scores, two non-play rows and the published descriptive claim | `seed_demo` |
+| `hoops_gm.dev.seed_reliability_demo` | three synthetic final games, two synthetic players, four played-game box scores and the published descriptive claim | `seed_demo` |
 | `hoops_gm.dev.seed_draft` | two mock drafts, through the real recorders; standalone names stay unresolved, while `seed_demo` may supply typed canonical auction players | `seed_demo` |
 | `scripts/run_demo.py` | an ephemeral database plus backend and Vite lifecycle | operator entry point |
 

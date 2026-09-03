@@ -87,6 +87,10 @@ jobs:
         # timing is unchanged.
         run: pytest --junitxml=junit.xml
 
+      - name: Recorded OpenAPI matches the served contract
+        working-directory: ${{ github.workspace }}
+        run: python scripts/capture_openapi.py --check
+
       # --- Per-run numbers, printed against their baseline ------------------
       #
       # See scripts/run_metrics.py. Print the delta, never judge it: there is

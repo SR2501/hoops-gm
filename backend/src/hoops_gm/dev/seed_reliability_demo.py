@@ -6,10 +6,11 @@ portal demo. It does not publish a grade, projected games, recommendation, or
 carry ``synthetic demo`` provenance so a rendered row cannot be mistaken for
 historical NBA evidence.
 
-Every persisted row goes through the same production writers as an ingest:
-``import_nba_players``, ``import_schedule``, ``import_box_scores``,
-``import_participation``, and ``publish_reliability_cohorts``. Developer tooling
-constructs typed inputs and never writes ORM rows or lineage records directly.
+The synthetic identity anchors are inserted locally with zero confidence and an
+explicit ``synthetic-demo`` source detail because routing them through
+``import_nba_players`` would falsely claim NBA.com supplied them. Every evidence
+row then goes through the same production schedule and box-score writers as an
+ingest, and the descriptive claim uses ``publish_reliability_cohorts``.
 """
 
 from __future__ import annotations
@@ -26,20 +27,16 @@ from hoops_gm.availability import (
     compute_reliability_scorecards,
     publish_reliability_cohorts,
 )
-from hoops_gm.db.models.enums import DnpReason, ParticipationOutcome
-from hoops_gm.db.models.identity import NbaTeam
+from hoops_gm.db.models.enums import ExternalSource, FieldEvidence, MatchMethod
+from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.importers import (
     import_box_scores,
-    import_nba_players,
-    import_participation,
     import_schedule,
 )
 from hoops_gm.ingest.nba.models import (
-    GameParticipation,
     NbaGameRecord,
-    NbaPlayerRecord,
     PlayerBoxScoreRecord,
-    PlayerParticipationRecord,
 )
 from hoops_gm.ingest.nba.schedule import ScheduleGameRecord, ScheduleParseResult
 
@@ -53,7 +50,6 @@ DEMO_GAME_DATES = (date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 8))
 DEMO_GAME_IDS = tuple(
     f"synthetic-reliability-demo-{index}" for index in range(1, len(DEMO_GAME_DATES) + 1)
 )
-DEMO_NON_PLAY_COMMENT = "synthetic demo non-play observation; no real reason asserted"
 SEEDED_AT = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 
 
@@ -115,25 +111,39 @@ def _schedule(home: NbaTeam, away: NbaTeam) -> ScheduleParseResult:
     )
 
 
-def _players(home: NbaTeam, away: NbaTeam) -> tuple[NbaPlayerRecord, ...]:
-    return tuple(
-        NbaPlayerRecord(
-            nba_player_id=player_id,
-            display_last_comma_first=name,
-            display_first_last=name,
-            is_active_roster=False,
-            from_year="2025",
-            to_year="2025",
-            team_id=team.nba_team_id,
-            team_abbreviation=team.abbreviation,
+def _players(session: Session, home: NbaTeam, away: NbaTeam) -> None:
+    for player_id, name, team in zip(
+        DEMO_PLAYER_IDS,
+        DEMO_PLAYER_NAMES,
+        (home, away),
+        strict=True,
+    ):
+        normalized = normalize_name(name)
+        player = Player(
+            full_name=name,
+            normalized_name=normalized.key,
+            first_name=normalized.first or None,
+            last_name=normalized.last or None,
+            current_team_id=team.id,
         )
-        for player_id, name, team in zip(
-            DEMO_PLAYER_IDS,
-            DEMO_PLAYER_NAMES,
-            (home, away),
-            strict=True,
+        session.add(player)
+        session.flush()
+        session.add(
+            PlayerExternalId(
+                player_id=player.id,
+                source=ExternalSource.NBA,
+                current_for_source=ExternalSource.NBA.value,
+                source_detail="synthetic-demo",
+                external_id=str(player_id),
+                external_name=name,
+                normalized_name=normalized.key,
+                external_team=team.abbreviation,
+                confidence=0.0,
+                match_method=MatchMethod.ANCHOR_ID,
+                name_evidence=FieldEvidence.UNKNOWN,
+            )
         )
-    )
+    session.flush()
 
 
 def _box_score(
@@ -173,7 +183,7 @@ def seed_reliability_demo(session: Session) -> ReliabilityDemoSeedResult:
     """Publish two synthetic descriptive scorecards through production writers."""
 
     home, away = _teams(session)
-    import_nba_players(session, _players(home, away))
+    _players(session, home, away)
     import_schedule(session, _schedule(home, away), source=DEMO_SCHEDULE_SOURCE)
 
     box_scores = [
@@ -195,26 +205,6 @@ def seed_reliability_demo(session: Session) -> ReliabilityDemoSeedResult:
     )
     imported_logs = import_box_scores(session, box_scores)
 
-    for index in (2, 3):
-        import_participation(
-            session,
-            GameParticipation(
-                nba_game_id=DEMO_GAME_IDS[index - 1],
-                records=[
-                    PlayerParticipationRecord(
-                        nba_player_id=DEMO_PLAYER_IDS[1],
-                        nba_game_id=DEMO_GAME_IDS[index - 1],
-                        nba_team_id=away.nba_team_id,
-                        outcome=ParticipationOutcome.INACTIVE,
-                        reason=DnpReason.NONE_GIVEN,
-                        raw_comment=DEMO_NON_PLAY_COMMENT,
-                        player_name=DEMO_PLAYER_NAMES[1],
-                    )
-                ],
-                inactives_available=True,
-            ),
-        )
-
     claim = publish_reliability_cohorts(
         session,
         season=EVIDENCE_SEASON,
@@ -222,7 +212,7 @@ def seed_reliability_demo(session: Session) -> ReliabilityDemoSeedResult:
         refreshed_at=SEEDED_AT,
     )
     run = compute_reliability_scorecards(session, claim=claim, computed_at=SEEDED_AT)
-    expected = (2, 3, 4, 2)
+    expected = (2, 3, 4, 0)
     actual = (
         len(run.scorecards),
         run.final_games,
