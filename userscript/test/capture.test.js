@@ -2288,7 +2288,30 @@ function makeFeedStatus(overrides = {}) {
         contact_is_known: false,
       },
     ],
-    reconciliation: null,
+    reconciliation: {
+      independence: {
+        independent: true,
+        reason: "distinct_artifacts_and_transports",
+        left_transports: ["bridge_capture"],
+        right_transports: ["official_http"],
+        shared_artifacts: [],
+        shared_transports: [],
+      },
+      witnessed_by_two_transports: 1,
+      agreements: [
+        {
+          player_label: "Player One",
+          key: "player-one",
+          bridge_artifact: "bridge:1",
+          official_artifact: "official:1",
+        },
+      ],
+      unwitnessed_matches: [],
+      disagreements: [],
+      only_bridge: [],
+      only_official: [],
+      caveats: [],
+    },
     observation_count: 8,
     applied_count: 7,
     pending_count: 1,
@@ -3298,6 +3321,10 @@ test("feed validation rejects malformed reconciliation and board-regression cont
   };
   const invalidReports = [
     [
+      "missing reconciliation despite official observations",
+      makeFeedStatus({ reconciliation: null }),
+    ],
+    [
       "truncated reconciliation",
       makeFeedStatus({
         reconciliation: {
@@ -3427,6 +3454,32 @@ test("feed validation rejects malformed reconciliation and board-regression cont
       versionStatus: "current",
     }).refusal,
     /FEED UNCORROBORATED: one_side_empty/
+  );
+
+  const noInstantStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  noInstantStatus.recordFeedStatus(
+    makeFeedStatus({
+      freshness: makeFeedStatus().freshness.map((source) => ({
+        ...source,
+        last_seen_at: null,
+        age_seconds: null,
+        instant_count: 0,
+        silent: true,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+      })),
+      reconciliation: null,
+    }),
+    "league-one"
+  );
+  assert.equal(noInstantStatus.snapshot().feedStatus, "available");
+  assert.match(
+    capture.formatStatusLines({
+      ...noInstantStatus.snapshot(),
+      paired: true,
+      versionStatus: "current",
+    }).refusal,
+    /FEED STALE\/SILENT/
   );
 });
 

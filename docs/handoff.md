@@ -34372,3 +34372,13 @@ reports accept only the route-reachable `one_side_empty` or
 swapped and empty independent sides and accept a valid one-side-empty warning.
 The full userscript suite remains **121/121**. Fresh exact-head review is required
 again; live boundaries remain unchanged.
+**Fifth review addendum:** Exact-head review of `ff15ca4` found that
+`reconciliation: null` still passed beside positive official freshness. The
+producer creates reconciliation whenever any eligible instant exists, and every
+official instant is eligible. Validation now requires non-null reconciliation
+when `official_http.instant_count > 0`, requires null when both source counts are
+zero, and permits either state only for the bridge-only case where rendered-board
+eligibility cannot be inferred from freshness. Tests reject positive official
+observations without reconciliation and accept a zero-instant null report as
+available but stale/silent. The full suite remains **121/121**. Fresh exact-head
+review is required again; live boundaries remain unchanged.

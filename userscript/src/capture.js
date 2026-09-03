@@ -1758,6 +1758,18 @@
       : value.agreements.length === 0 && value.witnessed_by_two_transports === 0;
   }
 
+  function reconciliationMatchesFreshness(reconciliation, freshness) {
+    const official = freshness.find((source) => source.transport === "official_http");
+    const totalInstants = freshness.reduce((total, source) => total + source.instant_count, 0);
+    if (official.instant_count > 0) {
+      return reconciliation !== null;
+    }
+    if (totalInstants === 0) {
+      return reconciliation === null;
+    }
+    return true;
+  }
+
   function isBoardRegressionResponse(value) {
     return hasExactKeys(value, [
       "source_seat",
@@ -1862,6 +1874,7 @@
       (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
       isCompleteFreshness(report.freshness, report.as_of) &&
       isReconciliationResponse(report.reconciliation) &&
+      reconciliationMatchesFreshness(report.reconciliation, report.freshness) &&
       isNonNegativeInteger(report.observation_count) &&
       isNonNegativeInteger(report.applied_count) &&
       isNonNegativeInteger(report.pending_count) &&
