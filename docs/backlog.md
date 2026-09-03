@@ -3422,8 +3422,9 @@ boundaries; official CBA assignment starts and recalled returns depend on
 in-person reporting instants the feed does not publish, while G League season
 conclusion is a separate end condition; and a six-team live
 `CommonTeamRoster` check omitted the transient Conley and Wiseman stints it
-would need to repair. Those are measured source-contract gaps, not permission
-to infer an interval.
+would need to repair within 2025-26: Conley's Chicago and Charlotte stints and
+Wiseman's Indiana stint. Those are measured source-contract gaps, not
+permission to infer an interval.
 
 Therefore a complete independent denominator still cannot be enumerated,
 `unknown_share` is not calculable, and no public opportunity envelope or

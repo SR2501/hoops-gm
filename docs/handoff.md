@@ -33784,9 +33784,9 @@ on in-person reporting, which the feed does not publish; G League season
 conclusion is a separate end condition. The archives do not provide complete
 opening membership, contract
 expiration, retirement, structured suspension, or effective times.
-`CommonTeamRoster` was also checked directly and omitted measured transient
-Conley and Wiseman stints; its nullable `HOW_ACQUIRED` text was not treated as
-an interval.
+`CommonTeamRoster` was also checked directly and omitted measured same-season
+stints: Conley with Chicago and Charlotte, and Wiseman with Indiana. Its
+nullable `HOW_ACQUIRED` text was not treated as an interval.
 
 **Protocol boundary:** This increment emits typed transaction-evidence records
 only. It emits no player-game opportunity row and populates none of the

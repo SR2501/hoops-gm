@@ -192,9 +192,9 @@ eligibility.
 
 A six-team 2025-26 `CommonTeamRoster` feasibility probe also disproved the
 tempting fallback: transient Conley stints with Chicago and Charlotte and
-Wiseman stints with Indiana and Toronto were absent from those season-scoped
-responses. That endpoint cannot enumerate all historical stints, and its
-nullable `HOW_ACQUIRED` prose cannot repair them.
+Wiseman's Indiana stint were absent from those season-scoped responses. That
+endpoint cannot enumerate all historical stints, and its nullable
+`HOW_ACQUIRED` prose cannot repair them.
 
 Therefore no complete player-game denominator can yet be enumerated, an
 `unknown_share` cannot honestly be calculated, and no public opportunity
