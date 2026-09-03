@@ -1590,6 +1590,14 @@
     ) {
       return false;
     }
+    if (
+      source.transport === "official_http" &&
+      (source.contact_at !== null ||
+        source.contact_age_seconds !== null ||
+        source.contact_is_known)
+    ) {
+      return false;
+    }
 
     const hasInstants = source.instant_count > 0;
     const hasLastSeen = source.last_seen_at !== null && source.age_seconds !== null;
@@ -1679,7 +1687,7 @@
         noSharedTransport;
     }
     if (value.reason === "one_side_empty") {
-      return (value.left_transports.length === 0 || value.right_transports.length === 0) &&
+      return (value.left_transports.length === 0) !== (value.right_transports.length === 0) &&
         (value.left_transports.length === 0 || leftIsBridge) &&
         (value.right_transports.length === 0 || rightIsOfficial) &&
         value.shared_artifacts.length === 0 &&
@@ -1753,21 +1761,37 @@
     ) {
       return false;
     }
-    return value.independence.independent
-      ? value.unwitnessed_matches.length === 0
-      : value.agreements.length === 0 && value.witnessed_by_two_transports === 0;
+    if (value.independence.independent) {
+      return value.unwitnessed_matches.length === 0;
+    }
+    if (value.agreements.length > 0 || value.witnessed_by_two_transports > 0) {
+      return false;
+    }
+    if (value.independence.reason === "one_side_empty") {
+      const leftEmpty = value.independence.left_transports.length === 0;
+      return value.unwitnessed_matches.length === 0 &&
+        value.disagreements.length === 0 &&
+        (leftEmpty
+          ? value.only_bridge.length === 0 && value.only_official.length > 0
+          : value.only_official.length === 0 && value.only_bridge.length > 0);
+    }
+    return true;
   }
 
   function reconciliationMatchesFreshness(reconciliation, freshness) {
+    const bridge = freshness.find((source) => source.transport === "bridge_capture");
     const official = freshness.find((source) => source.transport === "official_http");
     const totalInstants = freshness.reduce((total, source) => total + source.instant_count, 0);
-    if (official.instant_count > 0) {
-      return reconciliation !== null;
-    }
     if (totalInstants === 0) {
       return reconciliation === null;
     }
-    return true;
+    if (reconciliation === null) {
+      return official.instant_count === 0;
+    }
+    const leftPresent = reconciliation.independence.left_transports.length > 0;
+    const rightPresent = reconciliation.independence.right_transports.length > 0;
+    return rightPresent === (official.instant_count > 0) &&
+      !(leftPresent && bridge.instant_count === 0);
   }
 
   function isBoardRegressionResponse(value) {

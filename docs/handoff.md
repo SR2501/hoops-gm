@@ -34382,3 +34382,15 @@ eligibility cannot be inferred from freshness. Tests reject positive official
 observations without reconciliation and accept a zero-instant null report as
 available but stale/silent. The full suite remains **121/121**. Fresh exact-head
 review is required again; live boundaries remain unchanged.
+**Sixth review addendum:** Exact-head review of `a397cdc` found two more
+source/reconciliation contradictions. Official polling has no persisted proof-
+of-life clock, so `official_http` freshness now requires null contact fields and
+`contact_is_known=false`; fabricated recent contact can no longer hide a stale
+official observation. Reconciliation side presence is now cross-checked against
+freshness: positive official instants require the official right side, zero
+official instants forbid it, and a left side is impossible when bridge instant
+count is zero. One-side-empty reports require exactly one empty side and matching
+nonempty only-source evidence. Tests drive fabricated official contact and an
+empty reconciliation right side beside positive official freshness. The full
+suite remains **121/121**. Fresh exact-head review is required again; live
+boundaries remain unchanged.

@@ -3235,6 +3235,21 @@ test("feed validation enforces the complete freshness contract and clock relatio
     ["contact pair mismatch", [{ ...valid, contact_age_seconds: null }, official]],
     ["contact flag mismatch", [{ ...valid, contact_is_known: false }, official]],
     [
+      "official source cannot claim contact",
+      [
+        valid,
+        {
+          ...official,
+          last_seen_at: "2026-09-03T13:50:00Z",
+          age_seconds: 600,
+          silent: false,
+          contact_at: "2026-09-03T13:59:59Z",
+          contact_age_seconds: 1,
+          contact_is_known: true,
+        },
+      ],
+    ],
+    [
       "silent decision mismatch",
       [
         {
@@ -3375,6 +3390,28 @@ test("feed validation rejects malformed reconciliation and board-regression cont
       }),
     ],
     [
+      "official observations with an empty reconciliation right side",
+      makeFeedStatus({
+        reconciliation: {
+          independence: {
+            independent: false,
+            reason: "one_side_empty",
+            left_transports: ["bridge_capture"],
+            right_transports: [],
+            shared_artifacts: [],
+            shared_transports: [],
+          },
+          witnessed_by_two_transports: 0,
+          agreements: [],
+          unwitnessed_matches: [],
+          disagreements: [],
+          only_bridge: ["Player One"],
+          only_official: [],
+          caveats: [],
+        },
+      }),
+    ],
+    [
       "malformed nested match",
       makeFeedStatus({
         reconciliation: {
@@ -3440,7 +3477,7 @@ test("feed validation rejects malformed reconciliation and board-regression cont
         unwitnessed_matches: [],
         disagreements: [],
         only_bridge: [],
-        only_official: [],
+        only_official: ["Player One"],
         caveats: [],
       },
     }),
