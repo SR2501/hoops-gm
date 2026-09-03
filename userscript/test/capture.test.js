@@ -2183,6 +2183,10 @@ test("formatStatusLines separates the four ways this bridge fails silently", asy
   const capture = await loadCapture();
   const base = {
     version: "0.5.2",
+    versionStatus: "current",
+    sourceVersion: "0.5.2",
+    servedVersion: "0.5.2",
+    versionReason: null,
     paired: true,
     forwarded: 0,
     duplicates: 0,
@@ -2200,7 +2204,7 @@ test("formatStatusLines separates the four ways this bridge fails silently", asy
 
   // 2. Paired but nothing captured -- a draft that has not started.
   const idle = capture.formatStatusLines(base, { nowMs: at });
-  assert.match(idle.headline, /paired/);
+  assert.match(idle.headline, /paired \u00b7 update current$/);
   assert.equal(idle.detail, "no captures yet");
   assert.equal(idle.refusal, null);
   assert.equal(idle.ok, true);
@@ -2214,11 +2218,27 @@ test("formatStatusLines separates the four ways this bridge fails silently", asy
   assert.equal(refused.refusal, "refused: backend returned HTTP 401");
   assert.equal(refused.ok, false);
 
-  // 4. A stale build. On 2026-08-28 the browser truthfully reported "no
-  //    update available" for an artifact ten days older than the source that
-  //    declared it; the running @version is the only thing that says so.
-  assert.match(capture.formatStatusLines({ ...base, version: "0.4.0" }, { nowMs: at }).headline, /v0\.4\.0/);
-  assert.match(capture.formatStatusLines({ ...base, version: null }, { nowMs: at }).headline, /hoops-gm bridge/);
+  // 4. A stale or uncheckable build. The running version alone cannot tell
+  //    whether the exact bytes served by the backend agree with source.
+  const stale = capture.formatStatusLines(
+    {
+      ...base,
+      version: "0.5.2",
+      versionStatus: "mismatch",
+      sourceVersion: "0.5.4",
+      servedVersion: "0.5.3",
+      versionReason: "userscript build version mismatch",
+    },
+    { nowMs: at }
+  );
+  assert.match(stale.refusal, /UPDATE REFUSED: served v0\.5\.3 does not match source v0\.5\.4/);
+  assert.equal(stale.ok, false);
+  const uncheckable = capture.formatStatusLines(
+    { ...base, versionStatus: "uncheckable", versionReason: "backend unreachable" },
+    { nowMs: at }
+  );
+  assert.equal(uncheckable.refusal, "UPDATE STATUS UNCHECKABLE: backend unreachable");
+  assert.equal(uncheckable.ok, false);
 });
 
 test("formatStatusLines reports counts, source and a coarse age", async () => {
@@ -2226,6 +2246,7 @@ test("formatStatusLines reports counts, source and a coarse age", async () => {
   const capturedAt = 1_000_000;
   const state = {
     version: "0.5.2",
+    versionStatus: "current",
     paired: true,
     forwarded: 3,
     duplicates: 2,
@@ -2269,10 +2290,10 @@ test("formatStatusLines never renders a number a decision rests on", async () =>
   // with it. If one appears here this has become the wrong component.
   const forbidden = /\$|\bprice[sd]?\b|\bbids?\b|\brank(ing|ed|s)?\b|\bvalues?\b|\bprojection|\bz-?score|\btier\b|\bADP\b/i;
   const states = [
-    { version: "0.5.2", paired: false, forwarded: 0, duplicates: 0, lastCaptureAtMs: null, lastSource: null, lastRefusal: null },
-    { version: "0.5.2", paired: true, forwarded: 0, duplicates: 0, lastCaptureAtMs: null, lastSource: null, lastRefusal: null },
-    { version: "0.5.2", paired: true, forwarded: 9, duplicates: 4, lastCaptureAtMs: 5_000, lastSource: "manual-export", lastRefusal: null },
-    { version: null, paired: true, forwarded: 1, duplicates: 0, lastCaptureAtMs: 5_000, lastSource: "rendered-view", lastRefusal: "backend unreachable" },
+    { version: "0.5.2", versionStatus: "current", paired: false, forwarded: 0, duplicates: 0, lastCaptureAtMs: null, lastSource: null, lastRefusal: null },
+    { version: "0.5.2", versionStatus: "current", paired: true, forwarded: 0, duplicates: 0, lastCaptureAtMs: null, lastSource: null, lastRefusal: null },
+    { version: "0.5.2", versionStatus: "current", paired: true, forwarded: 9, duplicates: 4, lastCaptureAtMs: 5_000, lastSource: "manual-export", lastRefusal: null },
+    { version: null, versionStatus: "uncheckable", versionReason: "installed version unavailable", paired: true, forwarded: 1, duplicates: 0, lastCaptureAtMs: 5_000, lastSource: "rendered-view", lastRefusal: "backend unreachable" },
   ];
 
   for (const state of states) {
@@ -2335,6 +2356,218 @@ test("createBridgeStatus keeps an unreadable message from reaching the strip ver
 
   status.recordRefusal(undefined);
   assert.equal(status.snapshot().lastRefusal, "unknown error");
+});
+
+test("version currency stays fail-closed across current, update, and malformed reports", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: () => 1 });
+
+  assert.equal(status.snapshot().versionStatus, "checking");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /checking local source/);
+
+  status.recordVersionStatus({
+    status: "update_available",
+    installed_version: "0.5.3",
+    source_version: "0.5.4",
+    served_version: "0.5.4",
+    reason: "installed_version_behind",
+  });
+  assert.equal(status.snapshot().versionStatus, "update_available");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
+
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.3",
+    source_version: "0.5.3",
+    served_version: "0.5.3",
+    reason: null,
+  });
+  assert.equal(status.snapshot().versionStatus, "current");
+  assert.equal(capture.formatStatusLines(status.snapshot()).refusal, null);
+
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.3",
+    source_version: "0.5.4",
+    served_version: "0.5.4",
+    reason: null,
+  });
+  assert.equal(status.snapshot().versionStatus, "uncheckable");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /invalid local version status/);
+});
+
+test("a long-lived visible tab revalidates currency on the existing watcher tick", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  let sourceVersion = "0.5.3";
+  let calls = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    userscriptStatus: async (installedVersion) => {
+      calls += 1;
+      return {
+        status: sourceVersion === installedVersion ? "current" : "update_available",
+        installed_version: installedVersion,
+        source_version: sourceVersion,
+        served_version: sourceVersion,
+        reason: sourceVersion === installedVersion ? null : "installed_version_behind",
+      };
+    },
+  };
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport,
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+  const root = makeDynamicRoot(() => "view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: { captureRenderedView: async () => true },
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    locationPollMs: 250,
+    status,
+    onRelevantContext: revalidator.recheck,
+  });
+
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "current");
+  assert.equal(calls, 1);
+  assert.equal(clock.pendingIntervals(), 1, "revalidation adds no recurring timer");
+
+  sourceVersion = "0.5.4";
+  clock.advance(999);
+  watcher.checkContext();
+  await flushMicrotasks();
+  assert.equal(calls, 1, "the watcher tick cannot exceed the currency request bound");
+  assert.equal(status.snapshot().versionStatus, "current");
+
+  clock.advance(1);
+  watcher.checkContext();
+  assert.equal(status.snapshot().versionStatus, "checking", "expired currency is not shown as current");
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  assert.equal(status.snapshot().versionStatus, "update_available");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /UPDATE AVAILABLE/);
+
+  watcher.uninstall();
+  revalidator.stop();
+});
+
+test("a failed currency recheck replaces prior current state with uncheckable", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  let fail = false;
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport: {
+      userscriptStatus: async (installedVersion) => {
+        if (fail) {
+          throw new Error("backend request timed out");
+        }
+        return {
+          status: "current",
+          installed_version: installedVersion,
+          source_version: installedVersion,
+          served_version: installedVersion,
+          reason: null,
+        };
+      },
+    },
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  revalidator.recheck();
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "current");
+
+  fail = true;
+  clock.advance(1000);
+  revalidator.recheck();
+  assert.equal(status.snapshot().versionStatus, "checking");
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "uncheckable");
+  assert.match(capture.formatStatusLines(status.snapshot()).refusal, /request timed out/);
+
+  status.recordDelivered("rendered-view");
+  assert.equal(
+    status.snapshot().versionStatus,
+    "uncheckable",
+    "capture success cannot clear update currency"
+  );
+});
+
+test("an older deferred currency response cannot overwrite a newer result", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.3", now: clock.now });
+  const pending = [];
+  const revalidator = capture.createVersionStatusRevalidator({
+    transport: {
+      userscriptStatus: () => new Promise((resolve) => pending.push(resolve)),
+    },
+    status,
+    installedVersion: "0.5.3",
+    now: clock.now,
+    minIntervalMs: 1000,
+  });
+
+  revalidator.recheck();
+  await flushMicrotasks();
+  clock.advance(1000);
+  revalidator.recheck();
+  await flushMicrotasks();
+  assert.equal(pending.length, 2);
+
+  pending[1]({
+    status: "update_available",
+    installed_version: "0.5.3",
+    source_version: "0.5.4",
+    served_version: "0.5.4",
+    reason: "installed_version_behind",
+  });
+  await flushMicrotasks();
+  assert.equal(status.snapshot().versionStatus, "update_available");
+
+  pending[0]({
+    status: "current",
+    installed_version: "0.5.3",
+    source_version: "0.5.3",
+    served_version: "0.5.3",
+    reason: null,
+  });
+  await flushMicrotasks();
+  assert.equal(
+    status.snapshot().versionStatus,
+    "update_available",
+    "only the latest request generation may publish"
+  );
+  assert.equal(status.snapshot().sourceVersion, "0.5.4");
 });
 
 test("an unrelated success cannot clear an automatic board refusal", async () => {
@@ -2499,6 +2732,13 @@ test("the status strip re-renders on real transitions and stays silent otherwise
   const doc = makeStripDocument();
   let clock = 1_000;
   const status = capture.createBridgeStatus({ version: "0.5.2", now: () => clock });
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.2",
+    source_version: "0.5.2",
+    served_version: "0.5.2",
+    reason: null,
+  });
   const strip = capture.installStatusStrip({ status, win, doc, now: () => clock });
   const { headline, detail, refusal } = stripNodes(strip);
 
@@ -2512,7 +2752,7 @@ test("the status strip re-renders on real transitions and stays silent otherwise
 
   status.observeContext({ paired: true });
   assert.equal(headline.textWrites.length, 2);
-  assert.match(headline.textContent, /\u00b7 paired$/);
+  assert.match(headline.textContent, /\u00b7 paired \u00b7 update current$/);
   assert.equal(detail.textContent, "no captures yet");
 
   status.recordDelivered("rendered-view");
@@ -2530,6 +2770,13 @@ test("the status strip writes text, never markup", async () => {
   const win = makeStripWindow();
   const doc = makeStripDocument();
   const status = capture.createBridgeStatus({ version: "0.5.2", now: () => 1 });
+  status.recordVersionStatus({
+    status: "current",
+    installed_version: "0.5.2",
+    source_version: "0.5.2",
+    served_version: "0.5.2",
+    reason: null,
+  });
   const strip = capture.installStatusStrip({ status, win, doc, now: () => 1 });
 
   // makeStripNode throws on any innerHTML assignment. A refusal message is

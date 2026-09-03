@@ -34091,3 +34091,58 @@ backlog graph and diff whitespace passed.
 **Next:** The bridge lane should call the resolver only on a Fantrax league
 page, render its existing feed fields, and surface both named 404/409 refusals;
 it must not fall back to `GET /drafts` or infer auction-board support.
+
+## 2026-09-03 — bridge, backend — Served userscript version contract
+
+**Changed:** Closed `userscript-served-version-check` and bumped the bridge to
+0.5.4. `userscript/package.json` is the source identity, `build.mjs` stamps it
+into the artifact's `@version`, and the backend parses the complete metadata
+block from the exact bytes requested at `GET /bridge/userscript.user.js`.
+Missing, unreadable, malformed, or source-mismatched artifacts are refused
+instead of served. The loopback-only, read-only
+`GET /bridge/userscript-status.json` contract compares an installed
+`GM_info.script.version` with source and served metadata. The Fantrax status
+strip renders explicit `update current`, `UPDATE AVAILABLE`, `UPDATE REFUSED`,
+`UPDATE STATUS UNCHECKABLE`, or checking state independently of capture
+success. The unified demo clears and replaces the package and artifact paths so
+ambient configuration cannot defeat isolation. The recorded OpenAPI contract
+and operator documentation describe this bridge/backend boundary.
+
+**Now true:** Tampermonkey cannot fetch stale repository-local artifact bytes as
+a successful update response: source/artifact disagreement returns 409, while
+a matching artifact is returned byte-for-byte with `Cache-Control: no-store`
+and its checked version header. The installed bridge checks all three versions
+at startup and revalidates while the Fantrax league tab is visible by borrowing
+the existing rendered-view context watcher; it adds no recurring timer and
+starts no more than one status request per minute. Navigation and visibility
+return reach the same bounded check. An expired status changes to checking
+before the request, and a failed or unreadable response becomes uncheckable
+rather than retaining `update current`. Monotonic request generations mean
+only the newest in-flight response can publish, so a late older response cannot
+overwrite newer status. Capture delivery remains unable to clear version
+state. None of this authenticates, mutates Fantrax, performs a draft action, or
+widens automation authority.
+
+Targeted tests drive matching, stale, missing, malformed, installed-behind,
+installed-ahead, long-lived-tab refresh, failed refresh, and out-of-order
+responses through the served route and status strip. The userscript's 100 tests
+and real build; frontend lint, type-check, 418 tests and production build; full
+backend lint, format, strict type-check and SQLite test suite; script lint and
+format; recorded OpenAPI, backlog graph, secret scan, document terminators,
+append-only containment and whitespace checks pass after rebasing onto
+`cc8b04aa6d7cb8c8291953a7db764f667028a2ad`. The handoff prefix is that exact
+main blob; this entry adds LF bytes only and preserves its inherited CR bytes.
+
+**Could not verify:** A real Tampermonkey install/update cycle and the rendered
+0.5.4 transitions in a live, long-lived Fantrax tab were not exercised. Hosted
+CI remains unverified until this repaired head is pushed; native PostgreSQL was
+not run locally. An installed pre-0.5.4 script cannot gain the in-page check
+until Tampermonkey installs 0.5.4 once, although backend refusal still prevents
+the stale artifact from being served. No external source, live account, model
+output, draft action, account write, ToS change, or Automation-gate surface was
+exercised or changed.
+
+**Next:** Review the repaired exact PR head cumulatively against `cc8b04aa`,
+require hosted Code-gate checks, then install 0.5.4 through the existing
+loopback update URL and verify a real current-to-update transition in a
+long-lived mock-draft tab before relying on the strip.

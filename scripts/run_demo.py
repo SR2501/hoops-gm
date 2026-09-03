@@ -38,6 +38,7 @@ _BACKEND_SETTING_NAMES = (
     "FANTRAX_COOKIE",
     "FANTRAX_COOKIE_KEY",
     "USERSCRIPT_DIST_PATH",
+    "USERSCRIPT_PACKAGE_PATH",
 )
 _DISABLE_DOTENV_ENV_VAR = "HOOPS_GM_DISABLE_DOTENV"
 
@@ -82,6 +83,7 @@ def _python_env(
             "CORS_ORIGINS": json.dumps([cors_origin]),
             "BRIDGE_SECRET_PATH": str(bridge_secret_path),
             "USERSCRIPT_DIST_PATH": str(REPO_ROOT / "userscript" / "dist" / "hoops-gm.user.js"),
+            "USERSCRIPT_PACKAGE_PATH": str(REPO_ROOT / "userscript" / "package.json"),
         }
     )
     if database_url is not None:

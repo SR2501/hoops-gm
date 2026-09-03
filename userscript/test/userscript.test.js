@@ -87,6 +87,36 @@ test("health check sends the stored secret and parses the response", async () =>
   assert.equal(requestOptions.headers["X-Bridge-Secret"], "a".repeat(64));
 });
 
+test("userscript status compares the installed build without exposing the bridge secret", async () => {
+  let requestOptions;
+  const bridge = await loadBridge();
+  const transport = bridge.createTransport({
+    storage: { get: () => "a".repeat(64), set: () => {} },
+    request: (options) => {
+      requestOptions = options;
+      options.onload({
+        status: 200,
+        responseText: JSON.stringify({
+          status: "current",
+          installed_version: "0.5.4",
+          source_version: "0.5.4",
+          served_version: "0.5.4",
+          reason: null,
+        }),
+      });
+    },
+  });
+
+  const result = await transport.userscriptStatus("0.5.4");
+
+  assert.equal(
+    requestOptions.url,
+    "http://127.0.0.1:8000/bridge/userscript-status.json?installed_version=0.5.4"
+  );
+  assert.equal(requestOptions.headers["X-Bridge-Secret"], undefined);
+  assert.equal(result.status, "current");
+});
+
 test("pairing is registered only through the explicit menu command and stores the returned secret", async () => {
   const bridge = await loadBridge();
   const values = new Map();

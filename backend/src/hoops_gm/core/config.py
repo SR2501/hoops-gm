@@ -85,11 +85,11 @@ class Settings(BaseSettings):
     # --- Userscript serving ---------------------------------------------------
     # One-time Tampermonkey install and its @updateURL/@downloadURL auto-update
     # target (ADR-010's follow-on: pairing already keeps the secret out of
-    # source control, and it must stay out of this build too). `npm run build`
-    # in userscript/ is what produces this file; it is gitignored and absent
-    # until then, which the serving route must report clearly rather than as a
-    # bare 404.
+    # source control, and it must stay out of this build too). `package.json`
+    # owns the source version; `npm run build` stamps it into the gitignored
+    # artifact. The serving route compares both paths before returning bytes.
     userscript_dist_path: Path = REPO_ROOT / "userscript" / "dist" / "hoops-gm.user.js"
+    userscript_package_path: Path = REPO_ROOT / "userscript" / "package.json"
 
     @field_validator("database_url")
     @classmethod
