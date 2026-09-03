@@ -1525,15 +1525,38 @@
       keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
   }
 
+  function isTimestamp(value) {
+    return typeof value === "string" &&
+      /(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+      !Number.isNaN(Date.parse(value));
+  }
+
   function isTimestampOrNull(value) {
-    return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
+    return value === null || isTimestamp(value);
+  }
+
+  function timestampsDifferBySeconds(newer, older, seconds) {
+    return Math.abs((Date.parse(newer) - Date.parse(older)) / 1000 - seconds) <= 0.01;
   }
 
   function isFiniteNonNegativeOrNull(value) {
     return value === null || (Number.isFinite(value) && value >= 0);
   }
 
-  function isFreshnessResponse(source) {
+  function isStringOrNull(value) {
+    return value === null || typeof value === "string";
+  }
+
+  function isStringArray(value) {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+  }
+
+  function isTransportArray(value) {
+    return isStringArray(value) &&
+      value.every((transport) => ["bridge_capture", "official_http"].includes(transport));
+  }
+
+  function isFreshnessResponse(source, asOf) {
     const keys = [
       "transport",
       "last_seen_at",
@@ -1584,6 +1607,21 @@
       return false;
     }
 
+    if (
+      (hasLastSeen &&
+        !timestampsDifferBySeconds(asOf, source.last_seen_at, source.age_seconds)) ||
+      (hasSourceClaim &&
+        !timestampsDifferBySeconds(
+          source.source_claimed_at,
+          source.last_seen_at,
+          source.claim_skew_seconds
+        )) ||
+      (hasContact &&
+        !timestampsDifferBySeconds(asOf, source.contact_at, source.contact_age_seconds))
+    ) {
+      return false;
+    }
+
     const ageForSilence = source.contact_is_known
       ? source.contact_age_seconds
       : source.age_seconds;
@@ -1592,11 +1630,11 @@
     return source.silent === expectedSilent;
   }
 
-  function isCompleteFreshness(value) {
+  function isCompleteFreshness(value, asOf) {
     if (
       !Array.isArray(value) ||
       value.length !== 2 ||
-      !value.every(isFreshnessResponse)
+      !value.every((source) => isFreshnessResponse(source, asOf))
     ) {
       return false;
     }
@@ -1604,6 +1642,110 @@
     return transports.size === 2 &&
       transports.has("bridge_capture") &&
       transports.has("official_http");
+  }
+
+  function isIndependenceResponse(value) {
+    const keys = [
+      "independent",
+      "reason",
+      "left_transports",
+      "right_transports",
+      "shared_artifacts",
+      "shared_transports",
+    ];
+    return hasExactKeys(value, keys) &&
+      typeof value.independent === "boolean" &&
+      typeof value.reason === "string" &&
+      isTransportArray(value.left_transports) &&
+      isTransportArray(value.right_transports) &&
+      isStringArray(value.shared_artifacts) &&
+      isTransportArray(value.shared_transports) &&
+      (!value.independent ||
+        (value.shared_artifacts.length === 0 && value.shared_transports.length === 0));
+  }
+
+  function isMatchResponse(value) {
+    return hasExactKeys(value, [
+      "player_label",
+      "key",
+      "bridge_artifact",
+      "official_artifact",
+    ]) &&
+      isStringOrNull(value.player_label) &&
+      typeof value.key === "string" &&
+      typeof value.bridge_artifact === "string" &&
+      typeof value.official_artifact === "string";
+  }
+
+  function isDisagreementResponse(value) {
+    return hasExactKeys(value, [
+      "player_label",
+      "field_name",
+      "bridge_value",
+      "official_value",
+      "bridge_artifact",
+      "official_artifact",
+    ]) &&
+      isStringOrNull(value.player_label) &&
+      typeof value.field_name === "string" &&
+      isStringOrNull(value.bridge_value) &&
+      isStringOrNull(value.official_value) &&
+      typeof value.bridge_artifact === "string" &&
+      typeof value.official_artifact === "string";
+  }
+
+  function isReconciliationResponse(value) {
+    if (value === null) {
+      return true;
+    }
+    const keys = [
+      "independence",
+      "witnessed_by_two_transports",
+      "agreements",
+      "unwitnessed_matches",
+      "disagreements",
+      "only_bridge",
+      "only_official",
+      "caveats",
+    ];
+    if (
+      !hasExactKeys(value, keys) ||
+      !isIndependenceResponse(value.independence) ||
+      !isNonNegativeInteger(value.witnessed_by_two_transports) ||
+      !Array.isArray(value.agreements) ||
+      !value.agreements.every(isMatchResponse) ||
+      !Array.isArray(value.unwitnessed_matches) ||
+      !value.unwitnessed_matches.every(isMatchResponse) ||
+      !Array.isArray(value.disagreements) ||
+      !value.disagreements.every(isDisagreementResponse) ||
+      !isStringArray(value.only_bridge) ||
+      !isStringArray(value.only_official) ||
+      !isStringArray(value.caveats) ||
+      value.witnessed_by_two_transports !== value.agreements.length
+    ) {
+      return false;
+    }
+    return value.independence.independent
+      ? value.unwitnessed_matches.length === 0
+      : value.agreements.length === 0 && value.witnessed_by_two_transports === 0;
+  }
+
+  function isBoardRegressionResponse(value) {
+    return hasExactKeys(value, [
+      "source_seat",
+      "round_number",
+      "pick_in_round",
+      "player_label",
+      "last_seen_artifact_key",
+    ]) &&
+      isNonNegativeInteger(value.source_seat) &&
+      value.source_seat > 0 &&
+      isNonNegativeInteger(value.round_number) &&
+      value.round_number > 0 &&
+      isNonNegativeInteger(value.pick_in_round) &&
+      value.pick_in_round > 0 &&
+      isStringOrNull(value.player_label) &&
+      typeof value.last_seen_artifact_key === "string";
   }
 
   function isConsistentSkipPartition(report) {
@@ -1669,22 +1811,29 @@
   }
 
   function isFeedStatusResponse(report) {
-    return Boolean(report) &&
+    return hasExactKeys(report, [
+      "draft_id",
+      "as_of",
+      "context_unavailable",
+      "freshness",
+      "reconciliation",
+      "observation_count",
+      "applied_count",
+      "pending_count",
+      "blocked",
+      "retryable",
+      "skipped",
+      "skipped_by_participant",
+      "unattributed_skipped",
+      "last_sequence",
+      "board_regressions",
+    ]) &&
       isNonNegativeInteger(report.draft_id) &&
       report.draft_id > 0 &&
-      typeof report.as_of === "string" &&
-      !Number.isNaN(Date.parse(report.as_of)) &&
+      isTimestamp(report.as_of) &&
       (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
-      isCompleteFreshness(report.freshness) &&
-      (report.reconciliation === null ||
-        (typeof report.reconciliation === "object" &&
-          report.reconciliation !== null &&
-          Array.isArray(report.reconciliation.disagreements) &&
-          Array.isArray(report.reconciliation.only_bridge) &&
-          Array.isArray(report.reconciliation.only_official) &&
-          Array.isArray(report.reconciliation.caveats) &&
-          report.reconciliation.independence &&
-          typeof report.reconciliation.independence.independent === "boolean")) &&
+      isCompleteFreshness(report.freshness, report.as_of) &&
+      isReconciliationResponse(report.reconciliation) &&
       isNonNegativeInteger(report.observation_count) &&
       isNonNegativeInteger(report.applied_count) &&
       isNonNegativeInteger(report.pending_count) &&
@@ -1693,7 +1842,8 @@
       isReasonMap(report.retryable) &&
       isConsistentSkipPartition(report) &&
       isNonNegativeInteger(report.last_sequence) &&
-      Array.isArray(report.board_regressions);
+      Array.isArray(report.board_regressions) &&
+      report.board_regressions.every(isBoardRegressionResponse);
   }
 
   /**

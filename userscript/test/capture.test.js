@@ -3249,6 +3249,128 @@ test("feed validation enforces the complete freshness contract and clock relatio
   }
 });
 
+test("feed validation reconciles freshness ages with the status clock", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const freshness = makeFeedStatus().freshness.map((source) => ({
+    ...source,
+    last_seen_at: "2026-09-01T13:59:58Z",
+    ...(source.contact_is_known ? { contact_at: "2026-09-01T13:59:59Z" } : {}),
+  }));
+
+  status.recordFeedStatus(makeFeedStatus({ freshness }), "league-one");
+  const lines = capture.formatStatusLines({
+    ...status.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(status.snapshot().feedStatus, "uncheckable");
+  assert.equal(status.snapshot().feedReport, null);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed validation rejects malformed reconciliation and board-regression contracts", async () => {
+  const capture = await loadCapture();
+  const match = {
+    player_label: "Player One",
+    key: "player-one",
+    bridge_artifact: "bridge:1",
+    official_artifact: "official:1",
+  };
+  const independence = {
+    independent: true,
+    reason: "separate transports",
+    left_transports: ["bridge_capture"],
+    right_transports: ["official_http"],
+    shared_artifacts: [],
+    shared_transports: [],
+  };
+  const validReconciliation = {
+    independence,
+    witnessed_by_two_transports: 1,
+    agreements: [match],
+    unwitnessed_matches: [],
+    disagreements: [],
+    only_bridge: [],
+    only_official: [],
+    caveats: [],
+  };
+  const invalidReports = [
+    [
+      "truncated reconciliation",
+      makeFeedStatus({
+        reconciliation: {
+          independence: { independent: true },
+          disagreements: [],
+          only_bridge: [],
+          only_official: [],
+          caveats: [],
+        },
+      }),
+    ],
+    [
+      "witness count mismatch",
+      makeFeedStatus({
+        reconciliation: { ...validReconciliation, witnessed_by_two_transports: 0 },
+      }),
+    ],
+    [
+      "unwitnessed match despite independence",
+      makeFeedStatus({
+        reconciliation: { ...validReconciliation, unwitnessed_matches: [match] },
+      }),
+    ],
+    [
+      "malformed nested match",
+      makeFeedStatus({
+        reconciliation: {
+          ...validReconciliation,
+          agreements: [{ ...match, bridge_artifact: 1 }],
+        },
+      }),
+    ],
+    [
+      "malformed board regression",
+      makeFeedStatus({
+        board_regressions: [{ source_seat: 1 }],
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(report, "league-one");
+    assert.equal(status.snapshot().feedStatus, "uncheckable", name);
+    assert.equal(status.snapshot().feedReport, null, name);
+  }
+
+  const validStatus = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  validStatus.recordFeedStatus(
+    makeFeedStatus({
+      reconciliation: validReconciliation,
+      board_regressions: [
+        {
+          source_seat: 1,
+          round_number: 1,
+          pick_in_round: 1,
+          player_label: "Player One",
+          last_seen_artifact_key: "bridge:1",
+        },
+      ],
+    }),
+    "league-one"
+  );
+  assert.equal(validStatus.snapshot().feedStatus, "available");
+  const validLines = capture.formatStatusLines({
+    ...validStatus.snapshot(),
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.match(validLines.refusal, /BOARD REGRESSION/);
+  assert.equal(validLines.ok, false);
+});
+
 test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
   const capture = await loadCapture();
   const participant = (overrides = {}) => ({

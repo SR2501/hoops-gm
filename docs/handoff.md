@@ -34350,3 +34350,15 @@ Validation now requires exactly those two distinct transports after validating
 each entry. Focused cases cover empty, missing, duplicate, unknown, and malformed
 sources; the full userscript suite remains **119/119**. Fresh exact-head review
 is required again after this follow-up commit. Live boundaries are unchanged.
+**Third review addendum:** Exact-head review of `3d1adbb` found two adjacent
+false-green paths: source ages were not recomputed from the response `as_of`
+clock, and reconciliation nested objects were only partially shaped. The
+validator now requires timezone-bearing timestamps and reproduces instant age,
+contact age, and signed claim skew within 0.01 seconds. It also validates exact
+top-level, reconciliation, independence, agreement, disagreement, and board-
+regression shapes, including witnessed-count and independent/unwitnessed
+consistency. Tests drive stale timestamps with falsely small ages, the truncated
+reconciliation reproduction, nested and count contradictions, malformed board
+regressions, and a complete valid reconciliation/regression. The full userscript
+suite now passes **121/121**. Another exact-head cumulative review is required
+after this commit; live boundaries remain unchanged.

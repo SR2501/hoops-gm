@@ -422,7 +422,11 @@ to the aggregate by reason. A malformed or inconsistent partition invalidates
 the whole response rather than salvaging its aggregate.
 Freshness entries are likewise accepted only with the complete backend shape,
 paired timestamps and ages, and a `silent` value consistent with the backend's
-instant/contact clock rule; malformed freshness cannot produce a green strip.
+instant/contact clock rule. Reported ages and claim skew must reproduce from the
+timestamps and feed `as_of` clock. Both expected source transports must appear
+exactly once. Reconciliation and board-regression entries are validated through
+their complete nested contracts; malformed status evidence cannot produce a
+green strip.
 
 Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
 and adds no recurring timer. It starts at most one request per minute for an
