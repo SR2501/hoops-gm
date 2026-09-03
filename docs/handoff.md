@@ -34422,3 +34422,20 @@ and frontend lint/type-check/**418/418**/build plus scripts ESLint all pass. Thi
 remains Code-only: no write path or authority changed. Fresh exact-head review
 and hosted checks are still required. Live Fantrax, Tampermonkey, persisted-draft
 mapping, and draft-clock behavior remain unverified.
+**Ninth review addendum:** Review of `e426c92` disproved the preceding
+entry's inherited premise against the actual producer: linked
+`duplicate_within_run` and `already_in_log` rows carried both
+`applied_event_sequence` and a permanent skip, so `applied_count` overlapped
+`skipped`. The backend now preserves that provenance linkage but publishes a
+disjoint applied count, and real ingest/apply plus resolver-route tests prove
+`observed = applied + pending + permanent skipped` for corroboration and
+owner-typed history. The userscript accepts that real four-observation shape.
+Review also flagged a possible status-strip/capture mutation feedback loop.
+Shadow content is outside the document observer and host style attributes were
+not watched, but the watcher now additionally tags the host and ignores any
+status-owned mutation record, with an integration test proving ordinary Fantrax
+mutations still capture. Userscript tests/build pass (**126/126**); focused
+backend producer/route tests and the cumulative backend/Ruff/format/mypy/full
+pytest, scripts, OpenAPI, backlog, frontend and prior document gates pass. This
+is still Code-only read/status behavior. Fresh exact-head review and hosted
+checks remain required; live boundaries are unchanged.

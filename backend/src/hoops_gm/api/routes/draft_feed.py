@@ -296,6 +296,8 @@ class FeedStatusResponse(BaseModel):
     freshness: list[FreshnessOut]
     reconciliation: ReconciliationOut | None
     observation_count: int
+    #: Disjoint terminal disposition count. A permanently skipped observation
+    #: is not applied here even when it retains event linkage for provenance.
     applied_count: int
     pending_count: int
     #: Reasons the last apply run stopped without consuming a still-pending row.

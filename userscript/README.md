@@ -386,8 +386,10 @@ Design constraints, all of them testable:
   one-second context check and suppresses DOM writes when its rendered text is
   unchanged. That tick also ages the server's `as_of` and source clocks, so a
   report turns stale or silent between minute-floor refreshes instead of keeping
-  its receipt-time green state. Adding a status interval right after removing
-  the Cache Storage interval would have been a wash.
+  its receipt-time green state. The rendered-view observer ignores mutations
+  owned by the strip host, so status updates cannot schedule their own next
+  capture. Adding a status interval right after removing the Cache Storage
+  interval would have been a wash.
 - **Text only, never markup.** Refusal text is capture-derived and is written
   with `textContent`; any secret-shaped token in it is redacted first.
 - **It shows no number a decision rests on.** No price, no value, no suggested

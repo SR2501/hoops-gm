@@ -3483,6 +3483,150 @@ def test_two_pipes_naming_one_player_produce_one_pick_and_a_witness(session: Ses
     assert status.reconciliation.witnessed_by_two_transports == 1
 
 
+def _status_conservation_draft(session: Session) -> tuple[Draft, int]:
+    """Produce linked permanent skips through the real ingest/apply path."""
+
+    class Official:
+        def get_draft_picks_with_provenance(
+            self, league_id: str, *, max_age: timedelta | None = None
+        ) -> tuple[list[FantraxDraftPick], str, datetime]:
+            return (
+                [
+                    FantraxDraftPick(
+                        team_id="t1",
+                        player_id=None,
+                        player_name=JOKIC,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=50.0,
+                    ),
+                    FantraxDraftPick(
+                        team_id="t2",
+                        player_id=None,
+                        player_name=EDWARDS,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=40.0,
+                    ),
+                ],
+                "status-conservation-official",
+                NOW,
+            )
+
+    draft = _auction_draft(session)
+    typed = draft_service.record_sale(
+        session,
+        draft,
+        participant_id=draft.participants[0].id,
+        amount=Decimal("50.00"),
+        player_label=JOKIC,
+        note="the owner typed it",
+    )
+    typed_sequence = typed.last_sequence
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "winningBid": 50},
+            {"teamId": "t2", "playerName": EDWARDS, "winningBid": 40},
+        ],
+        dedupe_key="status-conservation-bridge",
+    )
+    feed_service.ingest(session, draft, client=Official())
+    outcome = feed_service.apply_observations(session, draft)
+    assert [event.player_label for event in outcome.applied] == [EDWARDS]
+    return draft, typed_sequence
+
+
+def test_feed_status_conserves_linked_corroboration_and_already_in_log_rows(
+    session: Session,
+) -> None:
+    """Event linkage does not make a permanent skip an applied disposition."""
+    draft, typed_sequence = _status_conservation_draft(session)
+
+    rows = feed_service.load_observations(session, draft)
+    already_in_log = [row for row in rows if row.skipped_reason == "already_in_log"]
+    duplicate = next(row for row in rows if row.skipped_reason == "duplicate_within_run")
+    applied = next(row for row in rows if row.skipped_reason is None)
+
+    assert len(already_in_log) == 2
+    assert {row.applied_event_sequence for row in already_in_log} == {typed_sequence}
+    assert duplicate.applied_event_sequence == applied.applied_event_sequence
+    assert applied.applied_event_sequence is not None
+
+    status = feed_service.feed_status(session, draft, now=NOW)
+    permanent_skipped = sum(count for _reason, count in status.skipped)
+    assert status.observation_count == 4
+    assert status.applied_count == 1
+    assert status.pending_count == 0
+    assert dict(status.skipped) == {"already_in_log": 2, "duplicate_within_run": 1}
+    assert (
+        status.observation_count == status.applied_count + status.pending_count + permanent_skipped
+    )
+
+
+def test_fantrax_feed_status_route_publishes_the_conserved_userscript_shape(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """The userscript route publishes the same disjoint disposition contract."""
+    draft, _typed_sequence = _status_conservation_draft(session)
+    session.commit()
+
+    response = client.get(
+        "/api/v1/drafts/by-fantrax-league/feed",
+        params={"fantrax_league_id": LEAGUE},
+    )
+
+    assert response.status_code == 200, response.text
+    document = response.json()
+    assert set(document) == {
+        "draft_id",
+        "as_of",
+        "context_unavailable",
+        "freshness",
+        "reconciliation",
+        "observation_count",
+        "applied_count",
+        "pending_count",
+        "blocked",
+        "retryable",
+        "skipped",
+        "skipped_by_participant",
+        "unattributed_skipped",
+        "last_sequence",
+        "board_regressions",
+    }
+    assert document["draft_id"] == draft.id
+    assert document["observation_count"] == 4
+    assert document["applied_count"] == 1
+    assert document["pending_count"] == 0
+    assert document["blocked"] == []
+    assert document["retryable"] == {}
+    assert document["skipped"] == {"already_in_log": 2, "duplicate_within_run": 1}
+    assert document["skipped_by_participant"] == [
+        {
+            "participant_id": draft.participants[0].id,
+            "team_slot": 1,
+            "total": 2,
+            "reasons": {"already_in_log": 2},
+        },
+        {
+            "participant_id": draft.participants[1].id,
+            "team_slot": 2,
+            "total": 1,
+            "reasons": {"duplicate_within_run": 1},
+        },
+    ]
+    assert document["unattributed_skipped"] == {}
+    permanent_skipped = sum(document["skipped"].values())
+    assert (
+        document["observation_count"]
+        == document["applied_count"] + document["pending_count"] + permanent_skipped
+    )
+
+
 # --------------------------------------------------------------------------
 # 5. the HTTP surface
 # --------------------------------------------------------------------------
@@ -4442,7 +4586,9 @@ def test_a_blocked_contradiction_is_reported_on_the_polled_status(
     feed_service.apply_observations(session, draft)
 
     status = feed_service.feed_status(session, draft)
-    assert status.pending_count > 0
+    assert status.applied_count == 0
+    assert status.pending_count == 2
+    assert status.observation_count == status.applied_count + status.pending_count
     assert any(reason.startswith("sources_disagree:") for reason in status.blocked)
 
 
@@ -5966,9 +6112,12 @@ def test_a_roster_full_row_retries_after_the_causative_sale_is_voided(
     assert third.applied_event_sequence is None
 
     refused = feed_service.feed_status(session, draft)
+    assert refused.observation_count == 3
+    assert refused.applied_count == 2
     assert refused.pending_count == 1
     assert dict(refused.retryable) == {"draft_roster_full": 1}
     assert refused.skipped == ()
+    assert refused.observation_count == refused.applied_count + refused.pending_count
     session.commit()
     status_document = client.get(f"/api/v1/drafts/{draft.id}/feed")
     assert status_document.status_code == 200, status_document.text

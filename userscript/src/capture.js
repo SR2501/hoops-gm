@@ -32,6 +32,7 @@
   const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
   const VERSION_STATUS_MIN_INTERVAL_MS = 60000;
   const FEED_STATUS_MIN_INTERVAL_MS = 60000;
+  const STATUS_STRIP_HOST_MARKER = Symbol("hoops-gm-status-strip-host");
   const FANTRAX_LEAGUE_ID = /^[A-Za-z0-9-]{1,64}$/;
   const DRAFT_PAGE_PATH = /\/draft(?:\/|$)/;
   const DRAFT_BOARD_ROOT_SELECTOR = ".league-draft-board";
@@ -2577,6 +2578,7 @@
       if (typeof host.attachShadow !== "function") {
         return notInstalled;
       }
+      host[STATUS_STRIP_HOST_MARKER] = true;
       applyStyles(host, STATUS_HOST_STYLES);
       shadow = host.attachShadow({ mode: "closed" });
       box = doc.createElement("div");
@@ -2927,6 +2929,41 @@
       return true;
     }
 
+    function belongsToStatusStrip(node) {
+      let current = node;
+      const visited = new Set();
+      while (current && !visited.has(current)) {
+        if (current[STATUS_STRIP_HOST_MARKER] === true) {
+          return true;
+        }
+        visited.add(current);
+        if (typeof current.getRootNode === "function") {
+          const root = current.getRootNode();
+          if (root && root.host && root.host !== current) {
+            current = root.host;
+            continue;
+          }
+        }
+        current = current.parentNode;
+      }
+      return false;
+    }
+
+    function mutationsBelongOnlyToStatusStrip(records) {
+      return Array.isArray(records) &&
+        records.length > 0 &&
+        records.every((record) => {
+          if (belongsToStatusStrip(record && record.target)) {
+            return true;
+          }
+          const changed = [
+            ...Array.from((record && record.addedNodes) || []),
+            ...Array.from((record && record.removedNodes) || []),
+          ];
+          return changed.length > 0 && changed.every(belongsToStatusStrip);
+        });
+    }
+
     function attachObserver() {
       if (
         observing ||
@@ -2936,7 +2973,10 @@
         return;
       }
       try {
-        observer = new observerType(() => {
+        observer = new observerType((records) => {
+          if (mutationsBelongOnlyToStatusStrip(records)) {
+            return;
+          }
           requestSnapshot("mutation");
         });
         observer.observe(doc.documentElement, { childList: true, subtree: true });

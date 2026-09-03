@@ -1780,6 +1780,7 @@ test("a mutation during an in-flight snapshot is rate-limited from attempt start
           return new Promise((resolve) => {
             resolveFirst = resolve;
           });
+
         }
         return true;
       },
@@ -1826,6 +1827,73 @@ test("a mutation during an in-flight snapshot is rate-limited from attempt start
   await flushMicrotasks();
   assert.equal(calls, 2);
   watcher.uninstall();
+});
+
+test("the rendered-view observer ignores status-strip-owned mutations", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: clock.now });
+  const doc = makeStripDocument();
+  const snapshotRoot = makeDynamicRoot(() => "players");
+  doc.querySelector = (selector) => (selector === "main" ? snapshotRoot : null);
+  const win = {
+    ...makeStripWindow("https://www.fantrax.com/fantasy/league/abc/players"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  let observerCallback;
+  class FakeMutationObserver {
+    constructor(callback) {
+      observerCallback = callback;
+    }
+    observe() {}
+    disconnect() {}
+  }
+  let snapshots = 0;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async () => {},
+  };
+  const strip = capture.installStatusStrip({ status, win, doc, now: clock.now });
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: {
+      captureRenderedView: async () => {
+        snapshots += 1;
+        return true;
+      },
+    },
+    transport,
+    win,
+    doc,
+    MutationObserverCtor: FakeMutationObserver,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 0,
+    maxSettleMs: 0,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 1000,
+  });
+
+  clock.advance(0);
+  await flushMicrotasks();
+  assert.equal(snapshots, 1);
+
+  observerCallback([{ target: strip.host, addedNodes: [], removedNodes: [] }]);
+  clock.advance(1000);
+  await flushMicrotasks();
+  assert.equal(snapshots, 1, "status rendering must not schedule its own next snapshot");
+
+  observerCallback([{ target: doc.body, addedNodes: [], removedNodes: [] }]);
+  clock.advance(1000);
+  await flushMicrotasks();
+  assert.equal(snapshots, 2, "ordinary Fantrax DOM changes still schedule capture");
+
+  watcher.uninstall();
+  strip.uninstall();
 });
 
 test("an older rendered-view completion cannot clear a newer board refusal", async () => {
@@ -3634,6 +3702,34 @@ test("feed validation conserves every observation across terminal dispositions",
   const status = capture.createBridgeStatus({ version: "0.5.5" });
   status.recordFeedStatus(valid, "league-one");
   assert.equal(status.snapshot().feedStatus, "available");
+
+  const corroborated = makeFeedStatus({
+    observation_count: 4,
+    applied_count: 1,
+    pending_count: 0,
+    skipped: { already_in_log: 2, duplicate_within_run: 1 },
+    skipped_by_participant: [
+      {
+        participant_id: 101,
+        team_slot: 1,
+        total: 2,
+        reasons: { already_in_log: 2 },
+      },
+      {
+        participant_id: 102,
+        team_slot: 2,
+        total: 1,
+        reasons: { duplicate_within_run: 1 },
+      },
+    ],
+    unattributed_skipped: {},
+  });
+  status.recordFeedStatus(corroborated, "league-one");
+  assert.equal(
+    status.snapshot().feedStatus,
+    "available",
+    "linked corroboration remains a permanent skip, not a second applied disposition"
+  );
 
   const invalidReports = [
     [
