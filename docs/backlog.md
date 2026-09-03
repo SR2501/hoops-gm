@@ -3418,10 +3418,12 @@ counterexample to completeness, not permission to scrape one-off prose into an
 interval. More generally, the NBA archive has no structured contract-expiration,
 retirement, suspension, assignment, or recall event; the G League archive has
 no suspension event; neither supplies an effective time for same-date
-boundaries; official CBA assignment semantics depend on in-person reporting
-instants the feed does not publish; and a six-team live `CommonTeamRoster`
-check omitted the transient Conley and Wiseman stints it would need to repair.
-Those are measured source-contract gaps, not permission to infer an interval.
+boundaries; official CBA assignment starts and recalled returns depend on
+in-person reporting instants the feed does not publish, while G League season
+conclusion is a separate end condition; and a six-team live
+`CommonTeamRoster` check omitted the transient Conley and Wiseman stints it
+would need to repair. Those are measured source-contract gaps, not permission
+to infer an interval.
 
 Therefore a complete independent denominator still cannot be enumerated,
 `unknown_share` is not calculable, and no public opportunity envelope or

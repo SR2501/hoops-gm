@@ -185,9 +185,10 @@ player's G League assignment. The official
 and
 [2023 CBA](https://imgix.cosmicjs.com/25da5eb0-15eb-11ee-b5b3-fbd321202bdf-Final-2023-NBA-Collective-Bargaining-Agreement-6-28-23.pdf)
 define that interval by when the player reports in person to the affiliate and
-reports back after recall. The transaction feed does not publish those
-reporting instants, so an `Assigned` or `Recalled` notice cannot itself
-establish game-specific NBA eligibility.
+ends it when the player reports back after recall or when the G League season
+concludes. The transaction feed does not publish the reporting instants, so an
+`Assigned` or `Recalled` notice cannot itself establish game-specific NBA
+eligibility.
 
 A six-team 2025-26 `CommonTeamRoster` feasibility probe also disproved the
 tempting fallback: transient Conley stints with Chicago and Charlotte and
