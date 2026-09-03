@@ -34279,3 +34279,49 @@ contract may refuse a future Fantrax identifier outside the measured alphabet.
 checks, then drive at least one permanent-skip fixture through the rehearsal
 browser strip before trusting the warning under a pick clock. Do not merge from
 this session.
+---
+
+## 2026-09-03 - bridge - Rejecting inconsistent feed skip partitions
+
+**Correction:** The prior permanent-skip repair trusted the aggregate `skipped`
+map after checking only that `skipped_by_participant` was an array. A malformed
+200 with `skipped: {}` and a participant carrying
+`player_external_id_unreadable: 1` was therefore accepted and could still render
+`skipped 0` with no feed warning.
+
+**Changed:** Feed response validation now requires every participant skip entry
+to contain exactly `participant_id`, `team_slot`, `total`, and `reasons`, with
+positive safe-integer identifiers/slots and nonnegative safe-integer counts.
+Each participant total must equal its reason-count sum. `unattributed_skipped`
+and aggregate `skipped` must be nonnegative-integer reason maps. Participant and
+unattributed counts are accumulated by reason and must exactly equal aggregate
+keys and counts as well as the overall total; missing, extra, malformed,
+negative, fractional, string, or overflowed values invalidate the whole
+response. Nothing is coerced or salvaged.
+
+**Now true:** An invalid partition clears prior count evidence when refresh
+starts, settles as `FEED STATUS UNCHECKABLE: invalid local feed status response`,
+and remains non-healthy. Focused tests cover the reported false green, extra
+aggregate and partition reasons (including zero-count extra keys), unattributed-
+only skips, participant total mismatch, negative/fractional/string counts,
+object/array and participant-shape failures, a valid multi-participant plus
+unattributed partition, and a valid zero partition. Replacing reconciliation
+with the former array-only checks makes the reported refresh test fail by
+publishing `available`; restoring it passes **117/117 userscript tests**.
+
+The cumulative local Code gate also passes backend Ruff, format, strict mypy and
+full pytest; frontend lint, type-check, **418/418 tests**, build and repository
+JavaScript lint; userscript build; recorded OpenAPI, backlog graph, secret scan,
+and document terminators. This remains read-only evidence and Code-gate-only;
+no cadence, race guard, identifier contract, action, account write, authority,
+price, recommendation, or auction support changed.
+
+**Could not verify:** No live Fantrax draft, real persisted Draft mapping,
+long-lived Tampermonkey navigation, backend disconnect, changing real feed, or
+malformed live backend response was exercised. Hosted checks and fresh exact-
+head cumulative review remain pending until the new commit is pushed.
+
+**Next:** Require fresh cumulative review and hosted Code-gate checks on the new
+exact PR head, then exercise an inconsistent partition against the rehearsal
+browser before relying on this fail-closed state under a pick clock. Do not
+merge from this session.

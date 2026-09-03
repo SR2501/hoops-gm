@@ -1487,6 +1487,106 @@
       Object.values(value).every(isNonNegativeInteger);
   }
 
+  function reasonEntries(value) {
+    if (!isReasonMap(value)) {
+      return null;
+    }
+    return Object.entries(value);
+  }
+
+  function addReasonCounts(target, entries) {
+    for (const [reason, count] of entries) {
+      const next = (target.get(reason) || 0) + count;
+      if (!Number.isSafeInteger(next)) {
+        return false;
+      }
+      target.set(reason, next);
+    }
+    return true;
+  }
+
+  function sameReasonCounts(left, right) {
+    if (left.size !== right.size) {
+      return false;
+    }
+    for (const [reason, count] of left) {
+      if (right.get(reason) !== count) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function hasExactKeys(value, keys) {
+    return Boolean(value) &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === keys.length &&
+      keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+  }
+
+  function isConsistentSkipPartition(report) {
+    const aggregateEntries = reasonEntries(report.skipped);
+    const unattributedEntries = reasonEntries(report.unattributed_skipped);
+    if (
+      aggregateEntries === null ||
+      unattributedEntries === null ||
+      !Array.isArray(report.skipped_by_participant)
+    ) {
+      return false;
+    }
+
+    const aggregate = new Map();
+    const partitioned = new Map();
+    if (
+      !addReasonCounts(aggregate, aggregateEntries) ||
+      !addReasonCounts(partitioned, unattributedEntries)
+    ) {
+      return false;
+    }
+    let partitionTotal = unattributedEntries.reduce((total, [, count]) => total + count, 0);
+    if (!Number.isSafeInteger(partitionTotal)) {
+      return false;
+    }
+
+    const participantKeys = ["participant_id", "team_slot", "total", "reasons"];
+    for (const participant of report.skipped_by_participant) {
+      if (
+        !hasExactKeys(participant, participantKeys) ||
+        !isNonNegativeInteger(participant.participant_id) ||
+        participant.participant_id === 0 ||
+        !isNonNegativeInteger(participant.team_slot) ||
+        participant.team_slot === 0 ||
+        !isNonNegativeInteger(participant.total)
+      ) {
+        return false;
+      }
+      const participantReasonEntries = reasonEntries(participant.reasons);
+      if (participantReasonEntries === null) {
+        return false;
+      }
+      const participantTotal = participantReasonEntries.reduce(
+        (total, [, count]) => total + count,
+        0
+      );
+      if (!Number.isSafeInteger(participantTotal) || participant.total !== participantTotal) {
+        return false;
+      }
+      partitionTotal += participantTotal;
+      if (
+        !Number.isSafeInteger(partitionTotal) ||
+        !addReasonCounts(partitioned, participantReasonEntries)
+      ) {
+        return false;
+      }
+    }
+
+    const aggregateTotal = aggregateEntries.reduce((total, [, count]) => total + count, 0);
+    return Number.isSafeInteger(aggregateTotal) &&
+      aggregateTotal === partitionTotal &&
+      sameReasonCounts(aggregate, partitioned);
+  }
+
   function isFeedStatusResponse(report) {
     return Boolean(report) &&
       isNonNegativeInteger(report.draft_id) &&
@@ -1518,9 +1618,7 @@
       Array.isArray(report.blocked) &&
       report.blocked.every((reason) => typeof reason === "string") &&
       isReasonMap(report.retryable) &&
-      isReasonMap(report.skipped) &&
-      Array.isArray(report.skipped_by_participant) &&
-      isReasonMap(report.unattributed_skipped) &&
+      isConsistentSkipPartition(report) &&
       isNonNegativeInteger(report.last_sequence) &&
       Array.isArray(report.board_regressions);
   }

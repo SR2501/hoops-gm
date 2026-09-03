@@ -415,7 +415,11 @@ therefore prevents a healthy feed state. The strip renders **FEED SKIPPED**
 followed by every reason and count in deterministic lexical order. There is no
 benign-reason allowlist: even dedupe-shaped reasons can represent a missed pick
 when identity was wrong. A zero-valued reason contributes neither to the total
-nor to the warning.
+nor to the warning. Before any count can publish, each participant entry must
+carry the exact identifier, slot, total and reason-map shape; participant totals
+and the complete participant-plus-unattributed partition must reconcile exactly
+to the aggregate by reason. A malformed or inconsistent partition invalidates
+the whole response rather than salvaging its aggregate.
 
 Feed refresh borrows the rendered-view watcher's existing visible-page lifecycle
 and adds no recurring timer. It starts at most one request per minute for an

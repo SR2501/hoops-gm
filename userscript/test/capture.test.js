@@ -3105,6 +3105,232 @@ test("feed revalidation rejects malformed success and capture or update changes 
   );
 });
 
+test("feed refresh rejects a participant skip omitted from the aggregate", async () => {
+  const capture = await loadCapture();
+  const url = "https://www.fantrax.com/fantasy/league/league-one/draft";
+  const malformed = makeFeedStatus({
+    skipped: {},
+    skipped_by_participant: [
+      {
+        participant_id: 101,
+        team_slot: 1,
+        total: 1,
+        reasons: { player_external_id_unreadable: 1 },
+      },
+    ],
+    unattributed_skipped: {},
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  status.recordFeedStatus(makeFeedStatus(), "league-one");
+  assert.equal(status.snapshot().feedStatus, "available");
+
+  const revalidator = capture.createFeedStatusRevalidator({
+    transport: { draftFeedStatus: async () => malformed },
+    status,
+    readCurrentUrl: () => url,
+  });
+  revalidator.recheck(url);
+  assert.equal(status.snapshot().feedReport, null, "refresh start clears prior green evidence");
+  await flushMicrotasks();
+
+  const snapshot = status.snapshot();
+  const lines = capture.formatStatusLines({
+    ...snapshot,
+    paired: true,
+    versionStatus: "current",
+  });
+  assert.equal(snapshot.feedStatus, "uncheckable");
+  assert.equal(snapshot.feedReport, null);
+  assert.match(lines.feed, /status uncheckable/);
+  assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/);
+  assert.doesNotMatch(lines.feed, /skipped 0/);
+  assert.equal(lines.ok, false);
+});
+
+test("feed validation rejects every malformed or unreconciled permanent-skip partition", async () => {
+  const capture = await loadCapture();
+  const participant = (overrides = {}) => ({
+    participant_id: 101,
+    team_slot: 1,
+    total: 1,
+    reasons: { player_external_id_unreadable: 1 },
+    ...overrides,
+  });
+  const invalidReports = [
+    [
+      "extra aggregate reason",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1, sale_without_amount: 1 },
+        skipped_by_participant: [participant()],
+      }),
+    ],
+    [
+      "zero-count aggregate reason missing from partition",
+      makeFeedStatus({ skipped: { player_external_id_unreadable: 0 } }),
+    ],
+    [
+      "extra partition reason",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1 },
+        skipped_by_participant: [participant()],
+        unattributed_skipped: { sale_without_amount: 1 },
+      }),
+    ],
+    [
+      "zero-count partition reason missing from aggregate",
+      makeFeedStatus({ unattributed_skipped: { player_external_id_unreadable: 0 } }),
+    ],
+    [
+      "participant total mismatch",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 1 },
+        skipped_by_participant: [participant({ total: 2 })],
+      }),
+    ],
+    ["negative aggregate count", makeFeedStatus({ skipped: { invalid: -1 } })],
+    [
+      "fractional participant count",
+      makeFeedStatus({
+        skipped: { invalid: 1.5 },
+        skipped_by_participant: [
+          participant({ total: 1.5, reasons: { invalid: 1.5 } }),
+        ],
+      }),
+    ],
+    [
+      "string unattributed count",
+      makeFeedStatus({
+        skipped: { invalid: 1 },
+        unattributed_skipped: { invalid: "1" },
+      }),
+    ],
+    ["aggregate array", makeFeedStatus({ skipped: [] })],
+    ["unattributed array", makeFeedStatus({ unattributed_skipped: [] })],
+    ["malformed participant", makeFeedStatus({ skipped_by_participant: [null] })],
+    [
+      "participant reason array",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ total: 0, reasons: [] })],
+      }),
+    ],
+    [
+      "participant with extra field",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ unexpected: true })],
+      }),
+    ],
+    [
+      "invalid participant identifier",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ participant_id: "101", total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "invalid participant slot",
+      makeFeedStatus({
+        skipped_by_participant: [participant({ team_slot: 0, total: 0, reasons: {} })],
+      }),
+    ],
+  ];
+
+  for (const [name, report] of invalidReports) {
+    const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+    status.recordFeedStatus(makeFeedStatus(), "league-one");
+    assert.equal(status.snapshot().feedStatus, "available", `${name}: valid baseline`);
+
+    status.recordFeedStatus(report, "league-one");
+    const snapshot = status.snapshot();
+    const lines = capture.formatStatusLines({
+      ...snapshot,
+      paired: true,
+      versionStatus: "current",
+    });
+    assert.equal(snapshot.feedStatus, "uncheckable", name);
+    assert.equal(snapshot.feedReport, null, `${name}: prior count evidence must clear`);
+    assert.match(lines.feed, /status uncheckable/, name);
+    assert.match(lines.refusal, /FEED STATUS UNCHECKABLE: invalid local feed status response/, name);
+    assert.doesNotMatch(lines.feed, /skipped 0/, `${name}: malformed aggregate is not salvaged`);
+    assert.equal(lines.ok, false, name);
+  }
+});
+
+test("feed validation accepts only reconciled participant and unattributed skip partitions", async () => {
+  const capture = await loadCapture();
+  const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
+  const linesAfter = (report) => {
+    status.recordFeedStatus(report, "league-one");
+    return capture.formatStatusLines({
+      ...status.snapshot(),
+      paired: true,
+      versionStatus: "current",
+    });
+  };
+
+  const unattributed = linesAfter(
+    makeFeedStatus({
+      skipped: { source_board_evidence_only: 2 },
+      skipped_by_participant: [],
+      unattributed_skipped: { source_board_evidence_only: 2 },
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(unattributed.refusal, "FEED SKIPPED: source_board_evidence_only=2");
+  assert.equal(unattributed.ok, false);
+
+  const partitioned = linesAfter(
+    makeFeedStatus({
+      skipped: {
+        already_in_log: 3,
+        player_external_id_unreadable: 3,
+        source_board_evidence_only: 4,
+      },
+      skipped_by_participant: [
+        {
+          participant_id: 101,
+          team_slot: 1,
+          total: 3,
+          reasons: {
+            already_in_log: 2,
+            player_external_id_unreadable: 1,
+          },
+        },
+        {
+          participant_id: 102,
+          team_slot: 2,
+          total: 3,
+          reasons: {
+            already_in_log: 1,
+            player_external_id_unreadable: 2,
+          },
+        },
+      ],
+      unattributed_skipped: { source_board_evidence_only: 4 },
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(
+    partitioned.refusal,
+    "FEED SKIPPED: already_in_log=3, player_external_id_unreadable=3, source_board_evidence_only=4"
+  );
+  assert.equal(partitioned.ok, false);
+
+  const zero = linesAfter(
+    makeFeedStatus({
+      skipped: {},
+      skipped_by_participant: [
+        { participant_id: 101, team_slot: 1, total: 0, reasons: {} },
+        { participant_id: 102, team_slot: 2, total: 0, reasons: {} },
+      ],
+      unattributed_skipped: {},
+    })
+  );
+  assert.equal(status.snapshot().feedStatus, "available");
+  assert.equal(zero.refusal, null);
+  assert.equal(zero.ok, true);
+});
+
 test("a league navigation invalidates an older in-flight feed response", async () => {
   const capture = await loadCapture();
   const clock = makeFakeClock();
