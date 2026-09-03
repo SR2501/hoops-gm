@@ -2488,6 +2488,16 @@ validates.
 full state to build its summaries, and the strip would be calling it on a timer
 during the one hour where the backend has real work to do.
 
+**Backend contract:** `GET
+/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=...` performs one
+indexed local lookup and returns the existing `FeedStatusResponse`, whose
+`draft_id` is the exact resolved draft. Zero drafts refuse with
+`draft_for_fantrax_league_not_found`; two or more refuse with
+`draft_for_fantrax_league_ambiguous`. The query identifier is required,
+non-blank and at most 64 characters. This does not list drafts, change any
+source-board or source-profile provenance, or claim auction-board support. The
+item remains pending until the userscript consumes this contract.
+
 ### `contingent-value` - Building the contingent value graph
 
 - [ ] **pending**
