@@ -1592,6 +1592,20 @@
     return source.silent === expectedSilent;
   }
 
+  function isCompleteFreshness(value) {
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      !value.every(isFreshnessResponse)
+    ) {
+      return false;
+    }
+    const transports = new Set(value.map((source) => source.transport));
+    return transports.size === 2 &&
+      transports.has("bridge_capture") &&
+      transports.has("official_http");
+  }
+
   function isConsistentSkipPartition(report) {
     const aggregateEntries = reasonEntries(report.skipped);
     const unattributedEntries = reasonEntries(report.unattributed_skipped);
@@ -1661,8 +1675,7 @@
       typeof report.as_of === "string" &&
       !Number.isNaN(Date.parse(report.as_of)) &&
       (report.context_unavailable === null || typeof report.context_unavailable === "string") &&
-      Array.isArray(report.freshness) &&
-      report.freshness.every(isFreshnessResponse) &&
+      isCompleteFreshness(report.freshness) &&
       (report.reconciliation === null ||
         (typeof report.reconciliation === "object" &&
           report.reconciliation !== null &&

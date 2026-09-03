@@ -34342,3 +34342,11 @@ ten additional shape/clock contradictions now settle uncheckable with no prior
 report retained. The full userscript suite passes **119/119** after this fix. A
 new exact-head cumulative review is still required after the follow-up commit;
 all live boundaries above remain unchanged.
+**Second review addendum:** Exact-head review of `85b3d39` found that a
+structurally valid but empty `freshness` list still passed vacuously. The backend
+always emits exactly one `bridge_capture` and one `official_http` entry, so an
+empty, one-source, or duplicate-source list is omission, not healthy evidence.
+Validation now requires exactly those two distinct transports after validating
+each entry. Focused cases cover empty, missing, duplicate, unknown, and malformed
+sources; the full userscript suite remains **119/119**. Fresh exact-head review
+is required again after this follow-up commit. Live boundaries are unchanged.

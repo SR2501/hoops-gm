@@ -2274,6 +2274,19 @@ function makeFeedStatus(overrides = {}) {
         contact_age_seconds: 1,
         contact_is_known: true,
       },
+      {
+        transport: "official_http",
+        last_seen_at: "2026-09-03T13:59:58Z",
+        age_seconds: 2,
+        instant_count: 8,
+        silent: false,
+        silence_threshold_seconds: 60,
+        source_claimed_at: null,
+        claim_skew_seconds: null,
+        contact_at: null,
+        contact_age_seconds: null,
+        contact_is_known: false,
+      },
     ],
     reconciliation: null,
     observation_count: 8,
@@ -3185,43 +3198,52 @@ test("feed refresh rejects malformed freshness instead of publishing a false gre
 
 test("feed validation enforces the complete freshness contract and clock relationships", async () => {
   const capture = await loadCapture();
-  const valid = makeFeedStatus().freshness[0];
+  const [valid, official] = makeFeedStatus().freshness;
   const invalidFreshness = [
-    ["extra field", { ...valid, unexpected: true }],
-    ["unknown transport", { ...valid, transport: "browser_guess" }],
-    ["negative age", { ...valid, age_seconds: -1 }],
-    ["fractional instant count", { ...valid, instant_count: 1.5 }],
-    ["last-seen pair mismatch", { ...valid, age_seconds: null }],
-    ["claim pair mismatch", { ...valid, claim_skew_seconds: 0 }],
-    ["contact pair mismatch", { ...valid, contact_age_seconds: null }],
-    ["contact flag mismatch", { ...valid, contact_is_known: false }],
+    ["empty source list", []],
+    ["missing source", [valid]],
+    ["duplicate source", [valid, { ...valid }]],
+    ["extra field", [{ ...valid, unexpected: true }, official]],
+    ["unknown transport", [{ ...valid, transport: "browser_guess" }, official]],
+    ["negative age", [{ ...valid, age_seconds: -1 }, official]],
+    ["fractional instant count", [{ ...valid, instant_count: 1.5 }, official]],
+    ["last-seen pair mismatch", [{ ...valid, age_seconds: null }, official]],
+    ["claim pair mismatch", [{ ...valid, claim_skew_seconds: 0 }, official]],
+    ["contact pair mismatch", [{ ...valid, contact_age_seconds: null }, official]],
+    ["contact flag mismatch", [{ ...valid, contact_is_known: false }, official]],
     [
       "silent decision mismatch",
-      {
-        ...valid,
-        age_seconds: 120,
-        contact_is_known: false,
-        contact_at: null,
-        contact_age_seconds: null,
-      },
+      [
+        {
+          ...valid,
+          age_seconds: 120,
+          contact_is_known: false,
+          contact_at: null,
+          contact_age_seconds: null,
+        },
+        official,
+      ],
     ],
     [
       "zero instants cannot be healthy",
-      {
-        ...valid,
-        last_seen_at: null,
-        age_seconds: null,
-        instant_count: 0,
-        source_claimed_at: null,
-        claim_skew_seconds: null,
-        silent: false,
-      },
+      [
+        {
+          ...valid,
+          last_seen_at: null,
+          age_seconds: null,
+          instant_count: 0,
+          source_claimed_at: null,
+          claim_skew_seconds: null,
+          silent: false,
+        },
+        official,
+      ],
     ],
   ];
 
   for (const [name, freshness] of invalidFreshness) {
     const status = capture.createBridgeStatus({ version: "0.5.5", now: () => 1 });
-    status.recordFeedStatus(makeFeedStatus({ freshness: [freshness] }), "league-one");
+    status.recordFeedStatus(makeFeedStatus({ freshness }), "league-one");
     assert.equal(status.snapshot().feedStatus, "uncheckable", name);
     assert.equal(status.snapshot().feedReport, null, name);
   }
