@@ -27,7 +27,7 @@ class OpenApiDiff:
 
 def _serialized(document: object) -> bytes:
     text = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
-    return f"{text}\r\n".encode()
+    return f"{text}\n".encode()
 
 
 def _flatten(value: object, *, path: str = "$") -> dict[str, object]:

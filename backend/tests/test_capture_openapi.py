@@ -43,6 +43,14 @@ def test_recording_reader_refuses_a_format_change(tmp_path: Path) -> None:
         module._read_round_trippable(recording)
 
 
+def test_recording_format_is_platform_independent_lf() -> None:
+    module = _load_script()
+
+    serialized = module._serialized({"openapi": "3.1.0"})
+    assert serialized.endswith(b"}\n")
+    assert b"\r\n" not in serialized
+
+
 def test_committed_recording_matches_the_served_document() -> None:
     module = _load_script()
 
