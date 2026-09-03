@@ -69,8 +69,12 @@ def test_stop_terminates_the_exact_child_process() -> None:
 
 def test_early_frontend_failure_stops_the_backend_child(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     module = _load_script()
+    frontend = tmp_path / "frontend"
+    (frontend / "node_modules").mkdir(parents=True)
+    monkeypatch.setattr(module, "FRONTEND", frontend)
 
     class FakeProcess:
         def __init__(self, args: list[str], *, returncode: int | None) -> None:
@@ -94,8 +98,8 @@ def test_early_frontend_failure_stops_the_backend_child(
             raise AssertionError("a responsive child must not need kill()")
 
     backend = FakeProcess(["python", "-m", "hoops_gm"], returncode=None)
-    frontend = FakeProcess(["node", "vite.js"], returncode=17)
-    children = iter((backend, frontend))
+    failed_frontend = FakeProcess(["node", "vite.js"], returncode=17)
+    children = iter((backend, failed_frontend))
     monkeypatch.setattr(
         module.subprocess,
         "run",
@@ -106,4 +110,4 @@ def test_early_frontend_failure_stops_the_backend_child(
 
     assert module.main() == 3
     assert backend.terminated is True
-    assert frontend.terminated is False
+    assert failed_frontend.terminated is False

@@ -724,7 +724,7 @@ def _rates(row: Projection) -> ProjectionRates:
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
     },
     summary="The current imported per-game projection cohort for one league's season",
 )

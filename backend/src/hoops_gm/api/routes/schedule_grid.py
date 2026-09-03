@@ -423,7 +423,7 @@ def _grid_periods(
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
     },
     summary="The league's current raw team-by-scoring-period game-count grid",
 )

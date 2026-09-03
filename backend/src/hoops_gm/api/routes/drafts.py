@@ -586,7 +586,7 @@ def list_drafts(session: SessionDep, request: Request) -> DraftListResponse:
     responses={
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
     },
     summary="Open a draft and freeze the configuration it is recorded under",
 )
@@ -703,7 +703,7 @@ def _event_out(row: DraftEvent, voided_by_sequence: int | None) -> EventOut:
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
     },
     summary="Append one event to a draft's log",
 )
