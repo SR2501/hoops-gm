@@ -78,11 +78,25 @@ def _read_round_trippable(path: Path) -> object:
 
 def _served_openapi() -> dict[str, Any]:
     sys.path.insert(0, str(BACKEND_SRC))
+    from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
     from hoops_gm.app import create_app
     from hoops_gm.core.config import Settings
 
-    settings = Settings(
-        _env_file=None,
+    class SourceFreeSettings(Settings):
+        @classmethod
+        def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del settings_cls, env_settings, dotenv_settings, file_secret_settings
+            return (init_settings,)
+
+    settings = SourceFreeSettings(
         database_url="sqlite+pysqlite:///:memory:",
         environment="test",
         host="127.0.0.1",

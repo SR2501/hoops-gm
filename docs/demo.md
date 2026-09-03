@@ -34,7 +34,7 @@ Fantrax and bridge credentials, and replaces the Vite host, proxy, and API base.
 Its bridge-secret path is inside the same temporary directory as the database.
 It starts Python and Node directly, so shutdown targets only those exact child
 processes and does not leave a package-manager wrapper with a surviving Vite
-child.
+child. Ctrl+C, and SIGTERM or SIGHUP on POSIX, unwind through that same cleanup.
 
 The lower-level seed remains available for tests and manual serving:
 `cd backend; $env:PYTHONPATH="$PWD\src"; python -m

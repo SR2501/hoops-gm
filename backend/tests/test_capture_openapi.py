@@ -51,8 +51,13 @@ def test_recording_format_is_platform_independent_lf() -> None:
     assert b"\r\n" not in serialized
 
 
-def test_committed_recording_matches_the_served_document() -> None:
+def test_committed_recording_matches_the_served_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _load_script()
+    monkeypatch.setenv("LOG_LEVEL", "NOT_A_LEVEL")
+    monkeypatch.setenv("PORT", "not-a-port")
+    monkeypatch.setenv("CORS_ORIGINS", "not-json")
 
     recorded = module._read_round_trippable(module.RECORDING)
 

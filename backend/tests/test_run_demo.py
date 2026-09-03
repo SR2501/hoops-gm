@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -98,6 +99,38 @@ def test_stop_terminates_the_exact_child_process() -> None:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+
+
+def test_termination_handler_requests_orderly_shutdown() -> None:
+    module = _load_script()
+
+    with pytest.raises(KeyboardInterrupt):
+        module._request_shutdown(15, None)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows os.kill bypasses Python signal handlers")
+def test_sigterm_is_converted_to_orderly_launcher_shutdown() -> None:
+    source = f"""
+import importlib.util
+import os
+import signal
+
+spec = importlib.util.spec_from_file_location("run_demo_signal_test", {str(SCRIPT)!r})
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def terminate():
+    os.kill(os.getpid(), signal.SIGTERM)
+    return 99
+
+module._run = terminate
+raise SystemExit(module.main())
+"""
+
+    result = subprocess.run([sys.executable, "-c", source], check=False)
+
+    assert result.returncode == 0
 
 
 def test_early_frontend_failure_stops_the_backend_child(

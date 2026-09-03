@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import FrameType
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND = REPO_ROOT / "backend"
@@ -151,7 +153,11 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
-def main() -> int:
+def _request_shutdown(_signum: int, _frame: FrameType | None) -> None:
+    raise KeyboardInterrupt
+
+
+def _run() -> int:
     if not (FRONTEND / "node_modules").is_dir():
         print(
             "frontend dependencies are missing; run `cd frontend; npm install` once, then retry",
@@ -239,6 +245,22 @@ def main() -> int:
         finally:
             for process in reversed(processes):
                 _stop(process)
+
+
+def main() -> int:
+    termination_signals = [signal.SIGTERM]
+    if sighup := getattr(signal, "SIGHUP", None):
+        termination_signals.append(sighup)
+    previous_handlers = {
+        signum: signal.signal(signum, _request_shutdown) for signum in termination_signals
+    }
+    try:
+        return _run()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

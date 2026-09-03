@@ -34026,3 +34026,33 @@ ToS change, or automation write path was exercised.
 
 **Next:** Run the cumulative gate, commit, obtain a fresh exact-head cumulative
 review, and require every hosted check before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — Portal rebase and termination review remediation
+
+**Changed:** Rebased the five portal commits onto authoritative main
+`0043a0ba3873506027e2231190538bb7dda84a58`, retaining that commit's transaction
+adapter, evidence documentation, FIT_VETOED holding and complete handoff blob as
+the exact prefix before restoring the portal append history. Fresh cumulative
+review then found two lifecycle/reproducibility gaps. The launcher now converts
+SIGTERM and POSIX SIGHUP into the same orderly unwind as Ctrl+C, restoring prior
+handlers afterward. OpenAPI capture now uses a `Settings` subclass whose only
+configuration source is the explicit constructor, rather than merely disabling
+dotenv while still accepting ambient environment values.
+
+**Now true:** Focused tests prove the termination handler requests orderly
+shutdown, exercise real SIGTERM conversion on POSIX, and run the exact OpenAPI
+comparison with malformed ambient log level, port and CORS values. The complete
+post-rebase gates pass: 2,484 backend tests, 418 frontend tests, 95 userscript
+tests, lint, format, strict types, builds, OpenAPI, secrets, document terminators,
+backlog graph and whitespace. The transaction increment is inherited unchanged
+and the portal composition still creates no opportunity rows or classes.
+
+**Could not verify:** Hosted Linux SIGTERM, hosted PostgreSQL and all new PR
+checks remain pending. No external
+source, live account, model fit, calibrated availability, paid data, ToS change,
+or automation write path was exercised.
+
+**Next:** Commit, obtain a fresh exact-head cumulative review, and require the
+superseding hosted check set before ordinary-code merge.
