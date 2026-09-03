@@ -33718,3 +33718,125 @@ on the eventual post-rebase PR head.
 **Next:** Publish with an exact remote-head lease, require fresh cumulative
 review and hosted checks, and merge PR #150 only when GitHub reports the exact
 head clean and mergeable.
+
+---
+
+## 2026-09-02 - data-engineer - Added official transaction evidence without opening fit
+
+**Changed:** Started from the owner's exact baseline
+`bb2faf0aaa56205e2e2d774ea67d1e2514f664e3`, then reconciled the uncommitted
+increment onto authoritative main
+`9366683459618cc18fbb5aea00d4525d6935b95a` after PR #150 merged. PR #150's
+frontend and documentation changes are inherited unchanged. The merged
+`docs/handoff.md` was preserved as an exact 2,214,548-byte prefix with SHA-256
+`62b2e6c34d07273dc42ffb96a7b35b841297883314b421dcf9b07d8c97c2ef03`
+before this LF-only append.
+
+Added strict, typed adapters for two official, unauthenticated archives:
+
+- `GET https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json`
+  through `NBAStatsHTTP.get_session()` and `NBAStatsHTTP.headers`; and
+- `GET https://gleague.nba.com/api/transactions/fetchTransactions` with the
+  full browser-shaped user agent the official host requires.
+
+The NBA parser pins the ordered self-described column schema, exact row fields,
+integer-valued identifiers, midnight-shaped date text, and the observed
+`AwardOnWaivers`, `ContractConverted`, `Signing`, `Trade`, and `Waive`
+vocabulary. The G League parser pins exact fields, canonical dates, six type
+families, and their twelve observed descriptions, including assignment,
+recall, and NBA call-up. Consideration-only NBA trade rows and seven historical
+G League rows with a team id but blank slug remain explicit rather than being
+dropped or repaired.
+
+Both calls share a two-second throttle, a six-hour success cache, and three
+attempts only for transport failures, HTTP 408/425/429, and every 5xx.
+Non-retryable 4xx responses raise `SourceRejected`; schema, vocabulary, date,
+identifier, UTF-8, and JSON drift raise `SourceContractError`. With a raw store
+configured, a decoded success enters the cache only after UTF-8 JSON decoding;
+malformed HTTP-200 bodies, HTTP-error bodies, and truncated partial bodies are
+preserved under separate non-cacheable diagnostic endpoint names, including
+failed retry attempts. The NBA request retains `nba_api`'s maintained headers
+but restricts `Accept-Encoding` to the installed gzip and deflate decoders.
+
+The complete raw NBA fixture is 4,135,059 bytes, 9,777 rows from 2015-07-01
+through 2026-09-02, and SHA-256
+`a5597174e2ac7b07d2654f7e875225a42c01c2df445d2085c585508345ae63d4`.
+The complete raw G League fixture is 3,701,195 bytes, 14,184 rows from
+2021-08-03 through 2026-08-31, and SHA-256
+`ce21d2a2ae0b76944952364b0122481c10115b177c28ea59055b68d5bbb38ac8`.
+Both are losslessly gzip-compressed with `mtime=0`, without a JSON round trip.
+
+**Measured evidence, not opportunity coverage:** Within the accepted
+regular-season windows, the NBA archive has 296/267 total/player rows in
+2022-23, 357/328 in 2023-24, 352/311 in 2024-25, and 358/333 in 2025-26. The
+G League archive has 2,472, 2,612, 2,427, and 2,518 rows respectively; the
+same seasons contain 552/552/58, 583/581/83, 481/480/82, and 440/440/88
+`Assigned`/`Recalled`/`NBA Call-Up` rows. These are source-row counts only.
+They are not player-game counts, outcome counts, play rates, or coverage
+percentages.
+
+The feeds independently date Conley's trade/waive/re-sign sequence, Huntley's
+waive/re-sign sequence, and Wiseman's waiver and 10-day signing. That is the
+bounded evidence they explicitly encode. The Pacers' official 2025-12-26 notice
+says Wiseman was released, but that event is absent from the central archive,
+directly disproving completeness. The 2017 and 2023 CBAs also make assignment starts and recalled returns depend
+on in-person reporting, which the feed does not publish; G League season
+conclusion is a separate end condition. The archives do not provide complete
+opening membership, contract
+expiration, retirement, structured suspension, or effective times.
+`CommonTeamRoster` was also checked directly and omitted measured same-season
+stints: Conley with Chicago and Charlotte, and Wiseman with Indiana. Its
+nullable `HOW_ACQUIRED` text was not treated as an interval.
+
+**Protocol boundary:** This increment emits typed transaction-evidence records
+only. It emits no player-game opportunity row and populates none of the
+accepted ternary classes. No missing transaction, endpoint silence, season
+roster snapshot, game-log appearance, `HOW_ACQUIRED` value, or transaction
+description creates eligibility or absence. Consequently no independent
+denominator exists, neither overall nor per-season `unknown_share` is
+calculable, and the `<=5%` gates remain unmet.
+`participation-opportunity-coverage` remains pending and
+`FIT_VETOED_PREREQUISITES` remains binding. No public envelope, sealed keyed
+package, model fit, split release, outcome-valued holdout marginal, or play
+rate was produced.
+
+**Custody:** Neither off-repository source ledger was mutated. The active
+four-season store remains 52,932,608 bytes at SHA-256
+`93d2b607c2274586067a4e7a6422c1d05057adc021824ddb5ddc0a5f5d1a245a`;
+the preserved three-season store remains 40,513,536 bytes at SHA-256
+`e659f5a4156043d28408d7e58e2a211ac729f593c9dc116f1d8c4b3f2fa69ebe`.
+Hash-identical disposable snapshots remain under this session's
+`files/opportunity-coverage-snapshots/` directory. The exact 10,854-byte replay
+receipt remains off-repository at SHA-256
+`f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`.
+
+**Gates:** On reconciled main, backend Ruff and format pass, strict mypy passes
+over 240 source files, the default backend suite passes with 2,473 tests and
+one skip, all 654 offline Adapter contracts pass, and both new live smoke tests
+pass. Repository-script lint/format, the tracked-file secret scan, backlog
+graph, document terminators, fixture provenance recomputation, and cumulative
+whitespace checks pass. A preliminary independent code review found that HTTP
+error bodies bypassed capture, truncated standard-library reads bypassed
+retry, and `strptime` admitted unpadded lexical drift. A subsequent exact-head
+review found that malformed HTTP-200 bodies could poison the success cache,
+the inherited NBA headers advertised unavailable Brotli decoding, and a
+truncated 5xx error body could evade capture and retry. All six findings were
+fixed and regression-tested before the cumulative gates above.
+
+**Could not verify:** The checked official/free surfaces do not prove that no
+other free authoritative historical source exists. The repository adapters,
+installed `nba_api` endpoints, official player-movement archive, official G
+League archive, the advertised G League CDN URL, and sampled
+`CommonTeamRoster` responses were checked; none establishes the complete
+four-season denominator. The archives do not state whether every event is
+retained, and no independent source establishes their same-day effective
+times. Hosted exact-head gates and final independent quant/code review had not
+run when this entry was written.
+
+**Next:** Freeze one exact commit, obtain independent quant review of protocol
+and holdout safety plus cumulative code review, then publish one focused PR.
+Merge only if the exact hosted head is clean. The measurement item may advance
+again only when a free authoritative source or independently validated
+reconstruction contract closes opening membership, every effective end,
+assignment/recall, suspension, and same-day boundaries across all four
+accepted seasons.

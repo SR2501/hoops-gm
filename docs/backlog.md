@@ -3399,6 +3399,46 @@ transactions source, if one is pursued instead, is a new, currently unvetted
 adapter — naming it is this item's job; adopting either path is not a call
 this item makes alone.
 
+**2026-09-02 evidence-acquisition increment, item remains pending.** Two
+official, unauthenticated archives have now passed the Adapter gate:
+`NBA_Player_Movement.json` dates NBA signings, waives, trades, waiver awards,
+and contract conversions back to 2015-07-01; the NBA G League site's
+`/api/transactions/fetchTransactions` archive dates assignments, recalls,
+call-ups, acquisitions, waivers, trades, drafts, and two-way signings back to
+2021-08-03. Exact calls, fields, vocabularies, complete raw fixture hashes, and
+per-season source-row counts are recorded in
+`docs/adapters/nba-official-transactions.md`.
+
+This evidence dates Conley's trade/waive/re-sign sequence and Huntley's
+waive/re-sign sequence independently of the participation ledger. It dates
+Wiseman's waiver and 10-day signing but supplies no explicit expiration for
+that contract. The Pacers' official 2025-12-26 transaction notice says Wiseman
+was released, but that event is absent from the central archive: a direct
+counterexample to completeness, not permission to scrape one-off prose into an
+interval. More generally, the NBA archive has no structured contract-expiration,
+retirement, suspension, assignment, or recall event; the G League archive has
+no suspension event; neither supplies an effective time for same-date
+boundaries; official CBA assignment starts and recalled returns depend on
+in-person reporting instants the feed does not publish, while G League season
+conclusion is a separate end condition; and a six-team live
+`CommonTeamRoster` check omitted the transient Conley and Wiseman stints it
+would need to repair within 2025-26: Conley's Chicago and Charlotte stints and
+Wiseman's Indiana stint. Those are measured source-contract gaps, not
+permission to infer an interval.
+
+Therefore a complete independent denominator still cannot be enumerated,
+`unknown_share` is not calculable, and no public opportunity envelope or
+sealed keyed package has been emitted. This item remains **pending** and
+`FIT_VETOED_PREREQUISITES` remains binding. The exact next trigger is a free,
+authoritative source or independently validated reconstruction contract that
+covers opening membership, every effective start/end including contract
+expiration, assignment/recall, suspension, and same-day boundaries across all
+four accepted seasons. No paid source or widened Fantrax access was used.
+The increment emits typed transaction-evidence records only and emits no
+accepted player-game opportunity row or ternary class; therefore the overall
+and per-season `<=5%` gates remain unmet rather than silently passing on an
+empty denominator.
+
 **Done when, affirmatively and machine-readably — all of the following, not a
 characterisation of them:**
 

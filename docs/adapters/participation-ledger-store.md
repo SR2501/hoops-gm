@@ -330,6 +330,20 @@ existing source elsewhere in this project. An authoritative historical
 transactions source is a new, currently unvetted adapter, which this addendum
 names and does not select.
 
+**Measured 2026-09-02: dated official transaction evidence now exists, but does
+not close the denominator.** The new Adapter-gated NBA player-movement and NBA
+G League transaction archives are documented in
+[`nba-official-transactions.md`](nba-official-transactions.md). They date
+Conley's trade/waive/re-sign sequence and Huntley's waive/re-sign sequence,
+without using participation silence. They also date Wiseman's waiver and
+10-day signing, but publish no expiration event for that contract. Across both
+feeds there is no structured suspension or contract-expiration class, and
+neither feed supplies an effective time for same-date boundaries. The direct
+ledger remains unchanged; no missing row was converted to absence or
+eligibility. The accepted opportunity denominator, unknown share, public
+envelope, and sealed keyed package therefore remain unproduced, and
+`FIT_VETOED_PREREQUISITES` remains binding.
+
 Reproduce these counts without a committed script — the queries were exploratory
 and are not shipped as adapter code, deliberately, because no source or fit is
 proposed here. The equivalent ad hoc queries are: join `player_participation` to
