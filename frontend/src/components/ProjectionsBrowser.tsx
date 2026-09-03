@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ProjectionsTable } from './ProjectionsTable'
 import {
   projectionTeamOptions,
@@ -33,6 +33,11 @@ export function ProjectionsBrowser({ model }: { model: ProjectionsModel }) {
       : teams.abbreviations.includes(teamSelection))
       ? teamSelection
       : ALL_TEAMS
+  useEffect(() => {
+    if (teamSelection !== effectiveTeamSelection) {
+      setTeamSelection(ALL_TEAMS)
+    }
+  }, [effectiveTeamSelection, teamSelection])
   const rows = useMemo(
     () =>
       selectProjectionRows(model.rows, {

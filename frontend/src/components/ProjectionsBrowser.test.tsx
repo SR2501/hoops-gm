@@ -197,6 +197,15 @@ describe('ProjectionsBrowser', () => {
     )
     expect(renderedIds()).toEqual([3, 1, 2])
     expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
+
+    rerender(<ProjectionsBrowser model={buildProjectionsModel(payload())} />)
+
+    expect(team).toHaveValue('')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 3 of 3 matches from 3 imported players',
+    )
+    expect(renderedIds()).toEqual([3, 1, 2])
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
   })
 
   it('clears the missing-team filter immediately when a refreshed cohort has no missing labels', async () => {
@@ -220,5 +229,37 @@ describe('ProjectionsBrowser', () => {
     )
     expect(renderedIds()).toEqual([3, 1, 2])
     expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
+
+    const restoredMissing = payload()
+    restoredMissing.players = restoredMissing.players.map((player) =>
+      player.player_id === 3 ? { ...player, team_abbreviation: null } : player,
+    )
+    rerender(<ProjectionsBrowser model={buildProjectionsModel(restoredMissing)} />)
+
+    expect(team).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'No NBA team label' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 3 of 3 matches from 3 imported players',
+    )
+    expect(renderedIds()).toEqual([3, 1, 2])
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeDisabled()
+  })
+
+  it('preserves a selected team when a refreshed cohort still offers it', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<ProjectionsBrowser model={buildProjectionsModel(payload())} />)
+    const team = screen.getByRole('combobox', { name: 'NBA team' })
+
+    await user.selectOptions(team, 'LAL')
+    expect(renderedIds()).toEqual([2])
+
+    rerender(<ProjectionsBrowser model={buildProjectionsModel(payload())} />)
+
+    expect(team).toHaveValue('LAL')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Showing 1 of 1 matches from 3 imported players',
+    )
+    expect(renderedIds()).toEqual([2])
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeEnabled()
   })
 })

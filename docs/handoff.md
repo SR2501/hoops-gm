@@ -34535,3 +34535,45 @@ the `quant`/Model-gate boundary. Live cohort scale/labels and production
 network/error timing remain unverified. Hosted checks and the requested fresh
 independent cumulative review remain pending for the corrected exact head; do
 not merge or self-approve it before those complete.
+
+## 2026-09-03 - Projection team-filter persistence correction
+
+**Correction:** Fresh review of exact head `f6c6cf4` found that the pure
+effective team value fixed the current render but left the invalid raw selection
+in state. If BOS or the missing-label option disappeared and later returned, the
+old value silently became valid again and reapplied without owner action. Reset
+was disabled in the truthful middle state, so the hidden selection could not be
+cleared there.
+
+The browser still derives `effectiveTeamSelection` synchronously for the
+`<select>`, filtering, and active-control state, so the first render after an
+option disappears remains internally consistent. A narrowly scoped effect now
+persists only a disagreement between the raw and effective values back to All
+NBA teams. It does nothing when the selection remains valid and settles after
+one state update when invalid, so it neither loops nor clears an available
+selection.
+
+Both disappearing-option tests now perform a third model render. The real-team
+case removes BOS and then restores it; the missing-label case removes the last
+missing label and then restores one. In both, the middle render immediately
+shows All teams, all three rows, the three-of-three count, and disabled Reset;
+the restored option does not resurrect the stale filter. A separate refreshed-
+model test proves a still-available LAL selection remains selected and filtered.
+
+**Negative control and Code gate:** Temporarily deleting only the persistence
+effect made the two third-render assertions fail: the real-team control received
+`BOS`, and the missing-label control received `__missing_team_label__`, where
+both expected All teams. The effect was restored and the focused browser suite
+passed **6/6**. From `frontend/`, `npm run lint`, `npm run typecheck`, the CI-form
+`npm test -- --reporter=default --reporter=json
+--outputFile.json=vitest-report.json` (**432/432**), and `npm run build` passed;
+`scripts/` ESLint also passed from its own directory.
+
+**Could not verify:** A production cohort changing twice while open was not
+driven in Chromium; the committed demo serves a static cohort, so option
+removal, restoration, and valid-selection survival remain React rerender
+evidence. No live Basketball Monster export, Fantrax page/account, or real draft
+was used. Per-36 remains deliberately undelivered across the `quant`/Model-gate
+boundary. Live cohort scale/labels and production network/error timing remain
+unverified. Hosted checks and another fresh independent cumulative review remain
+pending for the corrected exact head; do not merge or self-approve it first.
