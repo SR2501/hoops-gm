@@ -33751,10 +33751,12 @@ dropped or repaired.
 Both calls share a two-second throttle, a six-hour success cache, and three
 attempts only for transport failures, HTTP 408/425/429, and every 5xx.
 Non-retryable 4xx responses raise `SourceRejected`; schema, vocabulary, date,
-identifier, UTF-8, and JSON drift raise `SourceContractError`. Complete success
-bodies are captured before decode. HTTP-error bodies and truncated partial
-bodies are preserved under separate non-cacheable raw-store endpoint names,
-including failed retry attempts.
+identifier, UTF-8, and JSON drift raise `SourceContractError`. With a raw store
+configured, a decoded success enters the cache only after UTF-8 JSON decoding;
+malformed HTTP-200 bodies, HTTP-error bodies, and truncated partial bodies are
+preserved under separate non-cacheable diagnostic endpoint names, including
+failed retry attempts. The NBA request retains `nba_api`'s maintained headers
+but restricts `Accept-Encoding` to the installed gzip and deflate decoders.
 
 The complete raw NBA fixture is 4,135,059 bytes, 9,777 rows from 2015-07-01
 through 2026-09-02, and SHA-256
@@ -33804,13 +33806,16 @@ receipt remains off-repository at SHA-256
 `f468784dcd72b85f44185959230fb2f85c8edc0b49f6164c8adb20fa6b798e00`.
 
 **Gates:** On reconciled main, backend Ruff and format pass, strict mypy passes
-over 240 source files, the default backend suite passes with 2,471 tests and
-one skip, all 652 offline Adapter contracts pass, and both new live smoke tests
+over 240 source files, the default backend suite passes with 2,473 tests and
+one skip, all 654 offline Adapter contracts pass, and both new live smoke tests
 pass. Repository-script lint/format, the tracked-file secret scan, backlog
 graph, document terminators, fixture provenance recomputation, and cumulative
 whitespace checks pass. A preliminary independent code review found that HTTP
 error bodies bypassed capture, truncated standard-library reads bypassed
-retry, and `strptime` admitted unpadded lexical drift; all three findings were
+retry, and `strptime` admitted unpadded lexical drift. A subsequent exact-head
+review found that malformed HTTP-200 bodies could poison the success cache,
+the inherited NBA headers advertised unavailable Brotli decoding, and a
+truncated 5xx error body could evade capture and retry. All six findings were
 fixed and regression-tested before the cumulative gates above.
 
 **Could not verify:** The checked official/free surfaces do not prove that no

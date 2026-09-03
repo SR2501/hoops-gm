@@ -6,8 +6,11 @@ import copy
 import gzip
 import hashlib
 import http.client
+import io
 import json
+import urllib.error
 from datetime import date, timedelta
+from email.message import Message
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,7 @@ from hoops_gm.ingest.nba_transactions import (
     parse_g_league_transactions,
     parse_nba_player_movements,
 )
+from hoops_gm.ingest.nba_transactions.client import _default_nba_transport
 from hoops_gm.ingest.rawstore import RawPayloadStore
 from hoops_gm.ingest.retry import RetryPolicy
 from hoops_gm.ingest.throttle import RateLimiter
@@ -342,11 +346,23 @@ class FakeGLeagueOpener:
         return outcome
 
 
+class IncompleteErrorBody(io.BytesIO):
+    def __init__(self, partial: bytes) -> None:
+        super().__init__(partial)
+        self.partial = partial
+
+    def read(self, size: int | None = -1) -> bytes:
+        del size
+        raise http.client.IncompleteRead(self.partial, 100)
+
+
 class TestOfficialTransactionTransport:
-    def test_live_body_is_captured_before_json_decoding(self, tmp_path: Path) -> None:
+    def test_malformed_body_is_captured_without_poisoning_success_cache(
+        self, tmp_path: Path
+    ) -> None:
         body = b"<html>upstream error under HTTP 200</html>"
-        response = FakeRequestsResponse(body)
-        session = FakeNbaSession(response)
+        valid = b'{"recovered":true}'
+        session = FakeNbaSession(FakeRequestsResponse(body), FakeRequestsResponse(valid))
         store = RawPayloadStore(tmp_path)
         client = NbaOfficialTransactionsClient(
             store=store,
@@ -360,14 +376,16 @@ class TestOfficialTransactionTransport:
 
         captures = store.history(
             source=SOURCE,
-            endpoint=NBA_PLAYER_MOVEMENT_ENDPOINT,
+            endpoint=f"{NBA_PLAYER_MOVEMENT_ENDPOINT}.contract_error",
             params={
                 "url": ("https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json")
             },
         )
         assert len(captures) == 1
         assert captures[0].read_bytes() == body
-        assert response.closed is True
+        assert client.fetch_json(NBA_PLAYER_MOVEMENT_ENDPOINT) == {"recovered": True}
+        assert client.fetch_json(NBA_PLAYER_MOVEMENT_ENDPOINT) == {"recovered": True}
+        assert session.calls == 2
 
     def test_fresh_capture_prevents_a_second_request(self, tmp_path: Path) -> None:
         body = b'{"NBA_Player_Movement":{"rows":[]}}'
@@ -422,6 +440,11 @@ class TestOfficialTransactionTransport:
         assert client.fetch_json(NBA_PLAYER_MOVEMENT_ENDPOINT, max_age=timedelta(0)) == {}
         assert session.calls == 2
 
+    def test_default_nba_headers_do_not_advertise_unsupported_brotli(self) -> None:
+        _session, headers = _default_nba_transport()
+
+        assert headers["Accept-Encoding"] == "gzip, deflate"
+
     def test_truncated_g_league_body_is_captured_and_retried(self, tmp_path: Path) -> None:
         partial = b'{"partial"'
         opener = FakeGLeagueOpener(
@@ -443,6 +466,38 @@ class TestOfficialTransactionTransport:
         captures = store.history(
             source=SOURCE,
             endpoint=f"{G_LEAGUE_TRANSACTIONS_ENDPOINT}.incomplete_read",
+            params={"url": G_LEAGUE_TRANSACTIONS_URL},
+        )
+        assert len(captures) == 1
+        assert captures[0].read_bytes() == partial
+
+    def test_truncated_5xx_body_is_captured_and_retried(self, tmp_path: Path) -> None:
+        partial = b'{"upstream"'
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        error = urllib.error.HTTPError(
+            G_LEAGUE_TRANSACTIONS_URL,
+            503,
+            "Service Unavailable",
+            headers,
+            IncompleteErrorBody(partial),
+        )
+        opener = FakeGLeagueOpener(error, FakeUrlResponse(b"[]"))
+        store = RawPayloadStore(tmp_path)
+        client = NbaOfficialTransactionsClient(
+            store=store,
+            limiter=RateLimiter(0),
+            retry_policy=RetryPolicy(attempts=2, base_delay_seconds=0, jitter=0),
+            nba_session=FakeNbaSession(),
+            nba_headers={},
+            g_league_opener=opener,
+        )
+
+        assert client.fetch_json(G_LEAGUE_TRANSACTIONS_ENDPOINT, max_age=timedelta(0)) == []
+        assert opener.calls == 2
+        captures = store.history(
+            source=SOURCE,
+            endpoint=f"{G_LEAGUE_TRANSACTIONS_ENDPOINT}.incomplete_http_error",
             params={"url": G_LEAGUE_TRANSACTIONS_URL},
         )
         assert len(captures) == 1

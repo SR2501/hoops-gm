@@ -87,16 +87,20 @@ raw body is 3,701,195 bytes and has SHA-256
 ## Adapter behaviour
 
 - **Throttle:** one request every two seconds across both archives.
-- **Cache:** six hours. Every successful live body is captured before JSON
-  decoding. HTTP-error bodies and truncated partial bodies are also captured
-  under non-cacheable `.http_error` and `.incomplete_read` endpoint names,
-  including failed retry attempts.
+- **Cache:** six hours. With a raw store configured, a live body enters the
+  success cache only after UTF-8 JSON decoding succeeds. Malformed HTTP-200
+  bodies, HTTP-error bodies, and truncated partial bodies are captured under
+  non-cacheable `.contract_error`, `.http_error`, `.incomplete_read`, or
+  `.incomplete_http_error` endpoint names, including failed retry attempts.
 - **Retry:** three attempts with exponential backoff only for transport
   failures and HTTP 408, 425, 429, or 5xx.
 - **Refusal:** other 4xx responses are non-retryable `SourceRejected`.
 - **Garbage or drift:** non-UTF-8 JSON, changed envelopes, added or removed row
   fields, non-integral identifiers, invalid dates, and unknown transaction
   vocabularies raise non-retryable `SourceContractError`.
+- **Encoding:** the NBA request retains `nba_api`'s maintained headers except
+  that `Accept-Encoding` is restricted to installed `gzip` and `deflate`
+  decoders; it does not advertise optional Brotli support.
 - **Live smoke:** bypasses the cache, requires the historical archive floor and
   current vocabulary, and pins dated Conley and Wiseman records. A pruned
   archive or changed assignment contract fails visibly.

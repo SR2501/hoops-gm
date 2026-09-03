@@ -13,8 +13,9 @@ Retry
     retryable HTTP statuses.
 
 Caching
-    A capture younger than six hours is reused. Every live response body is
-    captured before JSON decoding, including malformed bodies.
+    A decoded success capture younger than six hours is reused. With a raw
+    store configured, malformed and failed bodies are preserved under
+    non-cacheable diagnostic endpoint names.
 
 When a source is down or refuses
     Transport failures, 408/425/429 and 5xx responses become retryable
@@ -147,6 +148,18 @@ class NbaOfficialTransactionsClient:
             lambda: self._request(endpoint, url), policy=self.retry_policy
         )
         observed_at = datetime.now(UTC)
+        try:
+            payload = self._decode(body, endpoint=endpoint)
+        except SourceContractError:
+            self._capture_failed_body(
+                endpoint=endpoint,
+                url=url,
+                kind="contract_error",
+                body=body,
+                status=status,
+                content_type=content_type,
+            )
+            raise
 
         if self.store is not None:
             self.store.put(
@@ -158,7 +171,7 @@ class NbaOfficialTransactionsClient:
                 content_type=content_type,
                 fetched_at=observed_at,
             )
-        return self._decode(body, endpoint=endpoint)
+        return payload
 
     def _request(self, endpoint: str, url: str) -> tuple[bytes, int, str | None]:
         self.limiter.acquire()
@@ -206,11 +219,11 @@ class NbaOfficialTransactionsClient:
                 status = int(getattr(response, "status", 200))
                 content_type = response.headers.get("Content-Type")
         except urllib.error.HTTPError as exc:
-            body = _read_error_body(exc)
+            body, body_was_truncated = _read_error_body(exc)
             self._capture_failed_body(
                 endpoint=G_LEAGUE_TRANSACTIONS_ENDPOINT,
                 url=url,
-                kind="http_error",
+                kind="incomplete_http_error" if body_was_truncated else "http_error",
                 body=body,
                 status=exc.code,
                 content_type=exc.headers.get("Content-Type") if exc.headers is not None else None,
@@ -319,7 +332,9 @@ def _default_nba_transport() -> tuple[Any, dict[str, str]]:
     # library's own transport primitives rather than a second HTTP stack.
     from nba_api.stats.library.http import NBAStatsHTTP
 
-    return NBAStatsHTTP.get_session(), dict(NBAStatsHTTP.headers)
+    headers = dict(NBAStatsHTTP.headers)
+    headers["Accept-Encoding"] = "gzip, deflate"
+    return NBAStatsHTTP.get_session(), headers
 
 
 def _raise_for_status(status: int, body: bytes, *, endpoint: str) -> None:
@@ -342,11 +357,13 @@ def _raise_for_status(status: int, body: bytes, *, endpoint: str) -> None:
     )
 
 
-def _read_error_body(exc: urllib.error.HTTPError) -> bytes:
+def _read_error_body(exc: urllib.error.HTTPError) -> tuple[bytes, bool]:
     try:
-        return exc.read()
+        return exc.read(), False
+    except http.client.IncompleteRead as read_exc:
+        return bytes(read_exc.partial), True
     except OSError:  # diagnostic only
-        return b""
+        return b"", False
     finally:
         exc.close()
 
