@@ -2,13 +2,8 @@ import { act, fireEvent, screen, within } from '@testing-library/react'
 import { StrictMode } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  isReliabilityScorecardsResponse,
-} from '../api/reliabilityEndpoints'
-import type {
-  ObservedRateEvidence,
-  ReliabilityScorecardsResponse,
-} from '../api/reliabilityTypes'
+import { isReliabilityScorecardsResponse } from '../api/reliabilityEndpoints'
+import type { ObservedRateEvidence, ReliabilityScorecardsResponse } from '../api/reliabilityTypes'
 import notPublished from '../test/fixtures/reliability-not-published.recorded.json'
 import recorded from '../test/fixtures/reliability-scorecards.recorded.json'
 import { mockFetch, renderWithRouter } from '../test/helpers'
@@ -63,7 +58,50 @@ describe('ReliabilityPage recorded contract', () => {
     expect(screen.getByTestId('coverage-warning')).toHaveTextContent(
       'must not be read as season games played or predictions',
     )
+    expect(screen.queryByTestId('synthetic-demo-warning')).not.toBeInTheDocument()
+    expect(screen.getByText(/whether its evidence is historical or synthetic/)).toBeInTheDocument()
+    expect(screen.getByText('Internal player record 1')).toBeInTheDocument()
+    expect(screen.queryByText(/NBA player id/)).not.toBeInTheDocument()
   })
+
+  it('shows all source labels in the lineage detail', async () => {
+    serve()
+    renderWithRouter(<ReliabilityPage />)
+
+    await userEvent.click(
+      await screen.findByText('Evidence lineage and cohort coverage', { selector: 'summary' }),
+    )
+
+    const lineage = screen.getByText('Schedule cohort').closest('dl')
+    expect(lineage).not.toBeNull()
+    expect(lineage).toHaveTextContent('test:canonical-schedule')
+    expect(lineage).toHaveTextContent(
+      'nba_games+team_schedule+player_game_logs+player_participation',
+    )
+    expect(lineage).toHaveTextContent('quant:reliability-descriptive-derivation')
+  })
+
+  it.each(['schedule_source', 'observation_source'] as const)(
+    'shows the synthetic cohort disclosure before the coverage warning for synthetic %s',
+    async (source) => {
+      const body = payload()
+      body.lineage[source] = `synthetic-demo:reliability-${source}`
+      serve(body)
+      renderWithRouter(<ReliabilityPage />)
+
+      const warning = await screen.findByTestId('synthetic-demo-warning')
+      expect(warning).toHaveTextContent('Synthetic demo cohort')
+      expect(warning).toHaveTextContent(
+        'Every game, box score, and resulting played-game observation is invented solely to exercise the interface',
+      )
+      expect(warning).toHaveTextContent(
+        'not historical evidence, a projection, a recommendation, calibrated availability, or p(play)',
+      )
+      const coverageWarning = screen.getByTestId('coverage-warning')
+      expect(warning.compareDocumentPosition(coverageWarning) & Node.DOCUMENT_POSITION_FOLLOWING)
+        .toBeTruthy()
+    },
+  )
 
   it('loads the expensive cohort once under the application StrictMode wrapper', async () => {
     const fetchMock = serve()

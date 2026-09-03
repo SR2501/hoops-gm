@@ -168,3 +168,15 @@ is a deliberate trade for now: the backend serves `/openapi.json`, so
 generating them is a small step whenever the surface outgrows a handful of
 endpoints. Until then a codegen step nobody needs is a build dependency
 without a payoff.
+
+The recorded contract used by frontend tests is regenerated from the app, not
+copied from a running server:
+
+```powershell
+python scripts\capture_openapi.py
+python scripts\capture_openapi.py --check
+```
+
+The first command refuses if the existing file does not round-trip byte for
+byte, then reports added, removed, and changed leaves before writing. CI runs
+the second command so the recording cannot silently drift from `app.openapi()`.

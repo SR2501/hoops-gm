@@ -33840,3 +33840,219 @@ again only when a free authoritative source or independently validated
 reconstruction contract closes opening membership, every effective end,
 assignment/recall, suspension, and same-day boundaries across all four
 accepted seasons.
+
+---
+
+## 2026-09-02 — frontend — Reliability source lineage and synthetic disclosure
+
+**Changed:** Extended the Reliability frontend lineage contract and runtime
+validator to require schedule, observation, and derivation source labels.
+Updated the recorded scorecard fixture to carry the backend producer labels.
+The Reliability surface now exposes all three labels in its lineage detail and
+shows a prominent synthetic-demo disclosure before the existing
+incomplete-coverage warning whenever either the schedule or observation source
+is synthetic. Recorded tests cover both synthetic source paths, ordinary
+recorded data, rendered lineage labels, and rejection of each missing source.
+
+**Now true:** A Reliability response cannot pass frontend validation without
+all three source labels. Synthetic demo observations are explicitly identified
+as invented interface exercise data and cannot be presented without saying
+that they are neither historical evidence nor a projection, recommendation,
+calibrated availability, or p(play).
+
+**Could not verify:** No live browser or backend-integrated request was run, and
+the complete frontend suite and production build were not run. Targeted
+Reliability tests (32), full frontend typecheck, and ESLint over the touched
+TypeScript files passed. Concurrent backend changes in this shared worktree
+were deliberately left untouched.
+
+**Next:** Backend should serve the three required source fields on every
+Reliability cohort. The integrating owner should run the complete frontend gate
+after the concurrent backend work settles.
+
+---
+
+## 2026-09-03 — backend — One-command unified portal demo
+
+**Changed:** Extended the guarded, offline `seed_demo` composition with a tiny
+2025-26 Reliability cohort written through the production player, schedule,
+box-score, participation, and Reliability publication paths. Added
+`scripts/run_demo.py`, which creates an ephemeral database, starts the backend
+and Vite on available loopback ports, prints one portal URL, and deletes the
+database on exit. Reliability now exposes its persisted schedule, observation,
+and derivation sources; the frontend renders those labels and a prominent
+synthetic disclosure. No PR #150-owned draft contract or category file changed.
+
+**Now true:** One fresh command, `python scripts\run_demo.py`, serves meaningful
+non-error Dashboard, Draft, Schedule, Projections, Reliability, System, and
+auction-category states from one database and one frontend origin. Browser/API
+proof counted 2 drafts, 7 joined auction selections, 30 schedule teams, 21
+periods, 60 projection rows, 2 Reliability scorecards, 3 final Reliability
+games, 4 box scores, and 2 non-play observations. The Reliability names and
+schedule lineage identify synthetic demo data, and the screen states that it is
+not historical evidence, a projection, recommendation, calibrated availability,
+or p(play). The complete local Code gate passed: backend Ruff/format/mypy and
+2,449 tests (1 skipped), frontend lint/typecheck/build and 386 tests, userscript
+build and 95 tests, secret scan, document terminators, backlog graph, and diff
+whitespace checks.
+
+**Could not verify:** Native PostgreSQL was not available locally, so migration
+and full-suite portability remain for hosted CI. The historical Reliability
+store was not modified or reinterpreted; this proves only the deliberately
+small descriptive demo cohort and interface composition. No external source,
+live Fantrax account, model fit, calibrated availability, Adapter-gate live
+smoke, paid data, ToS change, or automation write path was exercised.
+
+**Next:** Require a fresh cumulative exact-head review and every hosted check,
+including native PostgreSQL, before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — Unified demo review remediation on merged #150
+
+**Changed:** Rebased onto authoritative main
+`9366683459618cc18fbb5aea00d4525d6935b95a` and preserved PR #150's draft
+contracts and category behavior. The first cumulative review found five real
+integration problems. The launcher now replaces ambient backend/frontend
+routing configuration, verifies readiness through the one frontend origin, and
+starts Node directly so cleanup owns the actual Vite PID. Synthetic Reliability
+no longer writes invented participation rows with NBA provenance; its two local
+identity anchors persist `source_detail="synthetic-demo"` with zero confidence,
+while schedule and box-score evidence still use production writers. The stale
+OpenAPI recording was regenerated, and `capture_openapi.py --check` now compares
+sorted added, removed, and changed leaves in CI after first requiring a
+byte-identical recording round-trip. The Reliability lede no longer calls a
+synthetic cohort historical, and its internal database key is no longer labelled
+an NBA player id.
+
+**Now true:** A deliberately poisoned environment (`DATABASE_URL`, `HOST`,
+`PORT`, `ENVIRONMENT`, `HOOPS_GM_*`, `DEV_SERVER_HOST`,
+`VITE_API_BASE_URL`, and `VITE_API_PROXY_TARGET`) still launched only an
+ephemeral SQLite store on loopback. Through its one Vite origin the final API
+reported 2 drafts, 30 teams, 21 periods, 60 projections, 2 Reliability
+scorecards, 3 final games, 4 played-game logs, and 0 participation rows; neither
+poison database path was created. Terminating the exact Vite child exercised the
+early-failure path: the backend listener stopped and the temporary database was
+deleted. A final browser pass on the rebased tree rendered Dashboard, Draft,
+Schedule, Projections, Reliability, System, and `/draft/1/categories`; the
+Reliability disclosure precedes two row-bearing synthetic scorecards, and #150's
+category completeness state remains visible. The local gates passed: backend
+Ruff/format/mypy and 2,456 tests (1 skipped), frontend lint/typecheck/build and
+418 tests, userscript build and 95 tests, OpenAPI drift, secret, document,
+backlog, and whitespace checks.
+
+**Could not verify:** Native PostgreSQL remains unavailable locally, so hosted
+CI must prove migration and full-suite portability. The complete backend and
+frontend suites ran immediately before the last narrow launcher/copy assertions;
+those exact assertions were then run separately with lint, type-check, and
+format checks. No external source, live Fantrax account, model fitting,
+calibrated availability, paid data, ToS change, or automation write path was
+exercised.
+
+**Next:** Commit the remediation, obtain a new cumulative exact-head review, and
+require every hosted check before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — OpenAPI drift gate line-ending correction
+
+**Changed:** The second cumulative review found that Windows checkout conversion
+made the OpenAPI round-trip gate pass locally while the committed blob's LF
+terminator would fail against a CRLF serializer on Ubuntu. The serializer now
+always emits LF, and `.gitattributes` pins the generated recording to LF so the
+worktree, index, and hosted runner evaluate the same bytes.
+
+**Now true:** `capture_openapi.py --check`, its four focused tests, Ruff, and
+strict mypy pass with an LF-only recording. The check still refuses any other
+format before comparing served and recorded leaves.
+
+**Could not verify:** Ubuntu execution remains for hosted CI; the local proof
+checks the same LF byte contract but cannot substitute for that runner.
+
+**Next:** Commit and obtain another fresh cumulative exact-head review.
+
+---
+
+## 2026-09-03 — backend — Hosted demo gate portability correction
+
+**Changed:** The first hosted run exposed two environment assumptions rather
+than product-route failures. The launcher cleanup regression now supplies its
+own temporary frontend dependency marker, so it reaches the mocked early-child
+failure without depending on a prior Node install. The four custom
+`ErrorResponse` 422 declarations now state `Unprocessable Content` explicitly
+instead of inheriting `HTTPStatus(422).phrase`, which is `Unprocessable Entity`
+on CI's Python 3.12 and `Unprocessable Content` on the local Python 3.14 used to
+record OpenAPI.
+
+**Now true:** The launcher and OpenAPI tests pass locally, the committed OpenAPI
+recording has zero added, removed, or changed leaves, and a clean temporary
+Python 3.12 environment independently reports the same zero-drift result. The
+fix does not ignore or normalize any OpenAPI field: it makes the served contract
+itself stable across the repository's supported Python versions.
+
+**Could not verify:** A hosted rerun and native PostgreSQL remain pending until
+this correction is committed and pushed. No external source, live account,
+model fit, calibrated availability, paid data, ToS change, or automation write
+path was exercised.
+
+**Next:** Run the cumulative code gate, obtain fresh exact-head review, and
+require every hosted check before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — Demo configuration isolation review remediation
+
+**Changed:** Fresh cumulative review found that clearing route settings alone did
+not stop the backend from loading unrelated values and credentials from the
+repository dotenv files, and the default bridge-secret path could still read a
+persisted real pairing secret. `get_settings` now has an explicit launcher-only
+dotenv opt-out. The launcher clears every `Settings` environment name and
+Fantrax cookie key, supplies controlled non-secret values, and points bridge
+pairing into the throwaway runtime directory. Its CORS value is encoded in the
+JSON form required by pydantic-settings before field validation.
+
+**Now true:** Under deliberately poisoned database, bind, mode, logging, CORS,
+bridge, Fantrax, userscript and dotenv-control variables, the demo seeded and
+served through one loopback Vite URL. Startup identified `hoops-gm-demo`,
+`development`, the selected loopback port, and the temporary SQLite store. The
+poison database and poison bridge-secret path were not created. Terminating the
+exact owned Vite PID made the launcher stop its exact backend child and delete
+the temporary database. Focused settings, launcher and OpenAPI tests, lint,
+format and strict type-check pass.
+
+**Could not verify:** Hosted reruns and native PostgreSQL remain pending. No
+external source, live account, model fit, calibrated availability, paid data,
+ToS change, or automation write path was exercised.
+
+**Next:** Run the cumulative gate, commit, obtain a fresh exact-head cumulative
+review, and require every hosted check before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — Portal rebase and termination review remediation
+
+**Changed:** Rebased the five portal commits onto authoritative main
+`0043a0ba3873506027e2231190538bb7dda84a58`, retaining that commit's transaction
+adapter, evidence documentation, FIT_VETOED holding and complete handoff blob as
+the exact prefix before restoring the portal append history. Fresh cumulative
+review then found two lifecycle/reproducibility gaps. The launcher now converts
+SIGTERM and POSIX SIGHUP into the same orderly unwind as Ctrl+C, restoring prior
+handlers afterward. OpenAPI capture now uses a `Settings` subclass whose only
+configuration source is the explicit constructor, rather than merely disabling
+dotenv while still accepting ambient environment values.
+
+**Now true:** Focused tests prove the termination handler requests orderly
+shutdown, exercise real SIGTERM conversion on POSIX, and run the exact OpenAPI
+comparison with malformed ambient log level, port and CORS values. The complete
+post-rebase gates pass: 2,484 backend tests, 418 frontend tests, 95 userscript
+tests, lint, format, strict types, builds, OpenAPI, secrets, document terminators,
+backlog graph and whitespace. The transaction increment is inherited unchanged
+and the portal composition still creates no opportunity rows or classes.
+
+**Could not verify:** Hosted Linux SIGTERM, hosted PostgreSQL and all new PR
+checks remain pending. No external
+source, live account, model fit, calibrated availability, paid data, ToS change,
+or automation write path was exercised.
+
+**Next:** Commit, obtain a fresh exact-head cumulative review, and require the
+superseding hosted check set before ordinary-code merge.

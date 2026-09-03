@@ -46,8 +46,8 @@ export function ReliabilityPage() {
         <h1>Reliability</h1>
         <p className="page__lede">
           Direct availability observations and played-game production consistency, kept separate.
-          These are historical descriptions, not durability grades, season games played, projected
-          games, or <code>p(play)</code>.
+          Each cohort below states whether its evidence is historical or synthetic. Nothing here is
+          a durability grade, season games played, projected games, or <code>p(play)</code>.
         </p>
       </header>
 
@@ -75,6 +75,9 @@ function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResp
     [filter, query, rows],
   )
   const visible = filtered.slice(0, visibleLimit)
+  const isSyntheticDemo =
+    payload.lineage.schedule_source.startsWith('synthetic-demo:') ||
+    payload.lineage.observation_source.startsWith('synthetic-demo:')
 
   const changeQuery = (value: string) => {
     setQuery(value)
@@ -117,6 +120,19 @@ function ReliabilityScorecards({ payload }: { payload: ReliabilityScorecardsResp
           </div>
         </dl>
       </section>
+
+      {isSyntheticDemo ? (
+        <p
+          className="reliability__warning reliability__synthetic-warning"
+          role="note"
+          data-testid="synthetic-demo-warning"
+        >
+          <strong>Synthetic demo cohort.</strong> Every game, box score, and resulting
+          played-game observation is invented solely to exercise the interface. This is not
+          historical evidence, a projection, a recommendation, calibrated availability, or{' '}
+          <code>p(play)</code>.
+        </p>
+      ) : null}
 
       <p className="reliability__warning" role="note" data-testid="coverage-warning">
         <strong>Incomplete opportunity coverage.</strong> Rates below use only direct play and
@@ -210,7 +226,7 @@ function ReliabilityPlayer({ row }: { row: ReliabilityRow }) {
       <summary>
         <span className="reliability-card__player">
           <strong>{row.displayName}</strong>
-          <small>NBA player id {card.player_id}</small>
+          <small>Internal player record {card.player_id}</small>
         </span>
         <EvidenceSummary evidence={card.availability.overall} />
         <B2BSummary evidence={card.availability.back_to_back} />
@@ -376,6 +392,7 @@ function Lineage({ payload }: { payload: ReliabilityScorecardsResponse }) {
         <div className="facts__row">
           <dt>Schedule cohort</dt>
           <dd>
+            source <code>{payload.lineage.schedule_source}</code> · version{' '}
             <code>{payload.lineage.schedule_version}</code> · refreshed{' '}
             <code>{payload.lineage.schedule_refreshed_at}</code>
           </dd>
@@ -383,12 +400,14 @@ function Lineage({ payload }: { payload: ReliabilityScorecardsResponse }) {
         <div className="facts__row">
           <dt>Observation cohort</dt>
           <dd>
+            source <code>{payload.lineage.observation_source}</code> · version{' '}
             <code>{payload.lineage.source_version}</code>
           </dd>
         </div>
         <div className="facts__row">
           <dt>Derivation</dt>
           <dd>
+            source <code>{payload.lineage.derivation_source}</code> · version{' '}
             <code>{payload.lineage.derivation_version}</code> · computed{' '}
             <code>{payload.lineage.computed_at}</code>
           </dd>

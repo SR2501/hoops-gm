@@ -85,9 +85,12 @@ export interface ReliabilityLineage {
   season_type: string
   window_start: string
   as_of_date: string
+  schedule_source: string
   schedule_version: string
   schedule_refreshed_at: string
+  observation_source: string
   source_version: string
+  derivation_source: string
   derivation_version: string
   computed_at: string
 }

@@ -197,8 +197,11 @@ class ReliabilityLineageModel(BaseModel):
     as_of_date: date
     schedule_version: str
     schedule_refreshed_at: datetime
+    schedule_source: str
     source_version: str
+    observation_source: str
     derivation_version: str
+    derivation_source: str
     computed_at: datetime
 
 
@@ -434,7 +437,35 @@ def _scorecard(
     )
 
 
-def _response(run: ReliabilityRun, names: Mapping[int, str]) -> ReliabilityScorecardsResponse:
+def _published_sources(session: Session, *, season: str) -> Mapping[RefreshArtifactType, str]:
+    sources: dict[RefreshArtifactType, str] = {}
+    for artifact_type, artifact_key in (
+        (RefreshArtifactType.SCHEDULE, SCHEDULE_KEY),
+        (RefreshArtifactType.SOURCE, RELIABILITY_SOURCE_KEY),
+        (RefreshArtifactType.MODEL, RELIABILITY_DERIVATION_KEY),
+    ):
+        refresh = current_refresh(
+            session,
+            artifact_type,
+            artifact_key=artifact_key,
+            season=season,
+        )
+        if refresh is None:
+            raise _error(
+                409,
+                "reliability_not_current",
+                f"season {season!r} lost its current {artifact_type.value}:{artifact_key} "
+                "cohort while reliability evidence was being computed",
+            )
+        sources[artifact_type] = refresh.source
+    return sources
+
+
+def _response(
+    run: ReliabilityRun,
+    names: Mapping[int, str],
+    sources: Mapping[RefreshArtifactType, str],
+) -> ReliabilityScorecardsResponse:
     lineage = run.lineage
     return ReliabilityScorecardsResponse(
         season=lineage.season,
@@ -446,8 +477,11 @@ def _response(run: ReliabilityRun, names: Mapping[int, str]) -> ReliabilityScore
             as_of_date=lineage.as_of_date,
             schedule_version=lineage.schedule_version,
             schedule_refreshed_at=lineage.schedule_refreshed_at,
+            schedule_source=sources[RefreshArtifactType.SCHEDULE],
             source_version=lineage.source_version,
+            observation_source=sources[RefreshArtifactType.SOURCE],
             derivation_version=lineage.derivation_version,
+            derivation_source=sources[RefreshArtifactType.MODEL],
             computed_at=lineage.computed_at,
         ),
         counts=ReliabilityCohortCounts(
@@ -540,5 +574,7 @@ def get_reliability_scorecards(
     # The computation takes lineage scope reservations, which on SQLite are
     # no-op writes. Nothing here is persisted, so release them without
     # committing.
+    names = _player_names(session, run)
+    sources = _published_sources(session, season=EVIDENCE_SEASON)
     session.rollback()
-    return _response(run, _player_names(session, run))
+    return _response(run, names, sources)

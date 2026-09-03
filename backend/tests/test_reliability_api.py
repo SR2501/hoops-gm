@@ -257,6 +257,12 @@ def test_the_route_serves_scorecards_computed_from_the_store_it_reads(
     }
     assert fragile["availability"]["back_to_back"]["direct_non_play"] == 1
     assert body["lineage"]["source_version"] == claim.source_version
+    assert body["lineage"]["schedule_source"] == "test:canonical-schedule"
+    assert (
+        body["lineage"]["observation_source"]
+        == "nba_games+team_schedule+player_game_logs+player_participation"
+    )
+    assert body["lineage"]["derivation_source"] == "quant:reliability-descriptive-derivation"
 
 
 def test_a_scorecard_names_the_player_it_is_about(app: FastAPI, client: TestClient) -> None:

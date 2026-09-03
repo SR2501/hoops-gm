@@ -24,6 +24,10 @@ function overallEvidence(body: unknown): Record<string, unknown> {
   return record(record(firstScorecard(body).availability).overall)
 }
 
+function lineage(body: unknown): Record<string, unknown> {
+  return record(record(body).lineage)
+}
+
 function firstRatioCategory(body: unknown): Record<string, unknown> {
   const categories = record(firstScorecard(body).production).categories
   if (!Array.isArray(categories)) throw new Error('Expected categories.')
@@ -88,6 +92,15 @@ describe('reliability endpoint contract', () => {
     }],
     ['missing category', (body) => {
       categories(body).pop()
+    }],
+    ['missing schedule source', (body) => {
+      delete lineage(body).schedule_source
+    }],
+    ['missing observation source', (body) => {
+      delete lineage(body).observation_source
+    }],
+    ['missing derivation source', (body) => {
+      delete lineage(body).derivation_source
     }],
   ])('rejects %s', async (_name, mutate) => {
     const body: unknown = structuredClone(recorded)

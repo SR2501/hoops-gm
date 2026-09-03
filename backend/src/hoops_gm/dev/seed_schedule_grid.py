@@ -82,6 +82,9 @@ from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
+from hoops_gm.dev.seed_reliability_demo import (
+    DEMO_GAME_IDS as RELIABILITY_DEMO_GAME_IDS,
+)
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_league_settings, import_schedule, import_teams
 from hoops_gm.ingest.league_settings import (
@@ -163,11 +166,11 @@ def _require_no_real_ingest(session: Session) -> None:
     Neither is written by any module under ``hoops_gm.dev``, which is what
     makes their presence conclusive rather than suggestive:
 
-    * **any ``player_participation`` row.** No seeder writes this table. It is
-      the availability ledger, the thing this whole project is for.
-    * **any ``nba_games`` row for a season other than this one.** Every seeder
-      parses with ``season=SEASON``, so a different season cannot have come
-      from here.
+    * **any ``player_participation`` row.** The unified Reliability demo writes
+      played-game logs only, because the participation writer correctly labels
+      its input as NBA evidence and must not receive invented observations.
+    * **any ``nba_games`` row for a season other than this one, outside the
+      unified demo's three synthetic reliability game ids.**
 
     Deliberately *not* keyed on ``players`` or ``nba_teams``: ``seed_projections``
     imports 580 players and ``import_teams`` writes 30 teams, so those tables
@@ -205,13 +208,19 @@ def _require_no_real_ingest(session: Session) -> None:
 
     if NbaGame.__tablename__ in tables:
         foreign_season = session.scalar(
-            select(NbaGame.season).where(NbaGame.season != SEASON).limit(1)
+            select(NbaGame.season)
+            .where(
+                NbaGame.season != SEASON,
+                NbaGame.nba_game_id.not_in(RELIABILITY_DEMO_GAME_IDS),
+            )
+            .limit(1)
         )
         if foreign_season is not None:
             raise DemoSeedRefused(
-                f"this database holds {foreign_season!r} games, and every seeder here only "
-                f"ever writes {SEASON}. That makes it a real store rather than a throwaway. "
-                "Nothing was written. Use a throwaway --database-url."
+                f"this database holds {foreign_season!r} games outside the unified demo's "
+                f"exact synthetic reliability markers; every other seeder writes only {SEASON}. "
+                "That makes it a real store rather than a throwaway. Nothing was written. "
+                "Use a throwaway --database-url."
             )
 
 

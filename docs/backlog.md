@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**73 done - 0 blocked - 119 pending - 192 total**
+**74 done - 0 blocked - 118 pending - 192 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1758,7 +1758,7 @@ Shadow-DOM overlay rendering hoops-gm recommendations directly on Fantrax pages,
 
 ### `openapi-recorded-drift-check` - Giving the recorded OpenAPI document a capture script and a drift check
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `backend-skeleton`, `frontend-skeleton`
 
 **`frontend/src/test/openapi.recorded.json` silently stopped describing the API
