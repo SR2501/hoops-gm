@@ -420,8 +420,12 @@ when identity was wrong. A zero-valued reason contributes neither to the total
 nor to the warning. Before any count can publish, each participant entry must
 carry the exact identifier, slot, total and reason-map shape; participant totals
 and the complete participant-plus-unattributed partition must reconcile exactly
-to the aggregate by reason. A malformed or inconsistent partition invalidates
-the whole response rather than salvaging its aggregate.
+to the aggregate by reason, with each participant id and team slot appearing
+exactly once even when its total is zero. The top-level counts also conserve
+every persisted observation exactly: observed equals applied plus pending plus
+permanently skipped. Blocked and retryable remain pending classifications, not
+additional dispositions. A malformed or inconsistent partition invalidates the
+whole response rather than salvaging its aggregate.
 Freshness entries are likewise accepted only with the complete backend shape,
 paired timestamps and ages, and a `silent` value consistent with the backend's
 instant/contact clock rule. Reported ages and claim skew must reproduce from the

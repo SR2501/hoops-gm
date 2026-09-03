@@ -1855,6 +1855,41 @@
       instantTotal <= report.observation_count;
   }
 
+  function hasUniqueParticipantIdentities(participants) {
+    const participantIds = new Set();
+    const teamSlots = new Set();
+    for (const participant of participants) {
+      if (
+        !participant ||
+        participantIds.has(participant.participant_id) ||
+        teamSlots.has(participant.team_slot)
+      ) {
+        return false;
+      }
+      participantIds.add(participant.participant_id);
+      teamSlots.add(participant.team_slot);
+    }
+    return true;
+  }
+
+  function observationCountsAreConserved(report) {
+    const skippedEntries = reasonEntries(report.skipped);
+    if (skippedEntries === null) {
+      return false;
+    }
+    let accountedFor = report.applied_count + report.pending_count;
+    if (!Number.isSafeInteger(accountedFor)) {
+      return false;
+    }
+    for (const [, count] of skippedEntries) {
+      accountedFor += count;
+      if (!Number.isSafeInteger(accountedFor)) {
+        return false;
+      }
+    }
+    return accountedFor === report.observation_count;
+  }
+
   function isBoardRegressionResponse(value) {
     return hasExactKeys(value, [
       "source_seat",
@@ -1879,7 +1914,8 @@
     if (
       aggregateEntries === null ||
       unattributedEntries === null ||
-      !Array.isArray(report.skipped_by_participant)
+      !Array.isArray(report.skipped_by_participant) ||
+      !hasUniqueParticipantIdentities(report.skipped_by_participant)
     ) {
       return false;
     }
@@ -1969,6 +2005,7 @@
       report.blocked.every((reason) => typeof reason === "string") &&
       isReasonMap(report.retryable) &&
       isConsistentSkipPartition(report) &&
+      observationCountsAreConserved(report) &&
       isNonNegativeInteger(report.last_sequence) &&
       Array.isArray(report.board_regressions) &&
       report.board_regressions.every(isBoardRegressionResponse);

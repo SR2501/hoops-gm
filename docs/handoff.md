@@ -34407,3 +34407,18 @@ source instants, empty independent outcomes, contradictory and legitimate
 shared artifacts, and transition from current to stale/silent without another
 response. The full userscript suite passes **123/123**. Fresh exact-head review
 is required; live Fantrax DOM/network and real draft timing remain unverified.
+**Eighth review addendum:** Exact-head cumulative review of `1aea921`
+found two remaining count-partition false greens. Feed acceptance now conserves
+every observation exactly as `applied + pending + permanent skipped`, with
+safe-integer overflow refusal; blocked and retryable remain pending
+classifications and are not double-counted. `skipped_by_participant` now rejects
+duplicate participant ids and duplicate team slots before accumulation,
+including zero-count and otherwise-reconciled positive duplicates. Every
+malformed case clears prior feed evidence and renders status uncheckable. Two
+source-mutated validators prove the conservation and uniqueness assertions fail
+when either guard is removed. Userscript tests/build pass (**125/125**); backend
+Ruff/format/mypy/full pytest, scripts Ruff/format, OpenAPI and backlog checks,
+and frontend lint/type-check/**418/418**/build plus scripts ESLint all pass. This
+remains Code-only: no write path or authority changed. Fresh exact-head review
+and hosted checks are still required. Live Fantrax, Tampermonkey, persisted-draft
+mapping, and draft-clock behavior remain unverified.

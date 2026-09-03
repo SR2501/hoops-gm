@@ -11,8 +11,10 @@ function toPlain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function loadCapture(overrides = {}) {
-  const source = await readFile(new URL("../src/capture.js", import.meta.url), "utf8");
+async function loadCapture(overrides = {}, transformSource = (source) => source) {
+  const source = transformSource(
+    await readFile(new URL("../src/capture.js", import.meta.url), "utf8")
+  );
   const context = {
     console,
     URL,
@@ -2256,6 +2258,19 @@ function stripNodes(strip) {
 }
 
 function makeFeedStatus(overrides = {}) {
+  const observationCount = overrides.observation_count ?? 8;
+  const pendingCount = overrides.pending_count ?? Math.min(1, observationCount);
+  const skippedCount =
+    overrides.skipped &&
+    typeof overrides.skipped === "object" &&
+    !Array.isArray(overrides.skipped)
+      ? Object.values(overrides.skipped).reduce(
+        (total, count) => Number.isSafeInteger(count) && count >= 0 ? total + count : total,
+        0
+      )
+      : 0;
+  const appliedCount =
+    overrides.applied_count ?? Math.max(0, observationCount - pendingCount - skippedCount);
   return {
     draft_id: 17,
     as_of: "2026-09-03T14:00:00Z",
@@ -2312,9 +2327,9 @@ function makeFeedStatus(overrides = {}) {
       only_official: [],
       caveats: [],
     },
-    observation_count: 8,
-    applied_count: 7,
-    pending_count: 1,
+    observation_count: observationCount,
+    applied_count: appliedCount,
+    pending_count: pendingCount,
     blocked: [],
     retryable: {},
     skipped: {},
@@ -3597,6 +3612,63 @@ test("feed validation rejects impossible source and reconciliation evidence", as
   );
 });
 
+test("feed validation conserves every observation across terminal dispositions", async () => {
+  const capture = await loadCapture();
+  const participant = {
+    participant_id: 101,
+    team_slot: 1,
+    total: 2,
+    reasons: { player_external_id_unreadable: 2 },
+  };
+  const valid = makeFeedStatus({
+    observation_count: 8,
+    applied_count: 3,
+    pending_count: 1,
+    skipped: {
+      player_external_id_unreadable: 2,
+      sale_without_amount: 2,
+    },
+    skipped_by_participant: [participant],
+    unattributed_skipped: { sale_without_amount: 2 },
+  });
+  const status = capture.createBridgeStatus({ version: "0.5.5" });
+  status.recordFeedStatus(valid, "league-one");
+  assert.equal(status.snapshot().feedStatus, "available");
+
+  const invalidReports = [
+    [
+      "observations exceed accounted dispositions",
+      makeFeedStatus({ observation_count: 9, applied_count: 7, pending_count: 1 }),
+    ],
+    [
+      "accounted dispositions exceed observations",
+      makeFeedStatus({ observation_count: 7, applied_count: 7, pending_count: 1 }),
+    ],
+    [
+      "disposition addition overflows the safe-integer range",
+      makeFeedStatus({
+        observation_count: Number.MAX_SAFE_INTEGER,
+        applied_count: Number.MAX_SAFE_INTEGER,
+        pending_count: 1,
+      }),
+    ],
+  ];
+  for (const [name, report] of invalidReports) {
+    status.recordFeedStatus(valid, "league-one");
+    status.recordFeedStatus(report, "league-one");
+    const snapshot = status.snapshot();
+    const lines = capture.formatStatusLines({
+      ...snapshot,
+      paired: true,
+      versionStatus: "current",
+    });
+    assert.equal(snapshot.feedStatus, "uncheckable", name);
+    assert.equal(snapshot.feedReport, null, `${name}: prior evidence must clear`);
+    assert.match(lines.refusal, /FEED STATUS UNCHECKABLE/, name);
+    assert.equal(lines.ok, false, name);
+  }
+});
+
 test("feed freshness ages on the existing watcher render without another response", async () => {
   const capture = await loadCapture();
   const report = makeFeedStatus({
@@ -3714,6 +3786,40 @@ test("feed validation rejects every malformed or unreconciled permanent-skip par
         skipped_by_participant: [participant({ team_slot: 0, total: 0, reasons: {} })],
       }),
     ],
+    [
+      "duplicate participant id with different slots",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ team_slot: 2, total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate team slot with different participant ids",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ participant_id: 102, total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate zero-count partition",
+      makeFeedStatus({
+        skipped_by_participant: [
+          participant({ total: 0, reasons: {} }),
+          participant({ total: 0, reasons: {} }),
+        ],
+      }),
+    ],
+    [
+      "duplicate positive partition otherwise reconciles",
+      makeFeedStatus({
+        skipped: { player_external_id_unreadable: 2 },
+        skipped_by_participant: [participant(), participant()],
+      }),
+    ],
   ];
 
   for (const [name, report] of invalidReports) {
@@ -3765,6 +3871,7 @@ test("feed validation accepts only reconciled participant and unattributed skip 
 
   const partitioned = linesAfter(
     makeFeedStatus({
+      observation_count: 12,
       skipped: {
         already_in_log: 3,
         player_external_id_unreadable: 3,
@@ -3813,6 +3920,46 @@ test("feed validation accepts only reconciled participant and unattributed skip 
   assert.equal(status.snapshot().feedStatus, "available");
   assert.equal(zero.refusal, null);
   assert.equal(zero.ok, true);
+});
+
+test("mutations removing feed conservation or partition identity checks are detected", async () => {
+  const conservationNeedle = "observationCountsAreConserved(report) &&";
+  const uniquenessNeedle = "!hasUniqueParticipantIdentities(report.skipped_by_participant)";
+  const withoutConservation = await loadCapture({}, (source) => {
+    assert.ok(source.includes(conservationNeedle));
+    return source.replace(conservationNeedle, "true &&");
+  });
+  const withoutUniqueness = await loadCapture({}, (source) => {
+    assert.ok(source.includes(uniquenessNeedle));
+    return source.replace(uniquenessNeedle, "false");
+  });
+
+  const conservationStatus = withoutConservation.createBridgeStatus({ version: "0.5.5" });
+  conservationStatus.recordFeedStatus(
+    makeFeedStatus({ observation_count: 9, applied_count: 7, pending_count: 1 }),
+    "league-one"
+  );
+  assert.equal(
+    conservationStatus.snapshot().feedStatus,
+    "available",
+    "the focused false-green assertion must kill a mutant without conservation"
+  );
+
+  const uniquenessStatus = withoutUniqueness.createBridgeStatus({ version: "0.5.5" });
+  uniquenessStatus.recordFeedStatus(
+    makeFeedStatus({
+      skipped_by_participant: [
+        { participant_id: 101, team_slot: 1, total: 0, reasons: {} },
+        { participant_id: 101, team_slot: 2, total: 0, reasons: {} },
+      ],
+    }),
+    "league-one"
+  );
+  assert.equal(
+    uniquenessStatus.snapshot().feedStatus,
+    "available",
+    "the focused false-green assertion must kill a mutant without identity uniqueness"
+  );
 });
 
 test("a league navigation invalidates an older in-flight feed response", async () => {
