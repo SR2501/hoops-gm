@@ -64,6 +64,14 @@ authoritative historical roster intervals and proof that every game returned a
 complete participation payload. Manufacturing a missing-opportunity count would
 turn that unknown into a false fact.
 
+As of 2026-09-02, Adapter-gated NBA and G League transaction archives provide
+dated roster-change, assignment, and recall evidence, but still lack complete
+opening membership, contract-expiration, suspension, and effective-time
+coverage. See `docs/adapters/nba-official-transactions.md`. They are evidence
+inputs only: `coverage_status=incomplete_r35`,
+`opportunity_coverage=null`, and the Reliability browser contract remain
+unchanged until an independent player-game denominator exists.
+
 Trend is the same direct-evidence calculation grouped by calendar month. No
 slope, smoothing, or direction label is fitted. Back-to-back evidence restricts
 the same direct observations to the player's historical team/game schedule row;

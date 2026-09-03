@@ -25,6 +25,7 @@ real scale even when it parses the trimmed copy.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -96,6 +97,29 @@ def _write(name: str, payload: Any, *, meta: dict[str, Any]) -> None:
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     print(f"  wrote {name} ({path.stat().st_size:,} bytes on disk)")
+
+
+def _write_raw_gzip(name: str, body: bytes, *, captured_at: datetime, meta: dict[str, Any]) -> None:
+    """Commit a losslessly compressed HTTP body without a JSON round-trip."""
+    FIXTURE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = FIXTURE_ROOT / name
+    with (
+        path.open("wb") as handle,
+        gzip.GzipFile(filename="", mode="wb", fileobj=handle, mtime=0) as compressor,
+    ):
+        compressor.write(body)
+    manifest = _load_manifest()
+    manifest[name] = {
+        "captured_at": captured_at.isoformat(),
+        "byte_size": len(body),
+        "byte_size_basis": "raw_http_body",
+        "compressed_byte_size": path.stat().st_size,
+        "compression": "gzip-mtime-zero",
+        "sha256": hashlib.sha256(body).hexdigest(),
+        **meta,
+    }
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=False), encoding="utf-8")
+    print(f"  wrote {name} ({len(body):,} raw bytes; {path.stat().st_size:,} compressed)")
 
 
 def _canonical_byte_size(path: Path) -> int:
@@ -752,6 +776,61 @@ def record_injury_report() -> None:
     print(f"  wrote {name} ({path.stat().st_size:,} bytes)")
 
 
+def record_official_transactions() -> None:
+    """Record both complete official transaction archives as exact response bytes."""
+    from hoops_gm.ingest.nba_transactions import (
+        G_LEAGUE_TRANSACTIONS_ENDPOINT,
+        G_LEAGUE_TRANSACTIONS_URL,
+        NBA_PLAYER_MOVEMENT_ENDPOINT,
+        NBA_PLAYER_MOVEMENT_URL,
+        SOURCE,
+        NbaOfficialTransactionsClient,
+    )
+    from hoops_gm.ingest.rawstore import RawPayloadStore
+
+    print("nba_official_transactions:")
+    store = RawPayloadStore(Path("data/raw"))
+    client = NbaOfficialTransactionsClient(store=store)
+    fixtures = (
+        (
+            NBA_PLAYER_MOVEMENT_ENDPOINT,
+            NBA_PLAYER_MOVEMENT_URL,
+            "nba_player_movement.json.gz",
+            (
+                "Complete response body, losslessly compressed without parsing or "
+                "re-serialization. Includes player rows and consideration-only trade rows."
+            ),
+        ),
+        (
+            G_LEAGUE_TRANSACTIONS_ENDPOINT,
+            G_LEAGUE_TRANSACTIONS_URL,
+            "nba_gleague_transactions.json.gz",
+            (
+                "Complete response body, losslessly compressed without parsing or "
+                "re-serialization. Includes assignment, recall, call-up and waiver rows."
+            ),
+        ),
+    )
+    for endpoint, url, name, note in fixtures:
+        client.fetch_json(endpoint, max_age=_never())
+        params = {"url": url}
+        capture = store.latest(source=SOURCE, endpoint=endpoint, params=params)
+        if capture is None:
+            raise RuntimeError(f"{endpoint} response was not captured")
+        _write_raw_gzip(
+            name,
+            capture.read_bytes(),
+            captured_at=capture.fetched_at,
+            meta={
+                "source": SOURCE,
+                "endpoint": endpoint,
+                "params": params,
+                "trimmed": False,
+                "note": note,
+            },
+        )
+
+
 def _never() -> Any:
     from datetime import timedelta
 
@@ -763,9 +842,10 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "fantrax": record_fantrax,
     "fantrax-league-settings": record_fantrax_league_settings,
     "nba": record_nba,
+    "nba-transactions": record_official_transactions,
     "injury_report": record_injury_report,
 }
-ALL_COMMANDS = ("fantrax", "nba", "cohort-reconciliation")
+ALL_COMMANDS = ("fantrax", "nba", "nba-transactions", "cohort-reconciliation")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -169,6 +169,21 @@
     "source": "nba_stats",
     "trimmed": false
   },
+  "nba_gleague_transactions.json.gz": {
+    "byte_size": 3701195,
+    "byte_size_basis": "raw_http_body",
+    "captured_at": "2026-09-03T02:43:25.893426+00:00",
+    "compressed_byte_size": 259013,
+    "compression": "gzip-mtime-zero",
+    "endpoint": "GLeagueTransactions",
+    "note": "Complete response body, losslessly compressed without parsing or re-serialization. Includes assignment, recall, call-up and waiver rows.",
+    "params": {
+      "url": "https://gleague.nba.com/api/transactions/fetchTransactions"
+    },
+    "sha256": "ce21d2a2ae0b76944952364b0122481c10115b177c28ea59055b68d5bbb38ac8",
+    "source": "nba_official_transactions",
+    "trimmed": false
+  },
   "nba_injury_report_2025-11-01_0530pm.pdf": {
     "byte_size": 78771,
     "captured_at": "2026-08-17T21:56:00+00:00",
@@ -244,6 +259,21 @@
     },
     "source": "nba_stats",
     "trimmed": true
+  },
+  "nba_player_movement.json.gz": {
+    "byte_size": 4135059,
+    "byte_size_basis": "raw_http_body",
+    "captured_at": "2026-09-03T02:43:24.157228+00:00",
+    "compressed_byte_size": 325539,
+    "compression": "gzip-mtime-zero",
+    "endpoint": "NBAPlayerMovement",
+    "note": "Complete response body, losslessly compressed without parsing or re-serialization. Includes player rows and consideration-only trade rows.",
+    "params": {
+      "url": "https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json"
+    },
+    "sha256": "a5597174e2ac7b07d2654f7e875225a42c01c2df445d2085c585508345ae63d4",
+    "source": "nba_official_transactions",
+    "trimmed": false
   },
   "nba_playergamelogs_cohort_window_2025_26.json": {
     "byte_size": 105585,
