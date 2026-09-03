@@ -34056,3 +34056,38 @@ or automation write path was exercised.
 
 **Next:** Commit, obtain a fresh exact-head cumulative review, and require the
 superseding hosted check set before ordinary-code merge.
+
+---
+
+## 2026-09-03 — backend — Fantrax league to draft feed resolution
+
+**Changed:** Added the loopback-only `GET
+/api/v1/drafts/by-fantrax-league/feed?fantrax_league_id=...` contract. It joins
+the external Fantrax league identifier to persisted drafts, reads at most two
+matches, and returns the existing `FeedStatusResponse` only when exactly one
+draft matches. Zero matches return
+`draft_for_fantrax_league_not_found`/404; multiple matches return
+`draft_for_fantrax_league_ambiguous`/409. Required, blank, whitespace-bearing
+and overlong identifiers are rejected at the schema boundary. The existing
+by-id feed route now shares the same response helper, and the recorded OpenAPI
+contract includes the resolver.
+
+**Now true:** The later userscript status-strip unit can submit the Fantrax
+league id already present in the page URL and receive the exact local
+`draft_id`, observation/applied/pending counts, blocked/retryable/skipped
+accounting, reconciliation, regressions and server-clock freshness in one
+response. It never needs to call `GET /drafts`, poll every draft, select the
+newest draft, or invent a parallel status shape. No draft, league, participant,
+source-board or source-profile row is changed by this read.
+
+**Could not verify:** Native PostgreSQL and hosted CI were not available during
+the local run. No live Fantrax page, account, external request, browser
+userscript consumer, NBA auction board, write path or automation action was
+exercised. Local backend lint, format, strict mypy, targeted API tests, the full
+SQLite suite, frontend lint/typecheck/tests/build, userscript tests/build,
+SQLite migration round-trip, OpenAPI drift, secret scan, document terminators,
+backlog graph and diff whitespace passed.
+
+**Next:** The bridge lane should call the resolver only on a Fantrax league
+page, render its existing feed fields, and surface both named 404/409 refusals;
+it must not fall back to `GET /drafts` or infer auction-board support.

@@ -1,11 +1,15 @@
 """The feed's contract: what the board heard, when, and how much to trust it.
 
-Three endpoints, and the split matters.
+Four endpoints, and the split matters.
 
 ``GET /drafts/{id}/feed`` reports. It is safe to poll, takes no lock, and is
 the screen's answer to the question a live draft makes urgent: *is this board
 current, or am I looking at a photograph?* Every figure it publishes carries
 the clock it was computed on and the provenance it came from.
+
+``GET /drafts/by-fantrax-league/feed`` publishes that exact same status after
+requiring the external Fantrax league id to identify exactly one local draft.
+Zero or multiple matches refuse; it never lists every draft or chooses one.
 
 ``POST /drafts/{id}/feed/ingest`` reads the sources and, optionally, appends
 what they imply to the log.
@@ -43,21 +47,33 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.db.models.draft import Draft
+from hoops_gm.db.models.league import League
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed import service as feed_service
 from hoops_gm.draft.feed.observations import ObservedInstant, UnrecognisedShape
 from hoops_gm.draft.feed.reconcile import ReconciliationReport, SourceFreshness
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
+
+FantraxLeagueId = Annotated[
+    str,
+    Query(
+        min_length=1,
+        max_length=64,
+        pattern=r"^\S+$",
+        description="The external Fantrax league identifier present in the browser URL.",
+    ),
+]
 
 
 def _error(status_code: int, code: str, detail: str) -> HTTPException:
@@ -594,6 +610,11 @@ def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
     )
 
 
+def _feed_status_response(session: Any, draft: Draft) -> FeedStatusResponse:
+    """Render the one canonical feed-status contract for either draft lookup."""
+    return _status_out(feed_service.feed_status(session, draft))
+
+
 def _source_board_out(evidence: feed_service.SourceBoardEvidence) -> SourceBoardResponse:
     board = evidence.board
     return SourceBoardResponse(
@@ -684,6 +705,50 @@ def get_source_board(draft_id: int, session: SessionDep, request: Request) -> So
 
 
 @router.get(
+    "/by-fantrax-league/feed",
+    response_model=FeedStatusResponse,
+    responses={
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
+    },
+    summary="Feed status for the only local draft matching a Fantrax league",
+)
+def get_feed_status_by_fantrax_league(
+    fantrax_league_id: FantraxLeagueId,
+    session: SessionDep,
+    request: Request,
+) -> FeedStatusResponse:
+    """Resolve one external league id without listing or guessing among drafts."""
+    require_loopback_host(
+        request,
+        error_code="drafts_local_only",
+        detail="Draft feed status is only served to the local machine.",
+    )
+    drafts = session.scalars(
+        select(Draft)
+        .join(League, Draft.league_id == League.id)
+        .where(League.fantrax_league_id == fantrax_league_id)
+        .order_by(Draft.id)
+        .limit(2)
+    ).all()
+    if not drafts:
+        raise _error(
+            404,
+            "draft_for_fantrax_league_not_found",
+            f"no draft matches Fantrax league {fantrax_league_id!r}",
+        )
+    if len(drafts) > 1:
+        raise _error(
+            409,
+            "draft_for_fantrax_league_ambiguous",
+            f"multiple drafts match Fantrax league {fantrax_league_id!r}",
+        )
+    return _feed_status_response(session, drafts[0])
+
+
+@router.get(
     "/{draft_id}/feed",
     response_model=FeedStatusResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -703,7 +768,7 @@ def get_feed_status(draft_id: int, session: SessionDep, request: Request) -> Fee
         detail="Draft feed status is only served to the local machine.",
     )
     draft = _require_draft(session, draft_id)
-    return _status_out(feed_service.feed_status(session, draft))
+    return _feed_status_response(session, draft)
 
 
 @router.post(

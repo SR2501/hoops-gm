@@ -16,6 +16,7 @@ from the app but is still registered somewhere" - the routing table says which.
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -23,6 +24,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from hoops_gm.app import create_app
+from hoops_gm.core.config import Settings
+from hoops_gm.db.base import Base
 from hoops_gm.db.models.draft import Draft
 from hoops_gm.db.models.enums import DraftType
 from hoops_gm.db.models.league import League
@@ -39,9 +43,10 @@ def _league(
     roster_size: int = 2,
     budget: Decimal | None = Decimal("200.00"),
     name: str = "api mock",
+    fantrax_league_id: str | None = None,
 ) -> League:
     league = League(
-        fantrax_league_id=None,
+        fantrax_league_id=fantrax_league_id,
         name=name,
         season="2026-27",
         draft_type=draft_type,
@@ -500,6 +505,106 @@ def test_the_list_reports_enough_to_choose_a_draft(client: TestClient, session: 
     assert all(row["last_sequence"] == 0 for row in listed)
 
 
+def test_fantrax_league_resolves_to_the_existing_feed_status(
+    client: TestClient, session: Session
+) -> None:
+    league = _league(session, fantrax_league_id="fantrax-league-one")
+    draft = _create(client, league)
+
+    resolved = client.get(
+        "/api/v1/drafts/by-fantrax-league/feed",
+        params={"fantrax_league_id": league.fantrax_league_id},
+    )
+    by_id = client.get(f"/api/v1/drafts/{draft['id']}/feed")
+
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["draft_id"] == draft["id"]
+    resolved_status = resolved.json()
+    by_id_status = by_id.json()
+    resolved_status.pop("as_of")
+    by_id_status.pop("as_of")
+    assert resolved_status == by_id_status
+
+
+def test_fantrax_league_resolution_refuses_zero_drafts(
+    client: TestClient, session: Session
+) -> None:
+    league = _league(session, fantrax_league_id="fantrax-without-a-draft")
+
+    response = client.get(
+        "/api/v1/drafts/by-fantrax-league/feed",
+        params={"fantrax_league_id": league.fantrax_league_id},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "draft_for_fantrax_league_not_found"
+
+
+def test_fantrax_league_resolution_refuses_multiple_drafts(
+    client: TestClient, session: Session
+) -> None:
+    league = _league(session, fantrax_league_id="fantrax-with-two-drafts")
+    first = _create(client, league, name="first")
+    second = _create(client, league, name="second")
+
+    response = client.get(
+        "/api/v1/drafts/by-fantrax-league/feed",
+        params={"fantrax_league_id": league.fantrax_league_id},
+    )
+
+    assert first["id"] != second["id"], "The ambiguity test needs two distinct draft rows."
+    assert response.status_code == 409
+    assert response.json()["error"] == "draft_for_fantrax_league_ambiguous"
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {},
+        {"fantrax_league_id": ""},
+        {"fantrax_league_id": "contains whitespace"},
+        {"fantrax_league_id": "x" * 65},
+    ],
+    ids=["absent", "empty", "whitespace", "too-long"],
+)
+def test_fantrax_league_resolution_refuses_malformed_identifiers(
+    client: TestClient, params: dict[str, str]
+) -> None:
+    response = client.get("/api/v1/drafts/by-fantrax-league/feed", params=params)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+
+
+def test_fantrax_league_resolution_is_local_only(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="development",
+        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+        bridge_secret_path=tmp_path / "bridge_secret",
+        _env_file=None,
+    )
+    app = create_app(settings)
+    with TestClient(app) as non_local_client:
+        Base.metadata.create_all(app.state.database.engine)
+        response = non_local_client.get(
+            "/api/v1/drafts/by-fantrax-league/feed",
+            params={"fantrax_league_id": "fantrax-league-one"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "drafts_local_only"
+
+
+def test_fantrax_league_resolution_reuses_the_feed_status_schema(client: TestClient) -> None:
+    operation = client.get("/openapi.json").json()["paths"][
+        "/api/v1/drafts/by-fantrax-league/feed"
+    ]["get"]
+
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/FeedStatusResponse"
+    }
+
+
 def test_a_snake_draft_publishes_whose_turn_it_is(client: TestClient, session: Session) -> None:
     league = _league(
         session,
@@ -853,10 +958,11 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     own. A separate prefix would have left this exact-set assertion untouched
     and passing while adding unscanned draft routes, which is evading the check
     rather than satisfying it. ``GET /feed`` reports freshness and
-    reconciliation, ``GET /source-board`` reports rendered source evidence,
-    and ``POST /feed/ingest`` appends only independently attributed RPC claims
-    through ``draft_service``. None offers edit or delete, so the property this
-    test defends still holds over the wider surface.
+    reconciliation, the Fantrax-league resolver returns that same status only
+    after finding exactly one local draft, ``GET /source-board`` reports rendered
+    source evidence, and ``POST /feed/ingest`` appends only independently
+    attributed RPC claims through ``draft_service``. None offers edit or delete,
+    so the property this test defends still holds over the wider surface.
     """
     document = cast("FastAPI", client.app).openapi()
     draft_routes = {
@@ -869,6 +975,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
 
     assert {path for path, _ in draft_routes} == {
         "/api/v1/drafts",
+        "/api/v1/drafts/by-fantrax-league/feed",
         "/api/v1/drafts/{draft_id}",
         "/api/v1/drafts/{draft_id}/events",
         "/api/v1/drafts/{draft_id}/feed",
@@ -882,6 +989,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     assert draft_routes == {
         ("/api/v1/drafts", "GET"),
         ("/api/v1/drafts", "POST"),
+        ("/api/v1/drafts/by-fantrax-league/feed", "GET"),
         ("/api/v1/drafts/{draft_id}", "GET"),
         ("/api/v1/drafts/{draft_id}/events", "GET"),
         ("/api/v1/drafts/{draft_id}/events", "POST"),
