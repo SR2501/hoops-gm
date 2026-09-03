@@ -21,22 +21,55 @@ def _load_script() -> ModuleType:
     return module
 
 
-def test_launcher_replaces_ambient_backend_routing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_launcher_replaces_ambient_backend_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     module = _load_script()
     monkeypatch.setenv("DATABASE_URL", "postgresql://real-season")
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("HOST", "0.0.0.0")
     monkeypatch.setenv("PORT", "9999")
+    monkeypatch.setenv("LOG_LEVEL", "NOT_A_LEVEL")
+    monkeypatch.setenv("LOG_FORMAT", "not-a-format")
+    monkeypatch.setenv("BRIDGE_SECRET", "live-secret")
+    monkeypatch.setenv("BRIDGE_SECRET_PATH", str(tmp_path / "live-secret-path"))
+    monkeypatch.setenv("FANTRAX_COOKIE", "live-cookie")
+    monkeypatch.setenv("FANTRAX_USER_SECRET_ID", "live-user-secret")
+    monkeypatch.setenv("FANTRAX_LEAGUE_ID", "live-league")
+    monkeypatch.setenv("FANTRAX_COOKIE_KEY", "live-cookie-key")
     monkeypatch.setenv("HOOPS_GM_DATABASE_URL", "sqlite:///also-wrong.db")
     monkeypatch.setenv("database_url", "sqlite:///case-folded-wrong.db")
+    monkeypatch.setenv("hoops_gm_disable_dotenv", "0")
+    bridge_secret_path = tmp_path / "demo-secret"
 
-    env = module._python_env("sqlite:///throwaway.db", port=8123)
+    env = module._python_env(
+        "sqlite:///throwaway.db",
+        port=8123,
+        bridge_secret_path=bridge_secret_path,
+        cors_origin="http://127.0.0.1:5173",
+    )
 
     assert env["DATABASE_URL"] == "sqlite:///throwaway.db"
+    assert env["APP_NAME"] == "hoops-gm-demo"
     assert env["ENVIRONMENT"] == "development"
     assert env["HOST"] == "127.0.0.1"
     assert env["PORT"] == "8123"
-    assert not any(key.upper().startswith("HOOPS_GM_") for key in env)
+    assert env["LOG_LEVEL"] == "INFO"
+    assert env["LOG_FORMAT"] == "console"
+    assert env["DATABASE_ECHO"] == "false"
+    assert env["BRIDGE_MAX_PAYLOAD_BYTES"] == "1048576"
+    assert env["CORS_ORIGINS"] == '["http://127.0.0.1:5173"]'
+    assert env["BRIDGE_SECRET_PATH"] == str(bridge_secret_path)
+    assert env["HOOPS_GM_DISABLE_DOTENV"] == "1"
+    for name in (
+        "BRIDGE_SECRET",
+        "FANTRAX_COOKIE",
+        "FANTRAX_USER_SECRET_ID",
+        "FANTRAX_LEAGUE_ID",
+        "FANTRAX_COOKIE_KEY",
+    ):
+        assert name not in env
 
 
 def test_launcher_replaces_ambient_frontend_routing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -7,6 +7,7 @@ a log line or an error response by accident.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -18,6 +19,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[3]
 REPO_ROOT = BACKEND_DIR.parent
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+DISABLE_DOTENV_ENV_VAR = "HOOPS_GM_DISABLE_DOTENV"
 
 
 def _split_csv(value: object) -> object:
@@ -127,4 +129,6 @@ def get_settings() -> Settings:
     settings under a patched environment, and a module-level cache turns that
     into a debugging exercise.
     """
+    if os.environ.get(DISABLE_DOTENV_ENV_VAR) == "1":
+        return Settings(_env_file=None)
     return Settings()

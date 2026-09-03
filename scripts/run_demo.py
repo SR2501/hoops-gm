@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -17,6 +18,26 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND = REPO_ROOT / "backend"
 FRONTEND = REPO_ROOT / "frontend"
 STARTUP_TIMEOUT_SECONDS = 45.0
+_BACKEND_SETTING_NAMES = (
+    "APP_NAME",
+    "ENVIRONMENT",
+    "HOST",
+    "PORT",
+    "LOG_LEVEL",
+    "LOG_FORMAT",
+    "DATABASE_URL",
+    "DATABASE_ECHO",
+    "BRIDGE_MAX_PAYLOAD_BYTES",
+    "CORS_ORIGINS",
+    "BRIDGE_SECRET",
+    "BRIDGE_SECRET_PATH",
+    "FANTRAX_USER_SECRET_ID",
+    "FANTRAX_LEAGUE_ID",
+    "FANTRAX_COOKIE",
+    "FANTRAX_COOKIE_KEY",
+    "USERSCRIPT_DIST_PATH",
+)
+_DISABLE_DOTENV_ENV_VAR = "HOOPS_GM_DISABLE_DOTENV"
 
 
 def _base_env() -> dict[str, str]:
@@ -34,14 +55,33 @@ def _remove_env(env: dict[str, str], *names: str) -> None:
             env.pop(key)
 
 
-def _python_env(database_url: str | None = None, *, port: int | None = None) -> dict[str, str]:
+def _python_env(
+    database_url: str | None = None,
+    *,
+    port: int | None = None,
+    bridge_secret_path: Path,
+    cors_origin: str,
+) -> dict[str, str]:
     env = _base_env()
     source = str(BACKEND / "src")
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = source if not existing else os.pathsep.join((source, existing))
-    _remove_env(env, "DATABASE_URL", "ENVIRONMENT", "HOST", "PORT")
-    env["ENVIRONMENT"] = "development"
-    env["HOST"] = "127.0.0.1"
+    _remove_env(env, *_BACKEND_SETTING_NAMES, _DISABLE_DOTENV_ENV_VAR)
+    env.update(
+        {
+            _DISABLE_DOTENV_ENV_VAR: "1",
+            "APP_NAME": "hoops-gm-demo",
+            "ENVIRONMENT": "development",
+            "HOST": "127.0.0.1",
+            "LOG_LEVEL": "INFO",
+            "LOG_FORMAT": "console",
+            "DATABASE_ECHO": "false",
+            "BRIDGE_MAX_PAYLOAD_BYTES": "1048576",
+            "CORS_ORIGINS": json.dumps([cors_origin]),
+            "BRIDGE_SECRET_PATH": str(bridge_secret_path),
+            "USERSCRIPT_DIST_PATH": str(REPO_ROOT / "userscript" / "dist" / "hoops-gm.user.js"),
+        }
+    )
     if database_url is not None:
         env["DATABASE_URL"] = database_url
     if port is not None:
@@ -121,7 +161,9 @@ def main() -> int:
 
     processes: list[subprocess.Popen[bytes]] = []
     with tempfile.TemporaryDirectory(prefix="hoops-gm-demo-") as directory:
-        database_url = _sqlite_url(Path(directory) / "demo.db")
+        runtime_directory = Path(directory)
+        database_url = _sqlite_url(runtime_directory / "demo.db")
+        bridge_secret_path = runtime_directory / "bridge_secret"
         backend_port = _available_port(8000)
         frontend_port = _available_port(5173)
         backend_url = f"http://127.0.0.1:{backend_port}"
@@ -135,7 +177,10 @@ def main() -> int:
                 database_url,
             ],
             cwd=BACKEND,
-            env=_python_env(),
+            env=_python_env(
+                bridge_secret_path=bridge_secret_path,
+                cors_origin=portal_url,
+            ),
             check=False,
         )
         if seeded.returncode != 0:
@@ -145,7 +190,12 @@ def main() -> int:
             backend = subprocess.Popen(
                 [sys.executable, "-m", "hoops_gm"],
                 cwd=BACKEND,
-                env=_python_env(database_url, port=backend_port),
+                env=_python_env(
+                    database_url,
+                    port=backend_port,
+                    bridge_secret_path=bridge_secret_path,
+                    cors_origin=portal_url,
+                ),
             )
             processes.append(backend)
             frontend = subprocess.Popen(

@@ -28,10 +28,13 @@ Open the auction draft and follow **League categories**, or go directly to
 `/draft/1/categories`. Press Ctrl+C to stop both services; the temporary
 database is then deleted.
 
-The launcher replaces ambient database, host, port, mode, Vite host, proxy, and
-API-base settings rather than inheriting them. It starts Python and Node
-directly, so shutdown targets only those exact child processes and does not
-leave a package-manager wrapper with a surviving Vite child.
+The launcher disables repository dotenv loading for its backend children,
+replaces every backend setting (including log mode and secret paths), clears
+Fantrax and bridge credentials, and replaces the Vite host, proxy, and API base.
+Its bridge-secret path is inside the same temporary directory as the database.
+It starts Python and Node directly, so shutdown targets only those exact child
+processes and does not leave a package-manager wrapper with a surviving Vite
+child.
 
 The lower-level seed remains available for tests and manual serving:
 `cd backend; $env:PYTHONPATH="$PWD\src"; python -m

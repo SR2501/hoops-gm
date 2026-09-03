@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from hoops_gm.core.config import REPO_ROOT, Settings
+from hoops_gm.core.config import DISABLE_DOTENV_ENV_VAR, REPO_ROOT, Settings, get_settings
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -97,3 +97,24 @@ def test_settings_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert settings.port == 9001
     assert settings.log_level == "DEBUG"
+
+
+def test_get_settings_can_disable_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("LOG_LEVEL=ERROR\n", encoding="utf-8")
+    monkeypatch.setitem(Settings.model_config, "env_file", (dotenv,))
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("BRIDGE_SECRET", raising=False)
+
+    dotenv_settings = get_settings()
+    assert dotenv_settings.log_level == "ERROR"
+
+    monkeypatch.setenv(DISABLE_DOTENV_ENV_VAR, "1")
+
+    settings = get_settings()
+
+    assert settings.log_level == "INFO"
+    assert settings.bridge_secret is None
