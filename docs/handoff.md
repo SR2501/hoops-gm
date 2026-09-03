@@ -33777,11 +33777,15 @@ percentages.
 
 The feeds independently date Conley's trade/waive/re-sign sequence, Huntley's
 waive/re-sign sequence, and Wiseman's waiver and 10-day signing. That is the
-bounded evidence they explicitly encode. They do not provide complete opening
-membership, contract expiration, retirement, structured suspension, or
-effective times. `CommonTeamRoster` was also checked directly and omitted
-measured transient Conley and Wiseman stints; its nullable `HOW_ACQUIRED` text
-was not treated as an interval.
+bounded evidence they explicitly encode. The Pacers' official 2025-12-26 notice
+says Wiseman was released, but that event is absent from the central archive,
+directly disproving completeness. The 2017 and 2023 CBAs also make a standard
+G League assignment effective on in-person reporting, which the feed does not
+publish. The archives do not provide complete opening membership, contract
+expiration, retirement, structured suspension, or effective times.
+`CommonTeamRoster` was also checked directly and omitted measured transient
+Conley and Wiseman stints; its nullable `HOW_ACQUIRED` text was not treated as
+an interval.
 
 **Protocol boundary:** This increment emits typed transaction-evidence records
 only. It emits no player-game opportunity row and populates none of the

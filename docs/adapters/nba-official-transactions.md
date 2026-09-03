@@ -129,7 +129,11 @@ part of a third without reading silence as an outcome:
   2026-03-02; the G League archive separately records a 2026-03-02 NBA call-up.
 - James Wiseman was waived by Indiana on 2025-10-28 and signed to a 10-day
   contract on 2025-12-20. The archive has no explicit expiration event, so it
-  does not establish when that 10-day stint ended.
+  does not establish when that 10-day stint ended. The Pacers' official
+  [2025-12-26 transaction notice](https://www.nba.com/pacers/news/indiana-pacers-transactions-dec-26-2025)
+  says he was released, but that event is absent from the central archive. This
+  is a direct counterexample to treating the archive as a complete transition
+  ledger; the one-off prose notice is not ingested as a substitute contract.
 
 Within the four accepted regular-season game-date windows, the fixtures contain:
 
@@ -174,6 +178,16 @@ recall event. The G League vocabulary has no suspension event, and its
 `Acquired`/`NBA Call-Up` language does not itself prove NBA game eligibility.
 Neither source provides an effective time, so same-date transactions and games
 remain boundary-ambiguous.
+
+The source date is also not necessarily the effective boundary for a standard
+player's G League assignment. The official
+[2017 CBA](https://cosmic-s3.imgix.net/3c7a0a50-8e11-11e9-875d-3d44e94ae33f-2017-NBA-NBPA-Collective-Bargaining-Agreement.pdf)
+and
+[2023 CBA](https://imgix.cosmicjs.com/25da5eb0-15eb-11ee-b5b3-fbd321202bdf-Final-2023-NBA-Collective-Bargaining-Agreement-6-28-23.pdf)
+define that interval by when the player reports in person to the affiliate and
+reports back after recall. The transaction feed does not publish those
+reporting instants, so an `Assigned` or `Recalled` notice cannot itself
+establish game-specific NBA eligibility.
 
 A six-team 2025-26 `CommonTeamRoster` feasibility probe also disproved the
 tempting fallback: transient Conley stints with Chicago and Charlotte and

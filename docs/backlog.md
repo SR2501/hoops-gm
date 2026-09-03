@@ -3412,12 +3412,16 @@ per-season source-row counts are recorded in
 This evidence dates Conley's trade/waive/re-sign sequence and Huntley's
 waive/re-sign sequence independently of the participation ledger. It dates
 Wiseman's waiver and 10-day signing but supplies no explicit expiration for
-that contract. More generally, the NBA archive has no structured
-contract-expiration, retirement, suspension, assignment, or recall event; the
-G League archive has no suspension event; neither supplies an effective time
-for same-date boundaries; and a six-team live `CommonTeamRoster` check omitted
-the transient Conley and Wiseman stints it would need to repair. Those are
-measured source-contract gaps, not permission to infer an interval.
+that contract. The Pacers' official 2025-12-26 transaction notice says Wiseman
+was released, but that event is absent from the central archive: a direct
+counterexample to completeness, not permission to scrape one-off prose into an
+interval. More generally, the NBA archive has no structured contract-expiration,
+retirement, suspension, assignment, or recall event; the G League archive has
+no suspension event; neither supplies an effective time for same-date
+boundaries; official CBA assignment semantics depend on in-person reporting
+instants the feed does not publish; and a six-team live `CommonTeamRoster`
+check omitted the transient Conley and Wiseman stints it would need to repair.
+Those are measured source-contract gaps, not permission to infer an interval.
 
 Therefore a complete independent denominator still cannot be enumerated,
 `unknown_share` is not calculable, and no public opportunity envelope or
