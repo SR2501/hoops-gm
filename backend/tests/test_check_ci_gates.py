@@ -191,7 +191,7 @@ def test_a_terminal_zero_job_run_has_not_produced_gate_evidence(
     def _api(path: str) -> Any:
         if "/jobs" in path:
             return {"jobs": []}
-        return {"workflow_runs": [_run(2, conclusion="failure")]}
+        return {"workflow_runs": [_run(2, conclusion="success")]}
 
     monkeypatch.setattr(checker, "gh_api", _api)
 
@@ -199,7 +199,7 @@ def test_a_terminal_zero_job_run_has_not_produced_gate_evidence(
     out = capsys.readouterr().out
 
     assert exit_code == 1
-    assert "0 jobs exist (terminal run completed/failure)" in out
+    assert "0 jobs exist (terminal run completed/success)" in out
     assert "completed empty run still cannot establish this commit" in out
     assert "No step failed and no job was starved" not in out
 
