@@ -34706,3 +34706,71 @@ external source, model, recommendation or write path changed. Exact-head hosted
 CI, the committed append-only byte check, and an independent cumulative review
 remain pending. Do not merge or self-approve this repair from its authoring
 session.
+
+## 2026-09-04 - Draft log recent tail and complete-cohort search
+
+**Delivered:** The draft event log now defaults to the most recent 13 entries,
+kept in ascending recorded sequence order. Thirteen is the existing auction
+roster size and is close to the 11 rows measured per laptop viewport, rather
+than an unexplained truncation constant. A labelled search filters the complete
+loaded log by exact sequence or recorded event type, player label and
+participant label; it never searches only the mounted tail and does not invent
+an identity. The screen reports mounted matches against the total cohort,
+distinguishes no matches from an empty log, and provides an explicit
+Show complete history control. Query and history mode are component state, so
+ordinary poll-driven model replacement does not clear them. Existing Undo and
+Try to void actions still post the matched event's real sequence and the
+current state's `expected_last_sequence`.
+
+**Focused evidence and mutation:** New deterministic component coverage drives
+170 entries and proves the default sequences are 158 through 170, all four
+search fields reach older entries, counts remain 13/170, 1/170 or 170/170 as
+appropriate, complete history is explicit, no-result and empty states differ,
+and query/history mode survive a 170-to-171 rerender. Searching sequence 7
+exposes `log-tryvoid-7`; clicking it posts
+`{"event_type":"void","supersedes_sequence":7,
+"expected_last_sequence":170}`. Page tests separately prove the recorded
+18-entry response defaults to 13 and expands to all 18 while retaining the
+existing refusal paths. After a green baseline, replacing the production
+`rows.filter(...)` search with `recentRows.filter(...)` was asserted present
+and made the older-sequence test fail with zero matches; restoring the
+complete-cohort operand returned it green.
+
+**Rendered evidence:** `python scripts\run_demo.py` started the real local
+backend and Vite stack. The committed synthetic auction was extended only in
+its ephemeral database through `POST /api/v1/drafts/1/events`: one invented
+nomination followed by increasing invented bids, each conditional on
+`expected_last_sequence`, brought the valid log from sequence 15 to 170.
+Chrome 152 was driven through the DevTools protocol at 1280x720 and 390x844.
+Both widths mounted only 13 default rows (158-170), keyboard entry
+`sequence 7` mounted only sequence 7 with `Try to void`, the count read
+`1 matching entry from 170 total`, and Show complete history mounted 170.
+Neither page nor log had horizontal overflow and the correction control stayed
+inside the viewport width. The narrow layout also disables recorder stickiness
+once the recorder and stream stack, because the sticky recorder otherwise
+covered the search it was meant to help reach. JSON metrics, the reusable
+DevTools drive, and PNGs are session artifacts, not repository files.
+
+**Backlog boundary:** `draft-log-virtualisation` now depends on completed
+`draft-tracker-persistence` and `draft-tracker-screen`, the only contracts it
+consumes. It no longer depends on pending automatic `draft-tracker`, whose open
+work is feed/profile evidence unrelated to this client-only usability unit.
+The finished file recounts 79 done, 0 blocked, 115 pending, 194 total and
+`scripts/backlog_graph.py` reports no structural defect.
+
+**Could not verify:** No live Fantrax draft, real auction payload, real owner
+timing trial, screen reader or non-Chromium browser was used. The 170-entry
+browser cohort is valid through the recorder API but deliberately unrealistic:
+most added events are increasing bids on one invented lot, so it proves scale,
+search and correction reachability rather than real event distribution.
+Search/history retention across a changing production poll was driven by React
+rerender tests, not by changing the ephemeral backend while the browser stayed
+open. The older correction was displayed in Chrome but not submitted there;
+its exact write payload is component-test evidence. Hosted exact-head CI and a
+fresh independent cumulative review remain pending. This is Code-gate-only:
+no backend/API, external source, model, valuation, recommendation, price,
+inflation, profile, feed recogniser or live-account write behavior changed.
+
+**Next:** Require exact-head hosted Code-gate checks and an independent
+cumulative review from a different agent. Do not merge or self-approve from
+this session.

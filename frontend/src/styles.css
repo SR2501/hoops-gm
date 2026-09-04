@@ -1192,6 +1192,12 @@ a:focus-visible {
   .draft__panels {
     grid-template-columns: 1fr;
   }
+
+  /* Sticky is useful only while the recorder and stream are side by side. Once
+     stacked, it covers the seats and log instead of staying beside them. */
+  .draft__panels > .recorder {
+    position: static;
+  }
 }
 
 /**
@@ -1838,6 +1844,61 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.log__controls {
+  display: grid;
+  gap: var(--space-2);
+  margin-block-end: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.log__search {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.log__search input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.log__search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.log__search-help,
+.log__results {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.log__control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.log__history-toggle {
+  flex: none;
+  font-size: 0.75rem;
+}
+
 .log__list {
   list-style: none;
   margin: 0;
@@ -1885,6 +1946,30 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+@media (max-width: 35rem) {
+  .log__control-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .log__history-toggle {
+    align-self: start;
+  }
+
+  .log__row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .log__what {
+    min-width: calc(100% - 4rem);
+  }
+
+  .log__undo {
+    margin-inline-start: 3.25rem;
+  }
 }
 
 .log__seq {

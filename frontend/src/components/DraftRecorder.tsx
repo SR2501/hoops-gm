@@ -518,17 +518,15 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
 /**
  * Where a recorded entry goes, which is the same answer in both formats.
  *
- * Says *newest first* rather than *at the top*: the ordering is this build's
- * own decision in `DraftLog` and is therefore something the screen can promise,
- * where a claim about which row is first is only true until the poll picks up a
- * write from somewhere else.
+ * The recent tail and its ordering are this build's own decisions in `DraftLog`,
+ * so this can promise both without implying that hidden history was drawn.
  */
 function RecordDestinationPoint() {
   return (
     <li>
-      <strong>Record</strong> puts what you typed into the log beside this panel, which runs newest
-      first, with <strong>Undo</strong> on it. Nothing there is edited in place — the log explains
-      how corrections work.
+      <strong>Record</strong> puts what you typed into the recent log beside this panel, in sequence
+      order, with <strong>Undo</strong> on the latest entry. Nothing there is edited in place — the
+      log explains how corrections work.
     </li>
   )
 }
