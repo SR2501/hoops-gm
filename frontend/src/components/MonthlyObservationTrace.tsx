@@ -21,6 +21,7 @@ export function MonthlyObservationTrace({
       <ol
         className="monthly-observation-trace__list"
         aria-label="Monthly direct-observation play-rate trace"
+        role="list"
       >
         {months.map((month) => {
           const rate = month.evidence.observed_play_rate

@@ -34645,3 +34645,25 @@ month before applying strict ascending order. The corrected negative case uses
 two different January dates. Removing only the month-start requirement makes
 that focused test accept the malformed response; restoring it passes, and the
 full frontend Code gate remains **439/439**.
+
+## 2026-09-04 - Monthly trace accessibility review correction
+
+**Correction:** Fresh independent cumulative review of exact head `67393bf`
+confirmed the canonical-month correction but found that WebKit can suppress the
+semantics of an ordered list styled with `list-style: none`. The monthly trace
+now declares `role="list"` on its labelled `<ol>`, preserving the chronological
+list boundary and item count for Safari/VoiceOver without changing the visual or
+data mapping. The component test now locates that list by its accessible name,
+while the existing list-item assertions retain the four-row boundary coverage.
+
+**Code gate:** From `frontend/`, `npm run lint`, `npm run typecheck`, `npm run
+test` (**439/439**), and `npm run build` pass after the correction. The
+Impeccable mechanical UI scan reports no deterministic issue in the changed
+component.
+
+**Could not verify:** Safari and VoiceOver were not available, so the correction
+is standards-level and automated-DOM evidence rather than assistive-technology
+verification. The prior real-Chrome drive remains the rendered visual evidence;
+this correction changes semantics only. Hosted checks and a fresh independent
+cumulative review of the final committed head remain pending. Do not merge or
+self-approve from this session.

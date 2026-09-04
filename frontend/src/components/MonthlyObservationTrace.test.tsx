@@ -43,6 +43,9 @@ describe('MonthlyObservationTrace', () => {
     )
 
     const rows = screen.getAllByRole('listitem')
+    expect(
+      screen.getByRole('list', { name: 'Monthly direct-observation play-rate trace' }),
+    ).toBeInTheDocument()
     expect(rows).toHaveLength(4)
     expect(rows.map((row) => within(row).getByRole('time').textContent)).toEqual([
       '2025-11',
