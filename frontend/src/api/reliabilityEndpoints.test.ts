@@ -24,6 +24,12 @@ function overallEvidence(body: unknown): Record<string, unknown> {
   return record(record(firstScorecard(body).availability).overall)
 }
 
+function monthlyEvidence(body: unknown): unknown[] {
+  const months = record(firstScorecard(body).availability).monthly_trend
+  if (!Array.isArray(months)) throw new Error('Expected monthly evidence.')
+  return months
+}
+
 function lineage(body: unknown): Record<string, unknown> {
   return record(record(body).lineage)
 }
@@ -72,6 +78,16 @@ describe('reliability endpoint contract', () => {
     }],
     ['contradictory direct denominator', (body) => {
       overallEvidence(body).observed_opportunities = 999
+    }],
+    ['duplicate monthly evidence', (body) => {
+      const months = monthlyEvidence(body)
+      months.push(structuredClone(months[0]))
+    }],
+    ['out-of-order monthly evidence', (body) => {
+      const months = monthlyEvidence(body)
+      const earlier = record(structuredClone(months[0]))
+      earlier.month = '2025-12-01'
+      months.push(earlier)
     }],
     ['raw percentage unit', (body) => {
       firstRatioCategory(body).unit = 'percentage'

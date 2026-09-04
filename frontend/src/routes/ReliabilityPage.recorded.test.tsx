@@ -149,6 +149,36 @@ describe('ReliabilityPage recorded contract', () => {
     expect(detail).toHaveTextContent('A non-play observation is never inserted as zero production')
   })
 
+  it('adds the published-rate visual before the exact monthly evidence table', async () => {
+    serve()
+    renderWithRouter(<ReliabilityPage />)
+
+    await userEvent.click(await screen.findByText('Glass Cannon'))
+    const detail = screen.getByText('Glass Cannon').closest('details')
+    expect(detail).not.toBeNull()
+
+    const card = within(detail as HTMLElement)
+    const trace = card.getByRole('list', {
+      name: 'Monthly direct-observation play-rate trace',
+    })
+    const traceRow = within(trace).getByRole('listitem')
+    expect(traceRow).toHaveTextContent('2026-01')
+    expect(traceRow).toHaveTextContent('33.3%')
+    expect(traceRow).toHaveTextContent('1 direct play + 2 direct non-play = denominator 3')
+    expect(traceRow).toHaveTextContent('0 explicit unknown (outside direct denominator)')
+    expect(traceRow.querySelector('.monthly-observation-trace__fill')).toHaveStyle({
+      inlineSize: '33.33333333333333%',
+    })
+
+    const tableRegion = card.getByRole('region', {
+      name: 'Exact monthly availability evidence table',
+    })
+    expect(trace.compareDocumentPosition(tableRegion) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(within(tableRegion).getByRole('row', { name: /2026-01 1 2 0 33.3%/ }))
+      .toBeInTheDocument()
+  })
+
   it('labels percentage categories as volume-weighted impact and shows their attempt baseline', async () => {
     serve()
     renderWithRouter(<ReliabilityPage />)

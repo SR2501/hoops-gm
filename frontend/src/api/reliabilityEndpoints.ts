@@ -74,12 +74,20 @@ function isMonthlyRateEvidence(value: unknown): value is MonthlyRateEvidence {
   return isRecord(value) && isDate(value.month) && isObservedRateEvidence(value.evidence)
 }
 
+function isChronologicalMonthlyRateEvidence(value: unknown): value is MonthlyRateEvidence[] {
+  if (!Array.isArray(value) || !value.every(isMonthlyRateEvidence)) return false
+  // The producer publishes one grouped row per month in ascending order. Refuse
+  // drift instead of silently sorting or deduplicating evidence in the browser.
+  return value.every(
+    (row, index) => index === 0 || value[index - 1]!.month < row.month,
+  )
+}
+
 function isAvailabilityEvidence(value: unknown): value is AvailabilityEvidence {
   return (
     isRecord(value) &&
     isObservedRateEvidence(value.overall) &&
-    Array.isArray(value.monthly_trend) &&
-    value.monthly_trend.every(isMonthlyRateEvidence) &&
+    isChronologicalMonthlyRateEvidence(value.monthly_trend) &&
     isObservedRateEvidence(value.back_to_back)
   )
 }

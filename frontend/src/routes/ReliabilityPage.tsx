@@ -10,6 +10,7 @@ import type {
 } from '../api/reliabilityTypes'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
+import { MonthlyObservationTrace } from '../components/MonthlyObservationTrace'
 import {
   buildReliabilityRows,
   filterReliabilityRows,
@@ -279,34 +280,41 @@ function AvailabilityDetail({ card }: { card: PlayerReliabilityScorecard }) {
     <section aria-labelledby={`availability-${String(card.player_id)}`}>
       <h3 id={`availability-${String(card.player_id)}`}>Availability evidence</h3>
       <p>
-        Each row repeats the direct-only denominator. No slope or trend direction is fitted.
+        Each visual row and table row repeats the direct-only denominator. Explicit unknowns stay
+        outside it.
       </p>
-      {months.length === 0 ? (
-        <p>No monthly direct observations are available.</p>
-      ) : (
-        <table className="table reliability-card__table">
-          <thead>
-            <tr>
-              <th scope="col">Month</th>
-              <th scope="col">Play</th>
-              <th scope="col">Non-play</th>
-              <th scope="col">Explicit unknown</th>
-              <th scope="col">Direct-only rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {months.map((month) => (
-              <tr key={month.month}>
-                <th scope="row">{month.month.slice(0, 7)}</th>
-                <td>{month.evidence.direct_play}</td>
-                <td>{month.evidence.direct_non_play}</td>
-                <td>{month.evidence.explicit_unknown}</td>
-                <td>{formatRate(month.evidence.observed_play_rate)}</td>
+      <MonthlyObservationTrace months={months} />
+      {months.length > 0 ? (
+        <div
+          className="reliability-card__table-scroll"
+          role="region"
+          aria-label="Exact monthly availability evidence table"
+          tabIndex={0}
+        >
+          <table className="table reliability-card__table">
+            <thead>
+              <tr>
+                <th scope="col">Month</th>
+                <th scope="col">Play</th>
+                <th scope="col">Non-play</th>
+                <th scope="col">Explicit unknown</th>
+                <th scope="col">Direct-only rate</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {months.map((month) => (
+                <tr key={month.month}>
+                  <th scope="row">{month.month.slice(0, 7)}</th>
+                  <td>{month.evidence.direct_play}</td>
+                  <td>{month.evidence.direct_non_play}</td>
+                  <td>{month.evidence.explicit_unknown}</td>
+                  <td>{formatRate(month.evidence.observed_play_rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -325,24 +333,31 @@ function ProductionDetail({ card }: { card: PlayerReliabilityScorecard }) {
         {formatNumber(minutes.sample_standard_deviation)} · observed p20-p80{' '}
         {formatRange(minutes)}
       </p>
-      <table className="table reliability-card__table">
-        <thead>
-          <tr>
-            <th scope="col">Category</th>
-            <th scope="col">Unit</th>
-            <th scope="col">Games</th>
-            <th scope="col">Mean</th>
-            <th scope="col">Sample SD</th>
-            <th scope="col">Observed p20-p80</th>
-            <th scope="col">Cohort baseline</th>
-          </tr>
-        </thead>
-        <tbody>
-          {card.production.categories.map((category) => (
-            <CategoryRow key={category.category} category={category} />
-          ))}
-        </tbody>
-      </table>
+      <div
+        className="reliability-card__table-scroll"
+        role="region"
+        aria-label="Played-game production evidence table"
+        tabIndex={0}
+      >
+        <table className="table reliability-card__table">
+          <thead>
+            <tr>
+              <th scope="col">Category</th>
+              <th scope="col">Unit</th>
+              <th scope="col">Games</th>
+              <th scope="col">Mean</th>
+              <th scope="col">Sample SD</th>
+              <th scope="col">Observed p20-p80</th>
+              <th scope="col">Cohort baseline</th>
+            </tr>
+          </thead>
+          <tbody>
+            {card.production.categories.map((category) => (
+              <CategoryRow key={category.category} category={category} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   )
 }

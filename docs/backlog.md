@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**77 done - 0 blocked - 116 pending - 193 total**
+**78 done - 0 blocked - 116 pending - 194 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -3584,6 +3584,21 @@ Instruments the Fantrax dress-rehearsal mocks (no fewer than 10): per pick, whet
 - **Depends on:** `frontend-skeleton`, `reliability-metrics`
 
 Durability scorecards, B2B sit patterns, availability trend charts, and a roster-level fragility summary.
+
+### `reliability-monthly-observation-trace` - Visualizing published monthly reliability observations
+
+- [x] **done** - Implemented 2026-09-04 by `frontend`.
+- **Depends on:** `frontend-skeleton`, `reliability-metrics`
+
+Adds a compact chronological visual above each player's exact monthly evidence
+table using only the endpoint's published `observed_play_rate`. The visual
+retains the direct play/non-play denominator, keeps explicit unknowns outside
+that denominator and visible, and leaves unavailable rates unavailable. The
+browser refuses duplicate or out-of-order month rows instead of sorting or
+deduplicating evidence. It does not fit a trend, recompute the published rate,
+or add a grade, projection, model output, rank, risk label, or recommendation.
+`reliability-ui` remains pending because the endpoint still cannot support its
+roster-level fragility summary.
 
 ### `risk-adjusted-valuation` - Implementing risk-adjusted valuation
 
