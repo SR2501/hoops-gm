@@ -3932,6 +3932,17 @@ refuses a short SHA **before querying**, because `?head_sha=` returns an empty
 set for one without complaining, and it proves its own query works against the
 default-branch head before reporting an absence.
 
+**Corrected 2026-09-04:** the landed tool refused an empty *run set* but not an
+empty jobs payload inside an existing run. On main merge commit
+`6f7d2130435f55211c219aa9065b3e6fb2f0472d`, run `33878979652` existed as
+queued/pending while its jobs endpoint returned zero jobs. The tool printed
+`no jobs at all - this run establishes nothing about the commit`, aggregated
+zero failed, starved and running jobs, then exited 0 through its success footer.
+Every exact-head CI run must now contribute at least one job object before the
+aggregate can produce a verdict; queued and terminal zero-job runs both refuse,
+and a green sibling run cannot launder an empty one. This is a zero-evidence
+property, not an expected-job-count check.
+
 ### `fingerprint-boundary-ruling` - Ruling where the injury cohort manifest's frozen boundary sits
 
 - [x] **done** - Ruled 2026-08-27 by `architect` in

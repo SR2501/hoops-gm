@@ -155,6 +155,104 @@ def test_a_starved_job_fails_even_though_no_step_failed(
     assert checker.main(["a" * 40]) == 1
 
 
+def test_a_queued_zero_job_run_has_not_produced_gate_evidence(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The live failure: run 33878979652 was queued and its jobs endpoint was empty.
+
+    Zero job objects cannot be classified as running or starved. They are a
+    separate absence of evidence, and must stop before the success footer.
+    """
+    queued = _run(33878979652, conclusion=None)
+    queued["status"] = "queued"
+
+    def _api(path: str) -> Any:
+        if "/jobs" in path:
+            return {"jobs": []}
+        return {"workflow_runs": [queued]}
+
+    monkeypatch.setattr(checker, "gh_api", _api)
+
+    exit_code = checker.main(["a" * 40])
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "workflow has not produced gate evidence" in out
+    assert "0 jobs exist (unfinished run queued/None)" in out
+    assert "jobs STARVED of a runner : 0" in out
+    assert "No step failed and no job was starved" not in out
+
+
+def test_a_terminal_zero_job_run_has_not_produced_gate_evidence(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A terminal summary cannot turn an empty jobs payload into gate evidence."""
+
+    def _api(path: str) -> Any:
+        if "/jobs" in path:
+            return {"jobs": []}
+        return {"workflow_runs": [_run(2, conclusion="success")]}
+
+    monkeypatch.setattr(checker, "gh_api", _api)
+
+    exit_code = checker.main(["a" * 40])
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "0 jobs exist (terminal run completed/success)" in out
+    assert "completed empty run still cannot establish this commit" in out
+    assert "No step failed and no job was starved" not in out
+
+
+def test_a_green_run_cannot_launder_an_empty_run(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every exact-head CI run must contribute evidence before the aggregate passes."""
+    runs = [_run(1), _run(2, conclusion=None)]
+    runs[1]["event"] = "pull_request"
+
+    def _api(path: str) -> Any:
+        if "/runs/1/jobs" in path:
+            return {"jobs": [_job("backend", "success", runner="gh-1")]}
+        if "/runs/2/jobs" in path:
+            return {"jobs": []}
+        return {"workflow_runs": runs}
+
+    monkeypatch.setattr(checker, "gh_api", _api)
+
+    exit_code = checker.main(["a" * 40])
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "=== 2 CI run(s)" in out
+    assert "1 without gate evidence" in out
+    assert "No step failed and no job was starved" not in out
+
+
+def test_a_complete_green_run_reaches_the_success_footer(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Positive control: evidence-bearing success and designed skip still pass."""
+    jobs = [
+        _job("backend", "success", runner="gh-1"),
+        _job("live smoke", "skipped", runner=None),
+    ]
+
+    def _api(path: str) -> Any:
+        if "/jobs" in path:
+            return {"jobs": jobs}
+        return {"workflow_runs": [_run(1)]}
+
+    monkeypatch.setattr(checker, "gh_api", _api)
+
+    exit_code = checker.main(["a" * 40])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "0 without gate evidence" in out
+    assert "No step failed and no job was starved" in out
+
+
 # --- the positive control on the tool's own query -----------------------------
 
 
