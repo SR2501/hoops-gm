@@ -34577,3 +34577,93 @@ was used. Per-36 remains deliberately undelivered across the `quant`/Model-gate
 boundary. Live cohort scale/labels and production network/error timing remain
 unverified. Hosted checks and another fresh independent cumulative review remain
 pending for the corrected exact head; do not merge or self-approve it first.
+
+## 2026-09-04 - Monthly direct-observation reliability trace
+
+**Delivered:** Expanding a player on `/reliability` now places a compact
+month-by-month visual above the existing exact-count table. Each row maps the
+endpoint's published `monthly_trend[].evidence.observed_play_rate` directly to
+bar length, writes the formatted rate beside it, and keeps the published direct
+play, direct non-play, denominator, and separately excluded explicit-unknown
+count visible as text. A null rate renders `Unavailable` with no fill. The
+client preserves producer order and refuses duplicate or non-ascending month
+rows instead of sorting or deduplicating evidence. The visual states that it is
+not a fitted trend or slope, season-GP projection, reliability grade,
+availability model, `p(play)`, or production measure. No backend, OpenAPI,
+fixture schema, endpoint, dependency, source call, recommendation, model
+output, or write path changed.
+
+**Contract and interaction evidence:** Focused component, endpoint, model, and
+recorded-route suites pass **39/39**. They cover chronological display, zero,
+middle and one rate boundaries, null/unavailable, exact direct denominators,
+explicit unknowns outside the denominator, no months, the endpoint-rate visual
+mapping, integration above the existing table, and refusal of duplicate or
+out-of-order months. Temporarily replacing the endpoint rate in the fill width
+with `direct_play / observed_opportunities` made the source-rate sentinel fail
+at 25% versus its published 62.5%; restoring the endpoint field passed.
+Temporarily changing strict month order from `<` to `<=` made the duplicate
+month refusal fail by accepting the response; restoring `<` passed.
+
+**Code gate and rendered drive:** From `frontend/`, `npm run lint`, `npm run
+typecheck`, the CI-form `npm test -- --reporter=default --reporter=json
+--outputFile.json=vitest-report.json` (**439/439**), and `npm run build` passed.
+Repository JavaScript lint, `scripts/backlog_graph.py`,
+`scripts/check_no_secrets.py`, and the Impeccable mechanical UI scan also
+passed. The committed synthetic demo was opened in real Chrome at 1280x720 and
+390x844. An actual summary click expanded one synthetic player; the rendered
+non-null 100.0% row carried its 1 play + 0 non-play denominator, zero explicit
+unknowns, a 100% fill, and the limitation copy before the table. At both sizes
+the page had no horizontal overflow, the summary was natively focusable, both
+table scroll regions were focusable, and reduced-motion emulation reported no
+fill transition. The mobile production table overflow stayed inside its own
+scroll region.
+
+**Backlog:** Added completed child item
+`reliability-monthly-observation-trace`. The parent `reliability-ui` remains
+pending because the response still cannot support its roster-level fragility
+summary. The finished backlog recounts **78 done, 0 blocked, 116 pending, 194
+total**, with no dependency-graph defect.
+
+**Could not verify:** The committed synthetic demo has one January row for each
+of two players and both published monthly rates are 100.0%; it therefore cannot
+drive a multi-month, middle-rate, zero-rate, null-rate, explicit-unknown, or
+no-month visual in Chrome. Those states were driven through component and
+recorded-response tests, not a live store. No human usability study, screen
+reader, browser/OS accessibility matrix, real historical cohort, live Fantrax
+account, external source, production network/error timing, or hosted PR check
+was exercised. DOM and computed-style assertions are not assistive-technology
+verification.
+
+**Next:** Require hosted Code-gate checks and an independent merge review on the
+exact PR head. Do not merge or self-approve from this session.
+
+**Review correction:** Independent review of exact head `9fb3895` found that
+strict full-date ordering still accepted `2026-01-01` followed by
+`2026-01-15`, although both render as the same month. The response boundary
+now requires every monthly key to be the producer's canonical first day of the
+month before applying strict ascending order. The corrected negative case uses
+two different January dates. Removing only the month-start requirement makes
+that focused test accept the malformed response; restoring it passes, and the
+full frontend Code gate remains **439/439**.
+
+## 2026-09-04 - Monthly trace accessibility review correction
+
+**Correction:** Fresh independent cumulative review of exact head `67393bf`
+confirmed the canonical-month correction but found that WebKit can suppress the
+semantics of an ordered list styled with `list-style: none`. The monthly trace
+now declares `role="list"` on its labelled `<ol>`, preserving the chronological
+list boundary and item count for Safari/VoiceOver without changing the visual or
+data mapping. The component test now locates that list by its accessible name,
+while the existing list-item assertions retain the four-row boundary coverage.
+
+**Code gate:** From `frontend/`, `npm run lint`, `npm run typecheck`, `npm run
+test` (**439/439**), and `npm run build` pass after the correction. The
+Impeccable mechanical UI scan reports no deterministic issue in the changed
+component.
+
+**Could not verify:** Safari and VoiceOver were not available, so the correction
+is standards-level and automated-DOM evidence rather than assistive-technology
+verification. The prior real-Chrome drive remains the rendered visual evidence;
+this correction changes semantics only. Hosted checks and a fresh independent
+cumulative review of the final committed head remain pending. Do not merge or
+self-approve from this session.
