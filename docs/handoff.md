@@ -34667,3 +34667,42 @@ verification. The prior real-Chrome drive remains the rendered visual evidence;
 this correction changes semantics only. Hosted checks and a fresh independent
 cumulative review of the final committed head remain pending. Do not merge or
 self-approve from this session.
+
+## 2026-09-04 - Empty CI run verdict refusal
+
+**Correction and exact live reproduction:** On main merge commit
+`6f7d2130435f55211c219aa9065b3e6fb2f0472d`, GitHub run `33878979652` existed
+with status queued/pending while its jobs endpoint returned zero jobs.
+`python scripts/check_ci_gates.py <sha>` printed `no jobs at all - this run
+establishes nothing about the commit`, reported 0 failed, 0 starved and 0
+running, then exited 0 and printed its success footer. The existing refusal
+covered an empty workflow-run query but not an empty jobs payload inside a run.
+
+`report_run` now returns the observed job count as a separate evidence
+dimension. Every exact-head CI run must contribute at least one job object
+before the aggregate can produce a verdict. A queued zero-job run says the
+workflow has not produced gate evidence without calling it starved; a terminal
+zero-job run also refuses; and one complete green run cannot launder an empty
+sibling run. No expected job count is inferred or hardcoded. Existing failed
+step, starved, running, skipped-by-design, non-gate workflow, empty-query,
+multiple-run and full-SHA semantics remain on their prior paths.
+
+**Tests, mutation and Code gate:** The focused verifier suite passes **13/13**,
+including queued empty, terminal empty, green-plus-empty and complete-green
+controls. After that green baseline, forcing the returned evidence count to
+`1` at its single anchor made exactly the three empty-run refusal tests fail
+with received exit 0 while the complete-green control stayed green; restoring
+`len(jobs)` returned the suite to 13/13. Backend Ruff, format check, strict mypy
+over 245 source files and pytest pass (**2554 tests, 2 skipped**); scripts Ruff
+and format check also pass. The backlog graph still recounts **78 done, 0
+blocked, 116 pending, 194 total** with no structural defect. The secret scan and
+document-terminator check pass.
+
+**Could not verify:** The GitHub API state that exposed the queued zero-job
+window had advanced before this repair, so that transient live payload could
+not be replayed; the refusal is driven with recorded-shape unit fixtures rather
+than a new live empty run. No workflow, backend product code, dependency,
+external source, model, recommendation or write path changed. Exact-head hosted
+CI, the committed append-only byte check, and an independent cumulative review
+remain pending. Do not merge or self-approve this repair from its authoring
+session.

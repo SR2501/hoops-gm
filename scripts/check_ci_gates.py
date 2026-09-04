@@ -49,8 +49,9 @@ A stale branch is not an empty result, it is a *plausible* one: on the day this
 was written, a merged branch still on the remote resolved to a real SHA with a
 real green CI run belonging to a different pull request entirely.
 
-Exits 1 if any step failed, if any job was starved, or if no CI run exists for
-the commit. Exits 2 if the arguments or the query itself are unusable.
+Exits 1 if any step failed, if any job was starved, if any CI run has not
+produced job evidence, or if no CI run exists for the commit. Exits 2 if the
+arguments or the query itself are unusable.
 """
 
 from __future__ import annotations
@@ -133,15 +134,17 @@ def classify_job(job: dict[str, Any]) -> str:
     return str(conclusion)
 
 
-def report_run(run: dict[str, Any]) -> tuple[int, int, int]:
-    """Print one run's gates. Returns (failed steps, starved jobs, unfinished jobs).
+def report_run(run: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Print one run's gates.
 
-    **Unfinished jobs are counted and returned, and that is the point.** The
-    first time this tool was pointed at a live pull request it reported
-    `0 failed steps` and exited 0 while three gates were still running - a
-    verdict over a partial set, which is the defect the whole script exists to
-    catch, in the script itself. `0 of 3 finished` and `0 of 11 failed` are the
-    same number and opposite facts.
+    Returns (failed steps, starved jobs, unfinished jobs, evidence jobs).
+
+    **Unfinished and absent jobs are counted separately, and that is the
+    point.** The first time this tool was pointed at a live pull request it
+    reported `0 failed steps` and exited 0 while three gates were still running.
+    Later, run 33878979652 had no job objects at all and the same three zero
+    counts again exited 0. `0 of 3 finished`, `0 of 0 observed`, and `0 of 11
+    failed` can print the same failure count while establishing opposite facts.
     """
     jobs = gh_api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
 
@@ -166,10 +169,14 @@ def report_run(run: dict[str, Any]) -> tuple[int, int, int]:
     print(f"    jobs STARVED of a runner : {starved}")
     print(f"    jobs STILL RUNNING       : {unfinished}")
     if not jobs:
-        print("    no jobs at all - this run establishes nothing about the commit")
+        phase = "terminal" if run["status"] == "completed" else "unfinished"
+        print(
+            "    workflow has not produced gate evidence: "
+            f"0 jobs exist ({phase} run {run['status']}/{run['conclusion']})"
+        )
     for job in jobs:
         print(f"      {classify_job(job):<9} {job['name']}")
-    return failed_steps, starved, unfinished
+    return failed_steps, starved, unfinished, len(jobs)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,18 +225,28 @@ def main(argv: list[str] | None = None) -> int:
     total_failed = 0
     total_starved = 0
     total_unfinished = 0
+    runs_without_evidence = 0
     for run in gates:
         print()
-        failed, starved, unfinished = report_run(run)
+        failed, starved, unfinished, evidence_jobs = report_run(run)
         total_failed += failed
         total_starved += starved
         total_unfinished += unfinished
+        runs_without_evidence += evidence_jobs == 0
 
     print()
     print(
         f"=== {len(gates)} {GATE_WORKFLOW} run(s): {total_failed} failed steps, "
-        f"{total_starved} starved jobs, {total_unfinished} still running ==="
+        f"{total_starved} starved jobs, {total_unfinished} still running, "
+        f"{runs_without_evidence} without gate evidence ==="
     )
+    if runs_without_evidence:
+        print(
+            f"NOT A VERDICT: {runs_without_evidence} workflow run(s) have produced zero "
+            "jobs, so they have not produced gate evidence. Re-run after GitHub "
+            "produces jobs; a completed empty run still cannot establish this commit."
+        )
+        return 1
     if total_unfinished:
         # Reported before the failure count, because it changes what that count
         # means: with jobs outstanding, `0 failed steps` is "nothing has failed
