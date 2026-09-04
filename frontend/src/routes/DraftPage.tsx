@@ -302,7 +302,9 @@ const DraftBoardView = memo(function DraftBoardView({
         */}
         <div className="draft__stream">
           <DraftSeats model={model} />
-          <DraftLog model={model} onRecorded={onRecorded} />
+          {/* Search belongs to one draft cohort. Keep it through polls of that
+              cohort, but do not carry it into a different draft navigation. */}
+          <DraftLog key={state.id} model={model} onRecorded={onRecorded} />
         </div>
       </div>
     </>

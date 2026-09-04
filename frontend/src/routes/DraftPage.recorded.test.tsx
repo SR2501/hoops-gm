@@ -132,7 +132,7 @@ afterEach(() => {
 })
 
 describe('the draft board, from recorded payloads', () => {
-  it('draws every seat and every log entry the payloads contain', async () => {
+  it('draws every seat and a recent log tail, with explicit access to every entry', async () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents })
     renderBoard()
 
@@ -141,8 +141,13 @@ describe('the draft board, from recorded payloads', () => {
     const seats = await screen.findByRole('heading', { name: 'Seats' })
     expect(seats).toBeInTheDocument()
     await waitFor(() => {
-      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(18)
+      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(13)
     })
+    expect(screen.getByTestId('log-count')).toHaveTextContent(
+      'Showing 13 recent entries of 18 total.',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Show complete history' }))
+    expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(18)
     for (const participant of auctionState.participants) {
       expect(screen.getByTestId(`seat-${String(participant.id)}`)).toBeInTheDocument()
     }
@@ -226,12 +231,15 @@ describe('the draft board, from recorded payloads', () => {
 
     expect(undo).toHaveLength(1)
     expect(screen.getByTestId('log-undo-18')).toBe(undo[0])
-    // 18 entries, minus the guaranteed one, minus the voided sale and the void
-    // itself, which cannot be corrected at all.
-    expect(tryVoid).toHaveLength(15)
+    // The 13-entry recent tail, minus the guaranteed one, the voided sale and
+    // the void itself, which cannot be corrected at all.
+    expect(tryVoid).toHaveLength(10)
     // And the two labels are genuinely different text, not the same affordance
     // twice: the whole design rests on a reader telling them apart at a glance.
     expect(undo[0]?.textContent).not.toBe(tryVoid[0]?.textContent)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show complete history' }))
+    expect(screen.getAllByRole('button', { name: 'Try to void' })).toHaveLength(15)
   })
 
   it('stops promising a guaranteed undo once the last entry is itself a correction', async () => {
@@ -414,7 +422,7 @@ describe('the recording panel explaining its own use', () => {
       const view = renderBoard(id)
 
       const guide = await screen.findByTestId('recorder-guide')
-      expect(guide).toHaveTextContent('into the log beside this panel')
+      expect(guide).toHaveTextContent('into the recent log beside this panel')
       expect(guide).toHaveTextContent('Undo')
       expect(guide).toHaveTextContent('Nothing there is edited in place')
 
@@ -487,6 +495,10 @@ describe('every recorded refusal, reached', () => {
     })
     renderBoard()
 
+    await userEvent.type(
+      await screen.findByRole('searchbox', { name: 'Search complete log' }),
+      'sequence 5',
+    )
     await userEvent.click(await screen.findByTestId('log-tryvoid-5'))
 
     const headline = await screen.findByTestId('log-failure-5')
@@ -528,6 +540,10 @@ describe('every recorded refusal, reached', () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
     renderBoard()
 
+    await userEvent.type(
+      await screen.findByRole('searchbox', { name: 'Search complete log' }),
+      'sequence 5',
+    )
     await userEvent.click(await screen.findByTestId('log-tryvoid-5'))
     expect(await screen.findByTestId('log-failure-5')).toHaveTextContent(refusal.body.detail)
     reached.add('void-a-void')
@@ -862,7 +878,7 @@ describe('the board when reads stop coming back', () => {
 
       // And the board underneath is still the last good one, not blanked. A
       // recorder mid-auction needs the prices that did arrive.
-      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(18)
+      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(13)
       expect(screen.getByTestId('recorder-submit')).toBeInTheDocument()
     } finally {
       vi.useRealTimers()

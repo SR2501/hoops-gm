@@ -46,6 +46,16 @@ import {
   type LogRow,
 } from './draftBoardModel'
 
+/**
+ * One auction roster's worth of recent activity.
+ *
+ * The existing draft screen is designed around 13 roster spots and browser
+ * evidence measured roughly 11 log rows per laptop viewport. Thirteen keeps a
+ * complete roster-sized tail available without returning to the 170-row,
+ * fifteen-screen default this control replaces.
+ */
+export const RECENT_LOG_ENTRY_LIMIT = 13
+
 interface DraftLogProps {
   model: DraftBoardModel
   onRecorded: (state: DraftState) => void
@@ -54,6 +64,8 @@ interface DraftLogProps {
 export function DraftLog({ model, onRecorded }: DraftLogProps) {
   const [pendingSequence, setPendingSequence] = useState<number | null>(null)
   const [failure, setFailure] = useState<{ sequence: number; error: Error } | null>(null)
+  const [query, setQuery] = useState('')
+  const [showFullHistory, setShowFullHistory] = useState(false)
 
   async function voidEntry(sequence: number) {
     setPendingSequence(sequence)
@@ -75,17 +87,24 @@ export function DraftLog({ model, onRecorded }: DraftLogProps) {
     }
   }
 
-  // Newest first: under a clock the entry a recorder wants is the one that just
-  // landed, and it is also the only one correction is guaranteed against.
-  const rows = model.logRows.slice().reverse()
+  const rows = model.logRows
+  const recentRows = rows.slice(-RECENT_LOG_ENTRY_LIMIT)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const isSearching = normalizedQuery.length > 0
+  const visibleRows = isSearching
+    ? rows.filter((row) => logRowMatches(row, normalizedQuery))
+    : showFullHistory
+      ? rows
+      : recentRows
 
   return (
     <section className="log" aria-labelledby="log-title">
       <h2 id="log-title">Log</h2>
       <p className="log__lede" data-testid="log-lede">
-        Every entry, in the order it was recorded. <strong>Nothing here is ever edited.</strong> A
-        correction is a new entry that withdraws an earlier one, so the record of what was
-        originally typed survives alongside it.{' '}
+        Entries stay in recorded sequence order. The recent tail is shown by default; search and
+        complete history use the whole log. <strong>Nothing here is ever edited.</strong> A
+        correction is a new entry that withdraws an earlier one, so the original record survives
+        alongside it.{' '}
         <strong>
           Undoing the most recent entry always works, unless it is itself a correction; undoing an
           older one may be refused
@@ -99,23 +118,94 @@ export function DraftLog({ model, onRecorded }: DraftLogProps) {
           Nothing has been recorded against this draft yet.
         </p>
       ) : (
-        <ol className="log__list" data-testid="log-list">
-          {rows.map((row) => (
-            <LogEntry
-              key={row.event.sequence}
-              row={row}
-              isPending={pendingSequence === row.event.sequence}
-              anyPending={pendingSequence !== null}
-              failure={failure?.sequence === row.event.sequence ? failure.error : null}
-              onVoid={() => {
-                void voidEntry(row.event.sequence)
-              }}
-            />
-          ))}
-        </ol>
+        <>
+          <div className="log__controls">
+            <label className="log__search">
+              <span>Search complete log</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                }}
+                placeholder="Sequence, event, player, or seat"
+                aria-describedby="log-search-help log-results"
+              />
+            </label>
+            <p className="log__search-help" id="log-search-help">
+              Searches all recorded entries, including history outside the recent tail.
+            </p>
+            <div className="log__control-row">
+              <p className="log__results" id="log-results" aria-live="polite" data-testid="log-count">
+                {isSearching
+                  ? `${String(visibleRows.length)} matching ${visibleRows.length === 1 ? 'entry' : 'entries'} from ${String(rows.length)} total.`
+                  : showFullHistory
+                    ? `Showing all ${String(rows.length)} entries.`
+                    : `Showing ${String(visibleRows.length)} recent entries of ${String(rows.length)} total.`}
+              </p>
+              <button
+                type="button"
+                className="log__history-toggle"
+                aria-controls="draft-log-entries"
+                aria-expanded={showFullHistory}
+                onClick={() => {
+                  setShowFullHistory((current) => !current)
+                }}
+              >
+                {showFullHistory ? 'Show recent entries' : 'Show complete history'}
+              </button>
+            </div>
+          </div>
+
+          {isSearching && visibleRows.length === 0 ? (
+            <p className="state state--empty" data-testid="log-no-results">
+              No log entries match <strong>{query.trim()}</strong>. The complete log contains{' '}
+              {rows.length} entries.
+            </p>
+          ) : (
+            <ol
+              className="log__list"
+              id="draft-log-entries"
+              data-testid="log-list"
+              aria-label={
+                isSearching
+                  ? 'Matching draft log entries'
+                  : showFullHistory
+                    ? 'Complete draft log history'
+                    : 'Recent draft log entries'
+              }
+            >
+              {visibleRows.map((row) => (
+                <LogEntry
+                  key={row.event.sequence}
+                  row={row}
+                  isPending={pendingSequence === row.event.sequence}
+                  anyPending={pendingSequence !== null}
+                  failure={failure?.sequence === row.event.sequence ? failure.error : null}
+                  onVoid={() => {
+                    void voidEntry(row.event.sequence)
+                  }}
+                />
+              ))}
+            </ol>
+          )}
+        </>
       )}
     </section>
   )
+}
+
+function logRowMatches(row: LogRow, normalizedQuery: string): boolean {
+  const sequenceQuery = /^(?:#|sequence\s+)?(\d+)$/.exec(normalizedQuery)
+  if (sequenceQuery !== null) {
+    return row.event.sequence === Number(sequenceQuery[1])
+  }
+
+  return [
+    row.event.event_type,
+    row.playerLabel ?? '',
+    row.participantName ?? '',
+  ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
 }
 
 interface LogEntryProps {

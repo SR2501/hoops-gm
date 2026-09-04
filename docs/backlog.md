@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**78 done - 0 blocked - 116 pending - 194 total**
+**79 done - 0 blocked - 115 pending - 194 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2786,8 +2786,19 @@ form is the thing to fix.
 
 ### `draft-log-virtualisation` - The draft log is fifteen screens and violates the five-second rule
 
-- [ ] **pending**
-- **Depends on:** `draft-tracker`
+- [x] **done** - Delivered 2026-09-04. Recording mode now defaults to the
+  chronological 13-entry recent tail, searches the complete event cohort by
+  exact sequence or recorded event/player/participant label, reports mounted
+  results against the complete count, and exposes complete history explicitly.
+  Search and history mode survive poll-driven model replacement, and older
+  matches retain their original correction affordance and sequence.
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`
+
+This usability unit consumes the landed append-only event/API contract and the
+landed browser screen only. It does not consume automatic feed recognition or
+profile widening, which are the reasons the `draft-tracker` umbrella remains
+pending; depending on that umbrella incorrectly blocked a client-only control
+behind unrelated real-auction evidence.
 
 `.github/agents/frontend.md` says *design for one screen* and *if a view cannot be
 read in five seconds during a pick clock, it belongs in an evidence view*. The
