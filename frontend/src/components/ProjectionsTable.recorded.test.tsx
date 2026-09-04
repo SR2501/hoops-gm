@@ -58,7 +58,13 @@ import {
   tableColumnHeaders,
 } from '../test/adr002'
 import { ProjectionsTable } from './ProjectionsTable'
-import { buildProjectionsModel, NO_LABEL, NOT_PUBLISHED, RATE_LABELS } from './projectionsModel'
+import {
+  buildProjectionsModel,
+  NO_LABEL,
+  NOT_PUBLISHED,
+  RATE_LABELS,
+  selectProjectionRows,
+} from './projectionsModel'
 
 const payload = recorded as unknown as CurrentProjections
 
@@ -220,6 +226,34 @@ describe('the recorded projections response', () => {
 
     expect(screen.getAllByTestId(/^projection-row-/)).toHaveLength(payload.projections.length)
     expect(screen.queryAllByTestId('unlabelled-player')).toHaveLength(0)
+  })
+
+  it('filters and sorts the recorded cohort as a reversible view over the same rows', () => {
+    const before = JSON.stringify(payload)
+    const model = buildProjectionsModel(payload)
+    const sourceIds = model.rows.map((row) => row.playerId)
+    const filtered = selectProjectionRows(model.rows, {
+      searchQuery: 'precious',
+      teamFilter: { kind: 'team', abbreviation: 'SAC' },
+      sort: { key: 'points_per_game', direction: 'descending' },
+    })
+    const sorted = selectProjectionRows(model.rows, {
+      searchQuery: '',
+      teamFilter: { kind: 'all' },
+      sort: { key: 'points_per_game', direction: 'descending' },
+    })
+    const reset = selectProjectionRows(model.rows, {
+      searchQuery: '',
+      teamFilter: { kind: 'all' },
+      sort: null,
+    })
+
+    expect(filtered.map((row) => row.player?.full_name)).toEqual(['Precious Achiuwa'])
+    expect(sorted).toHaveLength(model.rows.length)
+    expect(new Set(sorted)).toEqual(new Set(model.rows))
+    expect(reset.map((row) => row.playerId)).toEqual(sourceIds)
+    expect(model.rows.map((row) => row.playerId)).toEqual(sourceIds)
+    expect(JSON.stringify(payload)).toBe(before)
   })
 
   it('renders no rate × assumed_games_played product, against the real cohort', () => {

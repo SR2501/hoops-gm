@@ -29,8 +29,8 @@ import { describeProjectionsError, isRetryableProjectionsError } from '../api/pr
 import type { CurrentProjections } from '../api/types'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
+import { ProjectionsBrowser } from '../components/ProjectionsBrowser'
 import { ProjectionLineagePanel } from '../components/ProjectionLineage'
-import { ProjectionsTable } from '../components/ProjectionsTable'
 import { buildProjectionsModel } from '../components/projectionsModel'
 
 /**
@@ -92,7 +92,10 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
 
   return (
     <>
-      <ProjectionLineagePanel lineage={model.lineage} drawnRowCount={model.rows.length} />
+      <ProjectionLineagePanel
+        lineage={model.lineage}
+        availableRateRowCount={model.rows.length}
+      />
 
       {!integrity.isConsistent ? (
         <p
@@ -175,13 +178,18 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
           not built.
         </span>
         <span className="grid__key-item">
+          Numeric sorting does not reinterpret missing evidence. An unpublished rate and every
+          non-stated Source GP state stay after stated numbers in both directions; equal rows use
+          player name, then player id, as deterministic tie-breakers.
+        </span>
+        <span className="grid__key-item">
           <strong>Pos</strong> is NBA&apos;s own coarse label and is not Fantrax lineup
           eligibility. This project ingests no Fantrax position data, so the table cannot filter
           or group by position.
         </span>
       </p>
 
-      <ProjectionsTable model={model} />
+      <ProjectionsBrowser model={model} />
     </>
   )
 }

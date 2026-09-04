@@ -201,6 +201,181 @@ export interface ProjectionsModel {
   integrity: ProjectionsIntegrity
 }
 
+export type ProjectionSortKey =
+  | 'player_name'
+  | 'nba_team'
+  | ProjectionRateField
+  | 'source_games_played'
+
+export type ProjectionSortDirection = 'ascending' | 'descending'
+
+export interface ProjectionSort {
+  key: ProjectionSortKey
+  direction: ProjectionSortDirection
+}
+
+export type ProjectionTeamFilter =
+  | { kind: 'all' }
+  | { kind: 'team'; abbreviation: string }
+  | { kind: 'missing' }
+
+export interface ProjectionViewOptions {
+  searchQuery: string
+  teamFilter: ProjectionTeamFilter
+  sort: ProjectionSort | null
+}
+
+export interface ProjectionTeamOptions {
+  abbreviations: string[]
+  hasMissingLabel: boolean
+}
+
+/**
+ * Every field a reader may order, and no derived quantity.
+ *
+ * The two label fields come from the existing player record, the rate fields
+ * are the exact published vocabulary, and Source GP is the separately stored
+ * source claim. Keeping this list derived from `PROJECTION_RATE_FIELDS` means a
+ * sortable rate cannot drift from the columns the table already displays.
+ */
+export const PROJECTION_SORT_KEYS: readonly ProjectionSortKey[] = [
+  'player_name',
+  'nba_team',
+  ...PROJECTION_RATE_FIELDS,
+  'source_games_played',
+]
+
+function compareText(left: string, right: string): number {
+  const leftFolded = left.toLocaleLowerCase('en-US')
+  const rightFolded = right.toLocaleLowerCase('en-US')
+  if (leftFolded < rightFolded) return -1
+  if (leftFolded > rightFolded) return 1
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
+function compareNumber(left: number, right: number): number {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
+function compareNullable<T>(
+  left: T | null,
+  right: T | null,
+  direction: ProjectionSortDirection,
+  compare: (left: T, right: T) => number,
+): number {
+  if (left === null && right === null) return 0
+  if (left === null) return 1
+  if (right === null) return -1
+  const result = compare(left, right)
+  return direction === 'ascending' ? result : -result
+}
+
+function isRateSortKey(key: ProjectionSortKey): key is ProjectionRateField {
+  return (PROJECTION_RATE_FIELDS as readonly string[]).includes(key)
+}
+
+function comparePrimary(
+  left: ProjectionRow,
+  right: ProjectionRow,
+  sort: ProjectionSort,
+): number {
+  if (sort.key === 'player_name') {
+    return compareNullable(
+      left.player?.full_name ?? null,
+      right.player?.full_name ?? null,
+      sort.direction,
+      compareText,
+    )
+  }
+  if (sort.key === 'nba_team') {
+    return compareNullable(
+      left.player?.team_abbreviation ?? null,
+      right.player?.team_abbreviation ?? null,
+      sort.direction,
+      compareText,
+    )
+  }
+  if (sort.key === 'source_games_played') {
+    return compareNullable(
+      left.assumption.kind === 'stated' ? left.assumption.games : null,
+      right.assumption.kind === 'stated' ? right.assumption.games : null,
+      sort.direction,
+      compareNumber,
+    )
+  }
+  if (isRateSortKey(sort.key)) {
+    return compareNullable(
+      left.rates[sort.key],
+      right.rates[sort.key],
+      sort.direction,
+      compareNumber,
+    )
+  }
+  return 0
+}
+
+function compareTieBreakers(left: ProjectionRow, right: ProjectionRow): number {
+  const byName = compareNullable(
+    left.player?.full_name ?? null,
+    right.player?.full_name ?? null,
+    'ascending',
+    compareText,
+  )
+  if (byName !== 0) return byName
+  return compareNumber(left.playerId, right.playerId)
+}
+
+export function projectionTeamOptions(rows: readonly ProjectionRow[]): ProjectionTeamOptions {
+  const abbreviations = new Set<string>()
+  let hasMissingLabel = false
+  for (const row of rows) {
+    const abbreviation = row.player?.team_abbreviation ?? null
+    if (abbreviation === null) hasMissingLabel = true
+    else abbreviations.add(abbreviation)
+  }
+  return {
+    abbreviations: [...abbreviations].sort(compareText),
+    hasMissingLabel,
+  }
+}
+
+/**
+ * Return a view over the imported rows without changing the model or payload.
+ *
+ * Numeric `null` values and all non-stated Source GP states sort after stated
+ * numbers in both directions. They are never coerced to zero. Equal and
+ * unavailable values use player name, then `player_id`, as stable tie-breakers.
+ */
+export function selectProjectionRows(
+  rows: readonly ProjectionRow[],
+  options: ProjectionViewOptions,
+): ProjectionRow[] {
+  const needle = options.searchQuery.trim().toLocaleLowerCase('en-US')
+  const selected = rows.filter((row) => {
+    const displayedName = row.player?.full_name ?? `player ${String(row.playerId)}`
+    if (needle !== '' && !displayedName.toLocaleLowerCase('en-US').includes(needle)) return false
+
+    if (options.teamFilter.kind === 'team') {
+      return row.player?.team_abbreviation === options.teamFilter.abbreviation
+    }
+    if (options.teamFilter.kind === 'missing') {
+      return (row.player?.team_abbreviation ?? null) === null
+    }
+    return true
+  })
+
+  if (options.sort === null) return selected
+  const { sort } = options
+  return selected.sort((left, right) => {
+    const primary = comparePrimary(left, right, sort)
+    return primary === 0 ? compareTieBreakers(left, right) : primary
+  })
+}
+
 /**
  * Index by `player_id`, keeping the first of any duplicate and counting them.
  *

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**76 done - 0 blocked - 116 pending - 192 total**
+**77 done - 0 blocked - 116 pending - 193 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -813,6 +813,35 @@ The same care does **not** extend to the Team and Pos columns: those labels come
 from our own player record, so their absence says nothing about what the source
 published, and they carry a different marker. Shipped sharing one marker, caught
 in review against the recorded fixture in the same commit.
+
+### `projections-client-controls` - Making imported projections searchable and sortable
+
+- [x] **done** - Built 2026-09-03.
+- **Depends on:** `projections-ui`
+
+`/projections` now searches the displayed player labels, filters the exact
+imported cohort by the NBA-team labels already on screen, and sorts by player
+name, NBA team, every canonical published per-game rate, or the separately
+displayed Basketball Monster games-played assumption. All operations are a
+client-side view over the response already loaded: reset restores response order,
+and tests prove filtering and sorting neither mutate the payload nor remove rows
+from the reset view.
+
+Numeric sorting never treats absence as zero. Null rates and unreadable,
+unexplained, or absent Source GP states stay after stated values in both
+directions; equal values break by player name and then canonical `player_id`.
+Native labelled controls, live result counts, `aria-sort`, and sortable header
+buttons keep the full cohort keyboard- and screen-reader-operable. Cohorts over
+100 rows are progressively mounted in 100-row pages while search and sorting
+still run over every imported row; the owner can reveal the remainder without
+virtualisation or another package. Position
+remains NBA's coarse label, never Fantrax eligibility, and has no filter or sort.
+
+This is Code-gated only. The allowed-sort-key test is derived from the existing
+canonical rate vocabulary and admits no per-36 field, percentage, rank,
+valuation, availability, recommendation, expected-games value, z-score, or
+G-score. Per-36 remains deliberately undelivered: deriving it in this frontend
+would create a new analytical number across the `quant`/Model-gate boundary.
 
 ### `projections-import-cli` - Giving the owner a command that imports his projection CSV
 

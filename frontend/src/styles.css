@@ -925,34 +925,103 @@ a:focus-visible {
    `border-right`, so matching that pattern is not a defence. */
 
 .grid-scroll:has(.projections) {
-  /* This page's own budget for everything above the table, and it is larger
-     than the schedule grid's `18rem` because this page carries more above the
-     scrollport: a heading, a four-clause lede, the lineage summary, and a key
-     of four items of which three are sentences that wrap.
+  /* Five rem beyond the previous table budget reserves the new controls and
+     result count. This is still a viewport constant rather than a measurement,
+     and opening lineage or integrity content can still produce an inner
+     scrollport inside page scroll. The shared flex-column fix already recorded
+     for the schedule and projections grids remains the honest replacement for
+     both constants. */
+  max-height: calc(100vh - 29rem);
+}
 
-     **Measured rather than asserted**, at a 720px viewport with the lineage
-     collapsed, the integrity banner absent and scroll at zero: the scrollport
-     top lands at 371px and `720 - 24rem` gives it a 360px height, so its
-     bottom sits at **731px — 11px below the fold**. The `<caption>` is 51px
-     and is not sticky, so the header pins at 371px once the caption scrolls
-     away and stays there; **9 of 60 rows** are visible at rest. Root font-size
-     is 15px here, so `24rem` is 360px rather than 384px, which is why the
-     arithmetic closes on 731 and not 755.
+.projections__browser {
+  margin-top: var(--space-4);
+}
 
-     Those figures are checkable against the constant, which is what makes them
-     worth writing down; the sibling comment on `.grid-scroll` records a
-     retracted measurement taken without resetting scroll position, so the
-     resting state is stated explicitly here.
+.projections__controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
 
-     Like its sibling this is **a constant rather than a measurement**, and it
-     is 11px short before a reader does anything at all. Opening the lineage
-     disclosure or surfacing the integrity banner pushes it further and
-     produces an inner scrollport inside the page scroll. The constant is left
-     alone because the honest fix is the one already named for the schedule
-     grid — a flex column with `min-height: 0` — and that is one fix for both
-     pages rather than a second magic number here. Filed with the existing
-     entry in `docs/backlog.md`. */
-  max-height: calc(100vh - 24rem);
+.projections__controls label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.projections__controls input,
+.projections__controls select {
+  min-width: 13rem;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.projections__controls input:focus-visible,
+.projections__controls select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.projections__controls > button {
+  padding: var(--space-2) var(--space-3);
+}
+
+.projections__controls > button:disabled {
+  cursor: default;
+}
+
+.projections__result-count {
+  margin: 0 0 var(--space-2) auto;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid th .projections__sort {
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  font-weight: inherit;
+  text-align: inherit;
+  white-space: nowrap;
+}
+
+.grid th .projections__sort:hover {
+  color: var(--accent);
+}
+
+.grid th .projections__sort::after {
+  margin-inline-start: 0.3rem;
+  color: var(--text-muted);
+  content: '\2195';
+}
+
+.grid th .projections__sort[data-direction='ascending']::after {
+  color: var(--accent);
+  content: '\2191';
+}
+
+.grid th .projections__sort[data-direction='descending']::after {
+  color: var(--accent);
+  content: '\2193';
+}
+
+.grid td.projections__no-results {
+  padding: var(--space-6);
+  color: var(--text-muted);
+  text-align: left;
 }
 
 .projections__player {
@@ -965,6 +1034,23 @@ a:focus-visible {
 
 .grid th.projections__player-head {
   text-align: left;
+}
+
+@media (max-width: 720px) {
+  .projections__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .projections__controls input,
+  .projections__controls select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .projections__result-count {
+    margin-inline-start: 0;
+  }
 }
 
 .grid td.projections__team,

@@ -34439,3 +34439,141 @@ backend producer/route tests and the cumulative backend/Ruff/format/mypy/full
 pytest, scripts, OpenAPI, backlog, frontend and prior document gates pass. This
 is still Code-only read/status behavior. Fresh exact-head review and hosted
 checks remain required; live boundaries are unchanged.
+
+## 2026-09-03 - Client-side projection search, filtering, and sorting
+
+**Delivered:** `/projections` now searches the displayed player label, filters
+the already-loaded cohort by displayed NBA-team label, and sorts that exact
+cohort by player, NBA team, any canonical published per-game rate, or the
+separately displayed Basketball Monster Source GP assumption. Reset restores
+response order. Native labelled controls, live counts, `aria-sort`, deterministic
+player-name/`player_id` tie-breakers, and 100-row progressive mounting keep the
+large cohort operable without virtualisation or another dependency. Missing
+labels and numeric values stay last in both directions; unreadable, unexplained,
+and absent Source GP states are never coerced to zero.
+
+**Boundary evidence:** The route still makes its existing single request and
+keeps the Basketball Monster import notice visible. Sorting and filtering create
+a new view array and tests prove the response payload is unchanged and every row
+returns after reset. The allowed-sort-key guard is derived from the existing
+canonical rate vocabulary and excludes per-36, percentage, z-score, G-score,
+rank, valuation, availability, recommendation, and expected-games fields.
+Position remains the NBA source label, is neither sortable nor filterable, and
+is not presented as Fantrax eligibility. No rate is multiplied by Source GP.
+No backend, OpenAPI, ingestion, dependency, or external-source code changed.
+
+**Code gate and controls:** From `frontend/`, `npm run lint`,
+`npm run typecheck`, the CI-form `npm test -- --reporter=default
+--reporter=json --outputFile.json=vitest-report.json` (**428/428**), and
+`npm run build` passed; `scripts/` ESLint passed from its own directory.
+`python scripts/backlog_graph.py`, `python scripts/check_no_secrets.py`, and
+`python scripts/check_doc_terminators.py` passed. Focused model, component,
+ADR-002, and recorded-fixture tests cover search, combined team filtering,
+ascending/descending sorts, stable ties, missing labels/rates, all four Source
+GP states, counts/reset, payload immutability, recovery of filtered rows, and a
+101-row progressive-rendering cohort. The committed synthetic demo was driven
+in a real Chromium browser at 1280x720 through search, MIL filtering, Source GP
+ascending/descending, reset/count, scrolling, and ARIA sort state; the final
+60-row demo response rendered all 60 rows. A fresh cumulative diff review found
+no significant issue after progressive mounting was added.
+
+**Backlog:** Added completed `projections-client-controls`; the finished file
+recounts **77 done, 0 blocked, 116 pending, 193 total**, with no dropped slug and
+one added slug relative to the merge base.
+
+**Could not verify:** Per-36 was deliberately not delivered because deriving it
+would cross the `quant`/Model-gate boundary and create a new analytical number.
+The browser exercise proves the committed synthetic response shape only; it did
+not use a live Basketball Monster export, Fantrax account, or real draft. Hosted
+PR checks, live data scale and labels, and production network/error timing were
+not exercised locally. This Code-only unit has no independent Model, Adapter, or
+Automation sign-off because it adds no model, source call, or write path.
+
+## 2026-09-03 - Projection controls review corrections
+
+**Correction:** Independent review of exact head `d883eed` found two truthful-
+label defects in the client controls. The lineage panel received
+`model.rows.length` while calling it rows "drawn on this screen", even though
+progressive mounting and filtering could leave most of those rows outside the
+DOM. Its required prop is now `availableRateRowCount`, and both the prop contract
+and visible fact say these are rate rows available to the browser. A page-level
+101-row test proves the initial 100-row mount and a one-row filtered state both
+retain the truthful 101-row available cohort without claiming hidden rows are
+drawn.
+
+The NBA-team selection is now validated against each refreshed model's derived
+options before use. One `effectiveTeamSelection` drives the `<select>`, filtering,
+and active-control state: a selected abbreviation missing from the new option
+set, or the missing-label sentinel after the last missing label disappears,
+becomes All NBA teams in the same render. Rerender tests for both paths prove the
+visible selection, three-row result count, reset state, and rendered rows agree
+immediately rather than showing All NBA teams beside a stale zero-row filter.
+
+**Negative controls and Code gate:** Temporarily restoring the old lineage copy
+made the new 101-row test fail with received text `101 drawn on this screen`.
+Temporarily restoring the old raw team selection for the `<select>` and filter
+made both refreshed-model tests fail with `Showing 0 of 0` instead of `Showing 3
+of 3`. Both mutations were reversed before the passing run. The focused suite
+then passed **30/30**. From `frontend/`, `npm run lint`, `npm run typecheck`, the
+CI-form `npm test -- --reporter=default --reporter=json
+--outputFile.json=vitest-report.json` (**431/431**), and `npm run build` passed;
+`scripts/` ESLint also passed from its own directory.
+
+**Browser evidence:** The committed 60-row synthetic demo was reopened in real
+Chromium. After filtering to Precious Achiuwa, the DOM carried one projection
+row and `Showing 1 of 1 matches from 60 imported players`, while the lineage
+fact reported 60 verified/carried rows and 60 rate rows available to this
+browser. This drives the repaired copy under a real filtered mount; refreshed
+model replacement remains component-test evidence because the static demo does
+not change cohorts while open.
+
+**Could not verify:** No live Basketball Monster export, Fantrax page/account,
+or real draft was used. The disappearing-team refresh paths were driven through
+React rerender tests, not a production import changing while Chromium remained
+open. Per-36 remains deliberately undelivered because deriving it would cross
+the `quant`/Model-gate boundary. Live cohort scale/labels and production
+network/error timing remain unverified. Hosted checks and the requested fresh
+independent cumulative review remain pending for the corrected exact head; do
+not merge or self-approve it before those complete.
+
+## 2026-09-03 - Projection team-filter persistence correction
+
+**Correction:** Fresh review of exact head `f6c6cf4` found that the pure
+effective team value fixed the current render but left the invalid raw selection
+in state. If BOS or the missing-label option disappeared and later returned, the
+old value silently became valid again and reapplied without owner action. Reset
+was disabled in the truthful middle state, so the hidden selection could not be
+cleared there.
+
+The browser still derives `effectiveTeamSelection` synchronously for the
+`<select>`, filtering, and active-control state, so the first render after an
+option disappears remains internally consistent. A narrowly scoped effect now
+persists only a disagreement between the raw and effective values back to All
+NBA teams. It does nothing when the selection remains valid and settles after
+one state update when invalid, so it neither loops nor clears an available
+selection.
+
+Both disappearing-option tests now perform a third model render. The real-team
+case removes BOS and then restores it; the missing-label case removes the last
+missing label and then restores one. In both, the middle render immediately
+shows All teams, all three rows, the three-of-three count, and disabled Reset;
+the restored option does not resurrect the stale filter. A separate refreshed-
+model test proves a still-available LAL selection remains selected and filtered.
+
+**Negative control and Code gate:** Temporarily deleting only the persistence
+effect made the two third-render assertions fail: the real-team control received
+`BOS`, and the missing-label control received `__missing_team_label__`, where
+both expected All teams. The effect was restored and the focused browser suite
+passed **6/6**. From `frontend/`, `npm run lint`, `npm run typecheck`, the CI-form
+`npm test -- --reporter=default --reporter=json
+--outputFile.json=vitest-report.json` (**432/432**), and `npm run build` passed;
+`scripts/` ESLint also passed from its own directory.
+
+**Could not verify:** A production cohort changing twice while open was not
+driven in Chromium; the committed demo serves a static cohort, so option
+removal, restoration, and valid-selection survival remain React rerender
+evidence. No live Basketball Monster export, Fantrax page/account, or real draft
+was used. Per-36 remains deliberately undelivered across the `quant`/Model-gate
+boundary. Live cohort scale/labels and production network/error timing remain
+unverified. Hosted checks and another fresh independent cumulative review remain
+pending for the corrected exact head; do not merge or self-approve it first.
