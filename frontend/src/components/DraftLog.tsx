@@ -143,17 +143,19 @@ export function DraftLog({ model, onRecorded }: DraftLogProps) {
                     ? `Showing all ${String(rows.length)} entries.`
                     : `Showing ${String(visibleRows.length)} recent entries of ${String(rows.length)} total.`}
               </p>
-              <button
-                type="button"
-                className="log__history-toggle"
-                aria-controls="draft-log-entries"
-                aria-expanded={showFullHistory}
-                onClick={() => {
-                  setShowFullHistory((current) => !current)
-                }}
-              >
-                {showFullHistory ? 'Show recent entries' : 'Show complete history'}
-              </button>
+              {!isSearching && (
+                <button
+                  type="button"
+                  className="log__history-toggle"
+                  aria-controls="draft-log-entries"
+                  aria-expanded={showFullHistory}
+                  onClick={() => {
+                    setShowFullHistory((current) => !current)
+                  }}
+                >
+                  {showFullHistory ? 'Show recent entries' : 'Show complete history'}
+                </button>
+              )}
             </div>
           </div>
 

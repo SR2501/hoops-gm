@@ -153,14 +153,15 @@ describe('DraftLog under a full auction log', () => {
     expect(screen.getByRole('searchbox', { name: 'Search complete log' })).toHaveValue(
       'Synthetic Player 007',
     )
-    expect(screen.getByRole('button', { name: 'Show recent entries' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
+    expect(screen.queryByRole('button', { name: 'Show recent entries' })).not.toBeInTheDocument()
     expect(renderedSequences()).toEqual([7])
     expect(screen.getByTestId('log-count')).toHaveTextContent('1 matching entry from 171 total.')
 
     await user.clear(search)
+    expect(screen.getByRole('button', { name: 'Show recent entries' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
     expect(renderedSequences()).toHaveLength(171)
     expect(screen.getByTestId('log-count')).toHaveTextContent('Showing all 171 entries.')
   })
