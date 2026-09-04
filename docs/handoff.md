@@ -34636,3 +34636,12 @@ verification.
 
 **Next:** Require hosted Code-gate checks and an independent merge review on the
 exact PR head. Do not merge or self-approve from this session.
+
+**Review correction:** Independent review of exact head `9fb3895` found that
+strict full-date ordering still accepted `2026-01-01` followed by
+`2026-01-15`, although both render as the same month. The response boundary
+now requires every monthly key to be the producer's canonical first day of the
+month before applying strict ascending order. The corrected negative case uses
+two different January dates. Removing only the month-start requirement makes
+that focused test accept the malformed response; restoring it passes, and the
+full frontend Code gate remains **439/439**.

@@ -79,9 +79,11 @@ describe('reliability endpoint contract', () => {
     ['contradictory direct denominator', (body) => {
       overallEvidence(body).observed_opportunities = 999
     }],
-    ['duplicate monthly evidence', (body) => {
+    ['duplicate calendar month represented by a different date', (body) => {
       const months = monthlyEvidence(body)
-      months.push(structuredClone(months[0]))
+      const duplicate = record(structuredClone(months[0]))
+      duplicate.month = '2026-01-15'
+      months.push(duplicate)
     }],
     ['out-of-order monthly evidence', (body) => {
       const months = monthlyEvidence(body)

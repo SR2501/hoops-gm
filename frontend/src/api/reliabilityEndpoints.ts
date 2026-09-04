@@ -37,6 +37,10 @@ function isDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
 }
 
+function isMonthStart(value: unknown): value is string {
+  return isDate(value) && value.endsWith('-01')
+}
+
 function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value))
 }
@@ -71,7 +75,7 @@ function isObservedRateEvidence(value: unknown): value is ObservedRateEvidence {
 }
 
 function isMonthlyRateEvidence(value: unknown): value is MonthlyRateEvidence {
-  return isRecord(value) && isDate(value.month) && isObservedRateEvidence(value.evidence)
+  return isRecord(value) && isMonthStart(value.month) && isObservedRateEvidence(value.evidence)
 }
 
 function isChronologicalMonthlyRateEvidence(value: unknown): value is MonthlyRateEvidence[] {
