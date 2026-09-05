@@ -34937,6 +34937,13 @@ permission. The retry used one-shot command-local helpers,
 push -u origin HEAD`, and published the branch. It did not change local or
 global Git configuration. No PR exists yet.
 
+Appending this preflight with an EOF `apply_patch` normalized the same 149
+historical CR bytes despite touching only the LF suffix; commit `be6a18f` is
+therefore failed append evidence and remains in history rather than being
+amended away. The final corrective commit rebuilds the file from the exact
+merge-base blob plus both recorded LF-only entries. This is a tool limitation,
+not a content conflict.
+
 **Could not verify:** Hosted exact-head jobs and the fresh independent
 cumulative review still require the final documentation commit. Local
 Postgres remains unavailable because Docker is not installed. Do not merge or
