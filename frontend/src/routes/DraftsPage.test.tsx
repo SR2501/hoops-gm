@@ -52,7 +52,6 @@ interface ApiPlan {
   setupPending?: boolean
   list?: unknown
   createError?: { status: number; error: string; detail: string; requestId: string }
-  createInvalidResponse?: boolean
   createReject?: boolean
   createdId?: number
 }
@@ -96,7 +95,6 @@ function installApi(plan: ApiPlan = {}) {
 
     if (url === '/api/v1/drafts' && method === 'POST') {
       if (plan.createReject) return Promise.reject(new TypeError('connection refused'))
-      if (plan.createInvalidResponse) return Promise.resolve(response({ id: 'not-a-number' }, 201))
       if (plan.createError) {
         return Promise.resolve(
           response(
@@ -341,7 +339,7 @@ describe('draft setup screen', () => {
 
   it('locks and refreshes after a malformed success response could hide a committed draft', async () => {
     const user = userEvent.setup()
-    const fetchMock = installApi({ createInvalidResponse: true })
+    const fetchMock = installApi({ createdId: 1.5 })
     renderPage()
     await chooseAuctionSetup(user)
 

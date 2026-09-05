@@ -183,8 +183,15 @@ const mutations = [
   {
     name: 'owner membership guard removed',
     old:
-      '  return (\n    value.owner_fantasy_team_id === null ||\n' +
-      '    teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)\n  )',
+      '  if (\n    value.owner_fantasy_team_id !== null &&\n' +
+      '    !teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)\n  ) {',
+    replacement:
+      '  if (\n    false &&\n' +
+      '    !teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)\n  ) {',
+  },
+  {
+    name: 'duplicate rendered owner-option guard removed',
+    old: '  return new Set(ownerOptionLabels).size === ownerOptionLabels.length',
     replacement: '  return true',
   },
   {
@@ -259,6 +266,14 @@ const mutations = [
     tests: ['src/routes/DraftsPage.test.tsx'],
     old: '        onCreationUncertain()',
     replacement: '        void onCreationUncertain',
+  },
+  {
+    name: 'created draft id positivity guard removed',
+    tests: ['src/routes/DraftsPage.test.tsx'],
+    old:
+      '  isSuccess: (value: unknown): value is DraftState =>\n' +
+      '    isDraftState(value) && isPositiveInteger(value.id),',
+    replacement: '  isSuccess: isDraftState,',
   },
 ]
 

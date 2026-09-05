@@ -35049,3 +35049,36 @@ labels was available, and the retained browser bundle uses distinct league
 labels, so this refusal is fixture-driven rather than live evidence. Hosted
 checks and fresh independent review of the final frozen head remain required.
 Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup final response guards
+
+Fresh independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to head
+`4a85967042e07561018597a4978a7025e405109d` found two remaining ambiguous-
+success paths.
+
+First, an explicitly persisted owner named `Alpha` and a different team named
+`Alpha (persisted owner)` produced identical owner-selector options after the
+UI appended its suffix, despite distinct raw names and ids. The setup boundary
+now validates the exact normalized option labels including that suffix and
+refuses the whole response on collision.
+
+Second, the shared draft-state guard accepts any numeric id for existing read
+compatibility. A full 201 response carrying a fractional id could therefore
+navigate to an invalid route without entering uncertain-write handling. Draft
+creation now uses a dedicated success contract requiring a positive integer
+id. The rendered malformed-success test uses an otherwise complete response
+with id `1.5` and proves the form locks, the list refreshes, no navigation
+occurs, and the duplicate-risk warning remains visible.
+
+Both guards have attributable mutations. The complete matrix reports **45
+mutations caught, 0 survived, 0 harness failures** after source restoration
+and green focused suites.
+
+**Could not verify:** The full Code gate has not yet run after these two final
+changes. While they were being corrected, `origin/main` advanced to
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26`; the branch still requires the
+requested byte-safe merge, complete post-merge gates, hosted checks, and a
+fresh independent review of the resulting exact base-to-head diff. No real
+league carried either ambiguous label shape, and no real backend emitted a
+fractional created id. Do not merge or self-approve from this session.

@@ -289,10 +289,19 @@ function isDraftSetupLeague(value: unknown): value is DraftSetupLeague {
   )
   if (new Set(teamLabels).size !== teamLabels.length) return false
 
-  return (
-    value.owner_fantasy_team_id === null ||
-    teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)
+  if (
+    value.owner_fantasy_team_id !== null &&
+    !teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)
+  ) {
+    return false
+  }
+  const ownerOptionLabels = value.fantasy_teams.map(
+    (team) =>
+      `${team.display_name.trim().replace(/\s+/g, ' ')}${
+        team.fantasy_team_id === value.owner_fantasy_team_id ? ' (persisted owner)' : ''
+      }`,
   )
+  return new Set(ownerOptionLabels).size === ownerOptionLabels.length
 }
 
 export function isDraftSetupResponse(value: unknown): value is DraftSetupResponse {
@@ -427,6 +436,12 @@ const DRAFT_STATE_CONTRACT = {
   invalidResponseDetail: 'The draft response did not match the expected backend contract.',
 } satisfies ResponseContract<DraftState>
 
+const CREATED_DRAFT_STATE_CONTRACT = {
+  isSuccess: (value: unknown): value is DraftState =>
+    isDraftState(value) && isPositiveInteger(value.id),
+  invalidResponseDetail: 'The created draft response did not match the expected backend contract.',
+} satisfies ResponseContract<DraftState>
+
 const DRAFT_EVENTS_CONTRACT = {
   isSuccess: isDraftEventsPage,
   invalidResponseDetail: 'The draft log response did not match the expected backend contract.',
@@ -455,7 +470,7 @@ export function createDraft(
   body: CreateDraftRequest,
   options?: RequestOptions,
 ): Promise<DraftState> {
-  return apiFetch('/api/v1/drafts', DRAFT_STATE_CONTRACT, {
+  return apiFetch('/api/v1/drafts', CREATED_DRAFT_STATE_CONTRACT, {
     ...options,
     method: 'POST',
     body,
