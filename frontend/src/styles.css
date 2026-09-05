@@ -2009,13 +2009,29 @@ a:focus-visible {
   font-weight: 600;
 }
 
-/* The speculative one is deliberately quieter, and its label says "try". A
-   button that looked identical to Undo would be promising a guarantee this
-   screen does not have. */
+/* The speculative one stays quieter at rest so the single guaranteed Undo
+   remains the correction a recorder finds first. Its interaction states, not
+   its resting weight, prove that the attempt is available. */
 .log__undo--maybe {
   background: transparent;
   border: 1px dashed var(--border);
   color: var(--text-muted);
+}
+
+.log__undo--maybe:not(:disabled):hover,
+.log__undo--maybe:not(:disabled):focus-visible {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--text);
+}
+
+.log__undo--maybe:not(:disabled):active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-raised));
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--accent);
+  transform: translateY(1px);
 }
 
 .log__undo:disabled {

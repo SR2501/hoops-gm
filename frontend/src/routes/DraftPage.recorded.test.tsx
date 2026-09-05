@@ -237,6 +237,18 @@ describe('the draft board, from recorded payloads', () => {
     // And the two labels are genuinely different text, not the same affordance
     // twice: the whole design rests on a reader telling them apart at a glance.
     expect(undo[0]?.textContent).not.toBe(tryVoid[0]?.textContent)
+    expect(undo[0]).toHaveClass('log__undo--sure')
+    expect(undo[0]).not.toHaveAttribute('title')
+    for (const control of tryVoid) {
+      expect(control.tagName).toBe('BUTTON')
+      expect(control).toHaveAttribute('type', 'button')
+      expect(control).toBeEnabled()
+      expect(control).toHaveClass('log__undo--maybe')
+      expect(control).toHaveAttribute(
+        'title',
+        'Undoing an entry that is not the most recent may be refused, because the log is replayed without it.',
+      )
+    }
 
     await userEvent.click(screen.getByRole('button', { name: 'Show complete history' }))
     expect(screen.getAllByRole('button', { name: 'Try to void' })).toHaveLength(15)
