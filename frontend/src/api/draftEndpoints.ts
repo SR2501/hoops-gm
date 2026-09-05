@@ -284,6 +284,10 @@ function isDraftSetupLeague(value: unknown): value is DraftSetupLeague {
 
   const teamIds = value.fantasy_teams.map((team) => team.fantasy_team_id)
   if (new Set(teamIds).size !== teamIds.length) return false
+  const teamLabels = value.fantasy_teams.map((team) =>
+    team.display_name.trim().replace(/\s+/g, ' '),
+  )
+  if (new Set(teamLabels).size !== teamLabels.length) return false
 
   return (
     value.owner_fantasy_team_id === null ||

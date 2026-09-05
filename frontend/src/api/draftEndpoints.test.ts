@@ -292,6 +292,10 @@ describe('draft setup endpoint contract', () => {
       duplicateTeam.leagues[0]!.fantasy_teams[1]!.fantasy_team_id
     expect(isDraftSetupResponse(duplicateTeam)).toBe(false)
 
+    const duplicateTeamLabel = structuredClone(setupResponse)
+    duplicateTeamLabel.leagues[0]!.fantasy_teams[0]!.display_name = ' Owner   team '
+    expect(isDraftSetupResponse(duplicateTeamLabel)).toBe(false)
+
     const missingOwner = structuredClone(setupResponse)
     missingOwner.leagues[0]!.owner_fantasy_team_id = 999
     expect(isDraftSetupResponse(missingOwner)).toBe(false)

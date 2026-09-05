@@ -34986,3 +34986,37 @@ Two rendered interaction tests drive the previously unsafe paths: rejected fetch
 The final frontend Code gate after this correction passes: ESLint, strict TypeScript, **472/472 tests** across 36 files, and production build. The recorded OpenAPI check still reports zero added, removed or changed fields. The prior browser success-path evidence remains attributable because this correction changes only post-failure behavior; it does not alter setup rendering, request construction or successful navigation.
 
 **Could not verify:** The first review is not final-head approval because this correction changes the head it reviewed. Hosted checks, push, PR-head update and a fresh independent review over the new exact base-to-head diff remain required. No backend idempotency mechanism exists in the frozen contract, so page reload plus list inspection is a duplicate-risk control, not proof that a network-ambiguous POST did or did not commit. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup ambiguous-label correction
+
+A fresh independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to head
+`66bd0330cf8aae8989af5fb02602e0e3a57c9698` found one medium-confidence
+defect: persisted fantasy teams may have distinct immutable ids but duplicate
+display names. The setup controls identified teams only by display name, so
+two such records would present indistinguishable owner and slot choices while
+binding different `fantasy_team_id` values. Presentation order cannot supply
+the missing distinction.
+
+**Corrected:** The setup boundary now refuses a league whose team labels
+become identical after trimming and collapsing rendered whitespace. It still
+accepts distinct visible labels and never infers identity, filters a team, or
+uses response order. The refusal uses the existing actionable malformed-
+response state rather than allowing an ambiguous immutable binding.
+
+The contract test now constructs distinct ids with labels that render as the
+same text and proves the entire setup response is rejected. A new attributable
+mutation removes only this guard and is caught by that test. The complete
+matrix now reports **42 mutations caught, 0 survived, 0 harness failures**,
+with every source restored byte-for-byte and all three focused suites green.
+The full frontend Code gate remains green: ESLint, strict TypeScript,
+**472/472 tests**, and production build. OpenAPI comparison remains zero
+added, removed, or changed fields; backlog graph, secret scan, document
+terminators, script lint, and diff checks pass.
+
+**Could not verify:** No persisted real league with duplicate rendered team
+names was available, so the unsafe state and refusal are deterministic
+contract fixtures rather than live league evidence. The prior browser bundle
+contains unique labels and therefore does not render this refusal. Hosted
+checks and a fresh independent review of the next frozen head remain required.
+Do not merge or self-approve from this session.

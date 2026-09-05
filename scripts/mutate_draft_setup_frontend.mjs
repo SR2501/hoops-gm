@@ -176,6 +176,11 @@ const mutations = [
     replacement: '  if (false) return false',
   },
   {
+    name: 'duplicate rendered team-label guard removed',
+    old: '  if (new Set(teamLabels).size !== teamLabels.length) return false',
+    replacement: '  if (false) return false',
+  },
+  {
     name: 'owner membership guard removed',
     old:
       '  return (\n    value.owner_fantasy_team_id === null ||\n' +
