@@ -34835,3 +34835,85 @@ or live-account write behaviour changed.
 **Next:** Require exact-head hosted Code-gate checks and an independent
 cumulative review from a different agent. Do not merge or self-approve from
 this session.
+
+## 2026-09-05 - Draft setup read contract
+
+**Delivered:** `GET /api/v1/drafts/setup` is a loopback-only read contract for
+the later browser setup screen. It lists persisted leagues by id, reuses
+`draft_format_from_league` for the exact auction or snake facts that
+`POST /api/v1/drafts` freezes, and returns only internal league/team ids,
+display names, and an explicit nullable owner-team id. Fantasy teams are
+case-insensitive display-name ordered with a stored-id tie-break; that order is
+documented as display order only and never supplies `team_slot` or
+`source_seat`. No create-draft semantics, frontend implementation, schema,
+migration, network binding, per-team budget, Fantrax id, owner metadata, or
+access value changed. The owner's shared-budget ruling remains intact.
+
+The read refuses the whole collection with the existing typed 422 error shape
+when a league format is invalid, the stored team count is not exact, a team
+name is blank, more than one team is marked as the owner's, or the current
+settings snapshot is malformed, declares the wrong schema, has stale source
+identity/season evidence, or contradicts the league's roster size. A settings
+error names only the mismatched field class and internal row ids; it does not
+echo either Fantrax league id or stale season value. A league with no settings
+snapshot remains valid because the existing draft writer freezes the explicit,
+complete `League` format row and existing local/mock leagues rely on that
+contract. A league with no assigned owner remains valid and returns `null`.
+
+**Evidence and mutations:** `backend/tests/test_draft_setup_api.py` covers zero,
+one and multiple leagues, deterministic league/team ordering, auction and snake
+formats, unassigned owner, production-written settings versions, full
+collection refusal, loopback rejection, and the exact OpenAPI/public field
+set. The final focused file passes **15/15**. Each load-bearing guard was green
+before mutation, its source mutation was asserted present, the exact behavior
+test went red for an improper 200 or added OpenAPI field, and restoration went
+green: exact team count, multiple owners, blank names, current-settings
+validation, settings schema declaration, stale source identity, stale season,
+newest-version roster contradiction, and restricted public response fields.
+One first mutation invocation used the obsolete parametrized id
+`fantasy_teams0-draft_participants_incomplete`; pytest collected no such test,
+so that red was discarded. The collected id `missing-team` was then used and
+failed on 200 versus 422 as intended.
+
+**Code gate and repository checks:** From `backend/`, `python -m ruff check .`,
+`python -m ruff format --check .`, `python -m mypy`, and `python -m pytest`
+pass on the final tree (**2567 passed, 2 skipped, 43 deselected**);
+`python scripts/capture_openapi.py --check` reports no drift. From the
+repository root, Ruff check/format over `scripts/`,
+`scripts/backlog_graph.py`, `scripts/check_no_secrets.py`, and
+`scripts/check_doc_terminators.py` pass. SQLite `alembic upgrade head`,
+`alembic check`, and `alembic downgrade base` pass and the temporary database
+was removed. The frontend gate passes after `npm ci`: lint, type-check,
+**448/448 tests**, and production build. The backlog adds only
+`draft-setup-read-contract`, keeps `draft-setup-screen` pending, and recounts
+**81 done, 0 blocked, 114 pending, 195 total**; the base/current slug-set check
+reports one expected addition and no deletion. `git diff --check` passes.
+
+**Failed approaches and side effects:** The first focused command assumed the
+shell started in `backend/`; the corrected commands use an explicit
+`Set-Location`. The first focused pytest run lacked the editable package on
+that shell's import path; setting `PYTHONPATH` to `backend/src` fixed it.
+Initial Ruff found two long lines and formatted one source file. A first roster
+comparison used nonexistent `LeagueSettingsDocument.roster`; strict mypy and
+the focused tests rejected it, and the implementation now reads
+`roster_limits.value`. The first frontend lint attempt found no local
+`eslint`; `npm ci` created ignored `frontend/node_modules`, after which the
+gate passed and the build created ignored `frontend/dist`. The OpenAPI capture
+intentionally updated the tracked recorded fixture. No package manifest,
+lockfile, environment file, application configuration, database, or external
+account was changed. Mutation results exist only in terminal output; there is
+no off-repository evidence bundle or other holding. The first handoff append
+anchored on repeated prose rather than the true terminator and normalized 149
+historical CR bytes in that older hunk; the edit was discarded and the final
+file was reconstructed byte-for-byte from the base blob plus only this LF
+entry. `check_append_only.py --help` is not supported and treated `--help` as a
+path; that failed probe established no append evidence, so the committed-file
+invocation below is the one that counts.
+
+**Could not verify:** Docker is not installed in this environment, so the
+Postgres suite could not be run locally; the exact-head hosted Postgres job is
+required evidence before the PR is complete. No live Fantrax data, browser
+screen, real draft, or account write was used: the frontend setup screen and
+all write behavior are deliberately out of scope. Hosted exact-head CI and a
+fresh independent cumulative review remain pending until the final commit is
+frozen. Do not merge or self-approve from this session.
