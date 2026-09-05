@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**79 done - 0 blocked - 115 pending - 194 total**
+**80 done - 0 blocked - 114 pending - 194 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2827,8 +2827,18 @@ a calm hour, not to a merge.
 
 ### `draft-board-affordance-styling` - The void button's styling makes a claim the button does not
 
-- [ ] **pending**
-- **Depends on:** `draft-tracker`
+- [x] **done** - Delivered 2026-09-04. Every available `Try to void`
+  control now proves it is interactive through dedicated hover, keyboard
+  focus-visible and active/pressed states while retaining its quiet dashed,
+  transparent resting treatment. The single guaranteed `Undo` keeps its solid
+  accent weight, and the existing caveat remains exclusive to `Try to void`.
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`
+
+This presentation-only unit consumes the landed append-only correction contract
+and browser screen. It does not consume automatic feed recognition or profile
+widening, which are the unfinished work keeping the `draft-tracker` umbrella
+pending; depending on that umbrella would block a client-only affordance behind
+unrelated live-auction evidence.
 
 The draft log offers two corrections. **Undo** is guaranteed and is painted as a
 solid orange fill at weight 600. **Try to void** may be refused and is painted as

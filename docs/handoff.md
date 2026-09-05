@@ -34774,3 +34774,64 @@ inflation, profile, feed recogniser or live-account write behavior changed.
 **Next:** Require exact-head hosted Code-gate checks and an independent
 cumulative review from a different agent. Do not merge or self-approve from
 this session.
+
+## 2026-09-04 - Draft correction affordance states
+
+**Delivered:** On `/draft/:draftId`, every available `Try to void` correction
+keeps its quiet transparent, dashed and muted resting treatment, then changes
+to a raised background, solid accent border and readable foreground on pointer
+hover and keyboard focus-visible. A held press adds accent foreground,
+accent-tinted background and a one-pixel depressed transform. No padding,
+margin, width, height, font size or font weight changes between states, so the
+interaction does not move neighbouring controls or gain resting weight. The
+single guaranteed `Undo` remains the solid accent, weight-600 correction.
+Correction requests, refusal rendering, log tail/search/history state, copy,
+mobile layout and API contracts are unchanged.
+
+**Focused evidence and mutation:** `DraftLog.styles.test.ts` pins the quiet
+resting hierarchy, dedicated hover/focus-visible declarations, pressed
+declarations and the absence of size-changing declarations.
+`DraftPage.recorded.test.tsx` pins native enabled button semantics, correction
+classes, the exact existing caveat on every mounted `Try to void`, and the
+deliberate absence of a title on `Undo`; the two focused files pass **40/40**.
+After that green baseline, changing only the production pressed selector from
+`:active` to `:focus` was asserted present and made the pressed-state test fail
+at its selector-presence assertion while the other six style tests stayed
+green. Restoring `:active` returned the style suite to **7/7**.
+
+**Rendered evidence:** The real synthetic demo was served by
+`python scripts\run_demo.py` and driven in Microsoft Edge 152 over CDP at
+1280x720 and 390x844. At both widths a real `Try to void` was scrolled into
+view, reached by pointer hover, reached from the preceding focus stop with a
+real Tab key event, and captured while the primary pointer remained pressed.
+Computed styles changed from transparent/dashed/muted at rest to
+raised/solid/text on hover, a 2px accent outline plus that same state on
+focus-visible, and an accent-tinted/translated pressed state while `:active`
+was true. The same drive proved the control remained an enabled
+`type="button"`, retained the exact caveat, `Undo` retained no title and its
+solid accent weight, all 11 mounted corrections remained within the horizontal
+viewport, and document/body scroll width never exceeded client width. Metrics,
+the reusable drive and eight state screenshots are retained only in the
+session artifact directory, not in the repository.
+
+**Backlog boundary:** `draft-board-affordance-styling` now depends on completed
+`draft-tracker-persistence` and `draft-tracker-screen`, the correction and
+screen contracts it consumes. It no longer depends on pending automatic
+`draft-tracker`, whose remaining feed/profile evidence is unrelated to this
+client-only presentation unit. The finished backlog recounts **80 done, 0
+blocked, 114 pending, 194 total**.
+
+**Could not verify:** No live Fantrax draft, real owner timing trial, physical
+touchscreen, screen reader, high-contrast mode or non-Chromium browser was
+used. Pointer, keyboard and held-press states are real Edge input and rendered
+style evidence, not assistive-technology or cross-browser evidence. The demo
+contains invented draft events and 11 mounted correction controls, so it
+proves the shipped screen state and layout rather than a real auction's event
+distribution. Hosted exact-head CI and fresh independent cumulative review
+remain pending until the final commit exists. This is Code-gate-only: no
+backend/API, external source, model, recommendation, bridge, action protocol
+or live-account write behaviour changed.
+
+**Next:** Require exact-head hosted Code-gate checks and an independent
+cumulative review from a different agent. Do not merge or self-approve from
+this session.

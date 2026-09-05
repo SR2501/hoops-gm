@@ -75,3 +75,44 @@ describe('the withdrawn-entry styling', () => {
     expect(badge[0]).not.toMatch(/--text-muted/)
   })
 })
+
+describe('the draft correction affordance hierarchy', () => {
+  it('keeps Try to void quieter than the guaranteed Undo at rest', () => {
+    const sure = ruleBodiesMentioning('.log__undo--sure')
+    const maybe = ruleBodiesMentioning('.log__undo--maybe').find((body) =>
+      body.includes('background: transparent'),
+    )
+
+    expect(sure.some((body) => body.includes('background: var(--accent)'))).toBe(true)
+    expect(sure.some((body) => /font-weight:\s*600/.test(body))).toBe(true)
+    expect(maybe, 'no resting rule found for `.log__undo--maybe`').toBeDefined()
+    expect(maybe).toMatch(/border:\s*1px dashed var\(--border\)/)
+    expect(maybe).toMatch(/color:\s*var\(--text-muted\)/)
+    expect(maybe).not.toMatch(/font-weight:/)
+    expect(maybe).not.toMatch(/background:\s*var\(--accent\)/)
+  })
+
+  it('proves Try to void is interactive on hover and keyboard focus without changing its size', () => {
+    const hover = ruleBodiesMentioning('.log__undo--maybe:not(:disabled):hover')
+    const focus = ruleBodiesMentioning('.log__undo--maybe:not(:disabled):focus-visible')
+
+    expect(hover).toHaveLength(1)
+    expect(focus).toEqual(hover)
+    expect(hover[0]).toMatch(/background:\s*var\(--bg-raised\)/)
+    expect(hover[0]).toMatch(/border-color:\s*var\(--accent\)/)
+    expect(hover[0]).toMatch(/border-style:\s*solid/)
+    expect(hover[0]).toMatch(/color:\s*var\(--text\)/)
+    expect(hover[0]).not.toMatch(/padding:|margin:|font-size:|font-weight:/)
+  })
+
+  it('gives a press its own immediate state without moving neighbouring controls', () => {
+    const active = ruleBodiesMentioning('.log__undo--maybe:not(:disabled):active')
+
+    expect(active).toHaveLength(1)
+    expect(active[0]).toMatch(/background:\s*color-mix\(/)
+    expect(active[0]).toMatch(/border-color:\s*var\(--accent\)/)
+    expect(active[0]).toMatch(/color:\s*var\(--accent\)/)
+    expect(active[0]).toMatch(/transform:\s*translateY\(1px\)/)
+    expect(active[0]).not.toMatch(/padding:|margin:|width:|height:|font-size:|font-weight:/)
+  })
+})
