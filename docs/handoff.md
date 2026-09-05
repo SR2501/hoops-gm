@@ -34850,16 +34850,17 @@ Neither private league identity nor any identity-bearing raw section was
 printed or committed.
 
 The observed object says playoffs are used, period 18 is the last regular
-period, period 19 is the first playoff period, four teams qualify, and playoff
-periods are not merged. The same `used`, `lastRegularSeasonPeriod`, and
-`firstPlayoffPeriod` contract was independently published from another live
-Fantrax league in `TheCiege23/allfantasy-v2-main` commit
-`2511dd8019f57fc5b3f6a72d580da820a3fd93ff`. The official parser now validates
-the exact five-key object and strict types, requires adjacent boundaries that
-reference real scoring periods, and rejects disagreement with any inline
-playoff markers. It normalizes the established calendar meaning to
-`PlayoffRules(period_numbers=(19, 20, 21))`; known-disabled playoffs become an
-empty tuple, while a missing object still uses prior marker evidence or remains
+period, period 19 is the first playoff period, and carries
+`numPlayoffTeams=4` and `mergePlayoffPeriods=false`. The latter values are
+retained but not interpreted by this change. The same `used`,
+`lastRegularSeasonPeriod`, and `firstPlayoffPeriod` contract was independently
+published from another live Fantrax league in `TheCiege23/allfantasy-v2-main` commit
+`2511dd8019f57fc5b3f6a72d580da820a3fd93ff`. The official parser always
+validates the exact five-key object and strict types, including a non-negative
+team count. For enabled playoffs it also requires adjacent boundaries that reference real scoring periods and rejects
+disagreement with any inline playoff markers. It normalizes the established
+calendar meaning to `PlayoffRules(period_numbers=(19, 20, 21))`; known-disabled
+playoffs become an empty tuple, while a missing object still uses prior marker evidence or remains
 absent. The existing official-over-bridge merge is unchanged and tested.
 `LeagueDeadlineCalendar` receives authoritative booleans, and the scoring-period
 projection persists them through its existing lineage contract.
@@ -34874,9 +34875,11 @@ removed sections, and canonical fixture byte size. The fixture sanitizer itself
 is contract-tested so a future recording cannot silently drop `playoffs`.
 
 **Failure behavior and scope:** A present null/non-object, missing or extra
-object key, coerced boolean/integer, non-adjacent boundary, absent referenced
-period, absent `scoringPeriods`, or marker disagreement is a
-`SourceContractError`; none becomes absent evidence. `numPlayoffTeams` and
+object key, or coerced boolean/integer is a `SourceContractError`. When
+`used=true`, a non-adjacent boundary, absent referenced period, absent
+`scoringPeriods`, or marker disagreement is also a contract error. Disabled
+playoffs retain strict field shapes but do not consume the boundary references;
+none of these malformed states becomes absent evidence. `numPlayoffTeams` and
 `mergePlayoffPeriods` are retained and shape-validated but not interpreted by
 the current calendar, which has no bracket or multi-period-matchup model. No
 NBA adapter or smoke behavior changed. In particular, the unrelated
@@ -34902,7 +34905,11 @@ scoring periods, both referenced boundaries, marker disagreement, disabled
 playoffs, inclusive first-playoff classification, adapter known-key handling,
 rule-path mapping, and recorder retention. The adjacency fixture includes the
 otherwise-valid non-adjacent period so its red cannot come from the neighboring
-"period not found" guard.
+"period not found" guard. An independent cumulative review of frozen head
+`9490525958c104fad861195028562fdf91812792` reported no implementation or
+privacy defect and found two documentation overclaims: enabled-only boundary
+validation and the derivation/projection boundary for unknown playoff flags.
+Both are corrected here; the corrected exact head requires a fresh review.
 
 **Failed approaches and side effects:** `uv run pytest ...` failed because
 `uv` is not installed. The first direct pytest attempt ran from the repository
@@ -34912,11 +34919,17 @@ with `PYTHONPATH=src` resolved the local source-layout requirement. An attempted
 `backlog_graph.py --check` failed because that option does not exist; the
 documented positional invocation passed. The first full format check found two
 formatter-only changes, which `ruff format` applied before the final checks.
+The first push used the default credential helper identity
+`steverones_microsoft` and was rejected with HTTP 403; the retry used the
+already-authorized `SR2501` GitHub CLI identity through a per-command helper
+override and made no persistent credential configuration change.
 The first `apply_patch` handoff append preserved the NUL but changed the
-pre-existing prefix hash; the exact Git blob was restored and this entry was
-re-appended as UTF-8/LF bytes before final checks.
-No environment variable, ignored project config, credential, cookie, cache,
-database, or external account state was changed. The only off-repository
+pre-existing prefix hash; after restoration, the patch append duplicated its
+context block. The final binary append was rebuilt from the exact parent blob,
+dropping the duplicate and preserving all parent bytes as the file prefix. No
+environment variable, ignored project config, credential, cookie, cache,
+database, or external Fantrax/NBA account state was changed. The pushed remote
+branch ref is the only expected external mutation. The only off-repository
 holdings are the raw response and safe sidecar paths named above.
 
 **Could not verify:** No first-party Fantrax reference was found for
@@ -34927,69 +34940,8 @@ The configured live Fantrax smoke could not run locally because this worktree
 has no league-id environment/config value; its exact response was instead
 captured by the coordinating main session and preserved at the paths above.
 Hosted exact-head CI and fresh independent cumulative review remain pending
-until the final commit exists.
+for the corrected final commit.
 
 **Next:** Freeze and push the final commit, require exact-head hosted CI and a
 fresh independent cumulative review, then open the non-draft PR. Do not merge
 or self-approve.
-
-## 2026-09-04 - Draft correction affordance states
-
-**Delivered:** On `/draft/:draftId`, every available `Try to void` correction
-keeps its quiet transparent, dashed and muted resting treatment, then changes
-to a raised background, solid accent border and readable foreground on pointer
-hover and keyboard focus-visible. A held press adds accent foreground,
-accent-tinted background and a one-pixel depressed transform. No padding,
-margin, width, height, font size or font weight changes between states, so the
-interaction does not move neighbouring controls or gain resting weight. The
-single guaranteed `Undo` remains the solid accent, weight-600 correction.
-Correction requests, refusal rendering, log tail/search/history state, copy,
-mobile layout and API contracts are unchanged.
-
-**Focused evidence and mutation:** `DraftLog.styles.test.ts` pins the quiet
-resting hierarchy, dedicated hover/focus-visible declarations, pressed
-declarations and the absence of size-changing declarations.
-`DraftPage.recorded.test.tsx` pins native enabled button semantics, correction
-classes, the exact existing caveat on every mounted `Try to void`, and the
-deliberate absence of a title on `Undo`; the two focused files pass **40/40**.
-After that green baseline, changing only the production pressed selector from
-`:active` to `:focus` was asserted present and made the pressed-state test fail
-at its selector-presence assertion while the other six style tests stayed
-green. Restoring `:active` returned the style suite to **7/7**.
-
-**Rendered evidence:** The real synthetic demo was served by
-`python scripts\run_demo.py` and driven in Microsoft Edge 152 over CDP at
-1280x720 and 390x844. At both widths a real `Try to void` was scrolled into
-view, reached by pointer hover, reached from the preceding focus stop with a
-real Tab key event, and captured while the primary pointer remained pressed.
-Computed styles changed from transparent/dashed/muted at rest to
-raised/solid/text on hover, a 2px accent outline plus that same state on
-focus-visible, and an accent-tinted/translated pressed state while `:active`
-was true. The same drive proved the control remained an enabled
-`type="button"`, retained the exact caveat, `Undo` retained no title and its
-solid accent weight, all 11 mounted corrections remained within the horizontal
-viewport, and document/body scroll width never exceeded client width. Metrics,
-the reusable drive and eight state screenshots are retained only in the
-session artifact directory, not in the repository.
-
-**Backlog boundary:** `draft-board-affordance-styling` now depends on completed
-`draft-tracker-persistence` and `draft-tracker-screen`, the correction and
-screen contracts it consumes. It no longer depends on pending automatic
-`draft-tracker`, whose remaining feed/profile evidence is unrelated to this
-client-only presentation unit. The finished backlog recounts **80 done, 0
-blocked, 114 pending, 194 total**.
-
-**Could not verify:** No live Fantrax draft, real owner timing trial, physical
-touchscreen, screen reader, high-contrast mode or non-Chromium browser was
-used. Pointer, keyboard and held-press states are real Edge input and rendered
-style evidence, not assistive-technology or cross-browser evidence. The demo
-contains invented draft events and 11 mounted correction controls, so it
-proves the shipped screen state and layout rather than a real auction's event
-distribution. Hosted exact-head CI and fresh independent cumulative review
-remain pending until the final commit exists. This is Code-gate-only: no
-backend/API, external source, model, recommendation, bridge, action protocol
-or live-account write behaviour changed.
-
-**Next:** Require exact-head hosted Code-gate checks and an independent
-cumulative review from a different agent. Do not merge or self-approve from
-this session.

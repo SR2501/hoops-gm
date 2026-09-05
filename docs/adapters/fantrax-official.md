@@ -74,15 +74,18 @@ The normalized `PlayoffRules` therefore records `(19, 20, 21)`. A known
 per-period booleans and the scoring-period projection persists those booleans;
 unknown evidence still remains `None` and cannot be projected.
 
-The exact five-key object, strict value types, positive team count when enabled,
-adjacent regular/playoff boundary, references to real scoring-period numbers,
-and agreement with any inline scoring-period playoff markers are all enforced.
+The exact five-key object and strict value types are always enforced, including
+a non-negative integer for `numPlayoffTeams`. When `used` is true, the
+regular/playoff boundary must be adjacent, both boundaries must reference real
+scoring-period numbers, and any inline scoring-period playoff markers must
+agree. When `used` is false, the boundary fields are still shape/type-validated
+but are not used to classify periods, and `scoringPeriods` need not be present.
 A missing top-level object preserves the older marker-based contract or remains
-absent; a present `null`, malformed object, added or missing key, or conflicting
-boundary is a `SourceContractError`. `numPlayoffTeams` and
-`mergePlayoffPeriods` are shape-validated but not interpreted by the calendar:
-the current pipeline models period classification, not bracket membership or
-multi-period matchup behavior.
+absent; a present `null`, malformed object, added or missing key, or enabled
+configuration with a conflicting boundary is a `SourceContractError`.
+`numPlayoffTeams` and `mergePlayoffPeriods` are shape-validated but not
+interpreted by the calendar: the current pipeline models period classification,
+not bracket membership or multi-period matchup behavior.
 
 The response still supplied **no fields naming or encoding**:
 
