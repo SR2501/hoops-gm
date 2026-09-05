@@ -247,6 +247,13 @@ const mutations = [
     replacement: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable'])",
   },
   {
+    name: 'empty proxy server failure removed from uncertain creation outcomes',
+    source: 'errors',
+    tests: ['src/api/draftErrors.test.ts', 'src/routes/DraftsPage.test.tsx'],
+    old: "(error.code === 'http_error' && error.status >= 500 && error.body === null)",
+    replacement: 'false',
+  },
+  {
     name: 'uncertain creation branch removed',
     source: 'form',
     tests: ['src/routes/DraftsPage.test.tsx'],

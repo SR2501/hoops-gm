@@ -26,4 +26,19 @@ describe('draft creation uncertainty', () => {
       expect(isDraftCreationOutcomeUncertain(apiError(code))).toBe(false)
     },
   )
+
+  it('treats an empty server error from the development proxy as potentially committed', () => {
+    const error = new ApiError(500, 'http_error', 'Internal Server Error', null, null)
+
+    expect(isDraftCreationOutcomeUncertain(error)).toBe(true)
+    expect(describeDraftCreationError(error).action).toContain('could create a duplicate')
+  })
+
+  it('keeps a structured generic HTTP failure distinct from an empty proxy failure', () => {
+    const error = new ApiError(500, 'http_error', 'Internal Server Error', null, {
+      proxy: 'identified',
+    })
+
+    expect(isDraftCreationOutcomeUncertain(error)).toBe(false)
+  })
 })

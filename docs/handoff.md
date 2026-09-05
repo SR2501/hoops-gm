@@ -35269,3 +35269,36 @@ added during review; those guards are covered by deterministic interaction and
 contract tests rather than a second browser drive. The existing live,
 assistive-technology, cross-browser, and network-ambiguous-write limitations
 remain as recorded above. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup proxy-uncertainty correction
+
+Fresh independent review of exact base
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26` to head
+`0b04240331c1510331db61ef1475500e186c1329` found one remaining
+deployment-path gap. A rejected browser fetch becomes `unreachable`, but the
+default Vite proxy answers an upstream failure with an empty HTTP 500. The
+typed client correctly classified that unstructured response as `http_error`;
+creation-specific handling incorrectly treated it as a definitive refusal,
+leaving retry enabled after a response that cannot establish whether the
+backend committed.
+
+**Corrected:** Creation now treats only an unstructured server-side
+`http_error` - status 500 or greater with a null parsed body - as uncertain,
+alongside timeout, unreachable, and invalid response. Typed backend errors and
+structured generic HTTP failures remain definitive and editable. A rendered
+regression uses an actual empty `Response` with status 500, then proves the
+form locks, navigation does not occur, the recorded list receives a second
+GET, and duplicate-risk guidance names `http_error`. Unit coverage pins the
+null-body distinction.
+
+The new guard has an attributable mutation. The complete matrix reports **46
+mutations caught, 0 survived, 0 harness failures**. The full post-correction
+frontend Code gate passes: ESLint, strict TypeScript, **475/475 tests**, and
+production build. OpenAPI comparison remains unchanged; backlog graph, secret
+scan, terminators, script lint, and diff checks pass.
+
+**Could not verify:** The test drives the actual client classification from an
+empty 500 response, but it does not kill a real Vite proxy connection after a
+backend commit; reproducing that timing safely would require a purpose-built
+faulting server. Hosted checks and another fresh exact-head review remain
+required. Do not merge or self-approve from this session.

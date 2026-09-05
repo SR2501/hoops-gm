@@ -251,7 +251,11 @@ export function describeDraftError(error: Error | null): DraftErrorCopy {
 const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable', 'invalid_response'])
 
 export function isDraftCreationOutcomeUncertain(error: Error | null): boolean {
-  return error instanceof ApiError && UNCERTAIN_CREATION_CODES.has(error.code)
+  return (
+    error instanceof ApiError &&
+    (UNCERTAIN_CREATION_CODES.has(error.code) ||
+      (error.code === 'http_error' && error.status >= 500 && error.body === null))
+  )
 }
 
 /** Creation-specific transport guidance for a write whose result may be uncertain. */

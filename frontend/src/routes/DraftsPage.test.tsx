@@ -52,6 +52,7 @@ interface ApiPlan {
   setupPending?: boolean
   list?: unknown
   createError?: { status: number; error: string; detail: string; requestId: string }
+  createProxyFailure?: boolean
   createReject?: boolean
   createdId?: number
 }
@@ -95,6 +96,9 @@ function installApi(plan: ApiPlan = {}) {
 
     if (url === '/api/v1/drafts' && method === 'POST') {
       if (plan.createReject) return Promise.reject(new TypeError('connection refused'))
+      if (plan.createProxyFailure) {
+        return Promise.resolve(new Response(null, { status: 500, statusText: 'Internal Server Error' }))
+      }
       if (plan.createError) {
         return Promise.resolve(
           response(
@@ -350,6 +354,28 @@ describe('draft setup screen', () => {
     expect(alert).toHaveTextContent('retry here could create a duplicate')
     expect(alert).toHaveTextContent('invalid_response')
     expect(screen.getByRole('button', { name: 'Create draft and open board' })).toBeDisabled()
+    await vi.waitFor(() => {
+      const listRequests = fetchMock.mock.calls.filter(
+        ([input, init]) => requestUrl(input) === '/api/v1/drafts' && (init?.method ?? 'GET') === 'GET',
+      )
+      expect(listRequests).toHaveLength(2)
+    })
+  })
+
+  it('locks and refreshes when the development proxy returns an empty server error', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installApi({ createProxyFailure: true })
+    renderPage()
+    await chooseAuctionSetup(user)
+
+    await user.click(screen.getByRole('button', { name: 'Create draft and open board' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('whether the draft was created is unknown')
+    expect(alert).toHaveTextContent('retry here could create a duplicate')
+    expect(alert).toHaveTextContent('http_error')
+    expect(screen.getByRole('button', { name: 'Create draft and open board' })).toBeDisabled()
+    expect(screen.queryByTestId('location')).not.toBeInTheDocument()
     await vi.waitFor(() => {
       const listRequests = fetchMock.mock.calls.filter(
         ([input, init]) => requestUrl(input) === '/api/v1/drafts' && (init?.method ?? 'GET') === 'GET',
