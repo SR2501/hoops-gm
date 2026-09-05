@@ -26,9 +26,12 @@ import type {
   DraftNextPick,
   DraftOpenLot,
   DraftParticipant,
+  DraftSetupLeague,
+  DraftSetupResponse,
   DraftState,
   DraftSummary,
   FeedStatusResponse,
+  CreateDraftRequest,
   SourceBoardColumn,
   SourceBoardPick,
   SourceBoardRegression,
@@ -39,6 +42,27 @@ import { DRAFT_SOURCE_BOARD_PROFILES, SOURCE_BOARD_STATUSES } from './draftTypes
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort()
+  const sortedExpected = [...expected].sort()
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  )
+}
+
+function isPositiveDecimalString(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) &&
+    /[1-9]/.test(value)
+  )
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
 /** A money field: a string, or `null` where the concept does not apply. */
@@ -197,6 +221,90 @@ function isDraftList(value: unknown): value is DraftList {
   return isRecord(value) && Array.isArray(value.drafts) && value.drafts.every(isDraftSummary)
 }
 
+const DRAFT_SETUP_TEAM_KEYS = ['fantasy_team_id', 'display_name'] as const
+const DRAFT_SETUP_FORMAT_KEYS = [
+  'draft_type',
+  'team_count',
+  'roster_size',
+  'total_roster_slots',
+  'auction_budget',
+] as const
+const DRAFT_SETUP_LEAGUE_KEYS = [
+  'league_id',
+  'name',
+  'season',
+  'format',
+  'owner_fantasy_team_id',
+  'fantasy_teams',
+] as const
+
+function isDraftSetupTeam(value: unknown): value is DraftSetupLeague['fantasy_teams'][number] {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, DRAFT_SETUP_TEAM_KEYS) &&
+    isPositiveInteger(value.fantasy_team_id) &&
+    typeof value.display_name === 'string' &&
+    value.display_name.trim().length > 0
+  )
+}
+
+function isDraftSetupFormat(value: unknown): value is DraftSetupLeague['format'] {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, DRAFT_SETUP_FORMAT_KEYS) ||
+    !['auction', 'snake', 'linear'].some((draftType) => draftType === value.draft_type) ||
+    !isPositiveInteger(value.team_count) ||
+    !isPositiveInteger(value.roster_size) ||
+    value.total_roster_slots !== value.team_count * value.roster_size
+  ) {
+    return false
+  }
+
+  return value.draft_type === 'auction'
+    ? isPositiveDecimalString(value.auction_budget)
+    : value.auction_budget === null
+}
+
+function isDraftSetupLeague(value: unknown): value is DraftSetupLeague {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, DRAFT_SETUP_LEAGUE_KEYS) ||
+    !isPositiveInteger(value.league_id) ||
+    typeof value.name !== 'string' ||
+    value.name.trim().length === 0 ||
+    typeof value.season !== 'string' ||
+    value.season.trim().length === 0 ||
+    !isDraftSetupFormat(value.format) ||
+    !Array.isArray(value.fantasy_teams) ||
+    !value.fantasy_teams.every(isDraftSetupTeam) ||
+    value.fantasy_teams.length !== value.format.team_count
+  ) {
+    return false
+  }
+
+  const teamIds = value.fantasy_teams.map((team) => team.fantasy_team_id)
+  if (new Set(teamIds).size !== teamIds.length) return false
+
+  return (
+    value.owner_fantasy_team_id === null ||
+    teamIds.some((teamId) => teamId === value.owner_fantasy_team_id)
+  )
+}
+
+export function isDraftSetupResponse(value: unknown): value is DraftSetupResponse {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['leagues']) ||
+    !Array.isArray(value.leagues) ||
+    !value.leagues.every(isDraftSetupLeague)
+  ) {
+    return false
+  }
+
+  const leagueIds = value.leagues.map((league) => league.league_id)
+  return new Set(leagueIds).size === leagueIds.length
+}
+
 function isDraftEventsPage(value: unknown): value is DraftEventsPage {
   return (
     isRecord(value) &&
@@ -300,6 +408,11 @@ const DRAFT_LIST_CONTRACT = {
   invalidResponseDetail: 'The draft list response did not match the expected backend contract.',
 } satisfies ResponseContract<DraftList>
 
+const DRAFT_SETUP_CONTRACT = {
+  isSuccess: isDraftSetupResponse,
+  invalidResponseDetail: 'The draft setup response did not match the expected backend contract.',
+} satisfies ResponseContract<DraftSetupResponse>
+
 const DRAFT_STATE_CONTRACT = {
   isSuccess: isDraftState,
   invalidResponseDetail: 'The draft response did not match the expected backend contract.',
@@ -323,6 +436,22 @@ const FEED_STATUS_CONTRACT = {
 
 export function getDrafts(options?: RequestOptions): Promise<DraftList> {
   return apiFetch('/api/v1/drafts', DRAFT_LIST_CONTRACT, options)
+}
+
+export function getDraftSetup(options?: RequestOptions): Promise<DraftSetupResponse> {
+  return apiFetch('/api/v1/drafts/setup', DRAFT_SETUP_CONTRACT, options)
+}
+
+export function createDraft(
+  body: CreateDraftRequest,
+  options?: RequestOptions,
+): Promise<DraftState> {
+  return apiFetch('/api/v1/drafts', DRAFT_STATE_CONTRACT, {
+    ...options,
+    method: 'POST',
+    body,
+    timeoutMs: options?.timeoutMs ?? 15000,
+  })
 }
 
 export function getDraft(draftId: number, options?: RequestOptions): Promise<DraftState> {

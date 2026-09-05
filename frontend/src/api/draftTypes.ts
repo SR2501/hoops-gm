@@ -224,6 +224,58 @@ export interface DraftList {
   drafts: DraftSummary[]
 }
 
+/** One persisted fantasy team available for an explicit draft-seat binding. */
+export interface DraftSetupTeam {
+  fantasy_team_id: number
+  display_name: string
+}
+
+/**
+ * Persisted setup evidence for one league.
+ *
+ * `fantasy_teams` is presentation ordered only. It carries neither a local
+ * `team_slot` nor a source-board seat, so a creation screen must collect the
+ * former explicitly and must not invent the latter.
+ */
+export interface DraftSetupLeague {
+  league_id: number
+  name: string
+  season: string
+  format: DraftFormat
+  owner_fantasy_team_id: number | null
+  fantasy_teams: DraftSetupTeam[]
+}
+
+export interface DraftSetupResponse {
+  leagues: DraftSetupLeague[]
+}
+
+/** One explicit participant binding accepted by `POST /api/v1/drafts`. */
+export interface DraftParticipantRequest {
+  team_slot: number
+  source_seat: number | null
+  display_name: string
+  is_owner: boolean
+  fantasy_team_id: number
+}
+
+/**
+ * The complete browser creation request.
+ *
+ * This surface deliberately sends `source_board_profile` and every
+ * `source_seat` as `null`: the setup read contract contains no source-seat
+ * evidence, and presentation order is not a binding.
+ */
+export interface CreateDraftRequest {
+  league_id: number
+  name: string
+  is_mock: boolean
+  tool_usage: DraftToolUsage
+  source_board_profile: null
+  notes: string | null
+  participants: DraftParticipantRequest[]
+}
+
 /** Everything a draft screen needs, derived from the log on this request. */
 export interface DraftState {
   id: number

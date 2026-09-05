@@ -76,6 +76,25 @@ export const DRAFT_ERRORS: Record<string, DraftErrorCopy> = {
     summary: 'The league this draft would belong to does not exist in this database.',
     action: 'Seed a demo database, or create the league first. See `backend/README.md`.',
   },
+  draft_setup_settings_invalid: {
+    summary: 'Persisted league settings do not form trustworthy draft setup evidence.',
+    action:
+      'Correct or re-import the league settings named by the backend, then retry the setup read. No partial league list was used.',
+  },
+  draft_setup_settings_stale: {
+    summary: 'The newest persisted settings describe a different league, season, or roster size.',
+    action:
+      'Refresh league settings before creating a draft. The screen will not freeze stale setup evidence into a new board.',
+  },
+  draft_multiple_owner_seats: {
+    summary: 'Persisted setup evidence marks more than one fantasy team as yours.',
+    action:
+      'Correct the league team ownership evidence, then retry. The screen will not guess which team is yours.',
+  },
+  draft_name_required: {
+    summary: 'A draft needs a name.',
+    action: 'Name this mock or real draft so it can be distinguished in the recorded drafts list.',
+  },
   [RETRYABLE_DRAFT_ERROR]: {
     summary:
       'Another append reached this draft after this screen last read it, so the log has moved and this write was refused rather than applied on top of a state it did not see.',
@@ -227,4 +246,17 @@ export function describeDraftError(error: Error | null): DraftErrorCopy {
     summary: error.message,
     action: `This dashboard has no specific guidance for code ${error.code}, so the backend's own wording is shown above unaltered. Quote the code and request id if it recurs.`,
   }
+}
+
+/** Creation-specific transport guidance for a write whose result may be uncertain. */
+export function describeDraftCreationError(error: Error | null): DraftErrorCopy {
+  if (error instanceof ApiError && error.code === 'timeout') {
+    return {
+      summary:
+        'The backend did not answer the creation request in time, so whether the draft was created is unknown.',
+      action:
+        'Check the recorded drafts list before submitting again. A retry could create a second draft if the first request landed.',
+    }
+  }
+  return describeDraftError(error)
 }

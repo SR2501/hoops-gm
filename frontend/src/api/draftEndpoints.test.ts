@@ -3,17 +3,26 @@ import { mockFetch } from '../test/helpers'
 import recordedDraft from '../test/fixtures/draft-auction-state.recorded.json'
 import recordedFeed from '../test/fixtures/draft-feed-status.recorded.json'
 import recordedDraftList from '../test/fixtures/draft-list.recorded.json'
+import recordedOpenApi from '../test/fixtures/openapi.recorded.json'
 import { ApiError } from './client'
 import {
+  createDraft,
   getDraft,
   getDraftFeed,
+  getDraftSetup,
   getDrafts,
   getSourceBoard,
+  isDraftSetupResponse,
   isDraftState,
   isFeedStatusResponse,
   isSourceBoardResponse,
 } from './draftEndpoints'
-import type { FeedStatusResponse, SourceBoardResponse } from './draftTypes'
+import type {
+  CreateDraftRequest,
+  DraftSetupResponse,
+  FeedStatusResponse,
+  SourceBoardResponse,
+} from './draftTypes'
 
 const available: SourceBoardResponse = {
   draft_id: 7,
@@ -81,6 +90,256 @@ const available: SourceBoardResponse = {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+const setupResponse = {
+  leagues: [
+    {
+      league_id: 3,
+      name: 'League setup evidence',
+      season: '2026-27',
+      format: {
+        draft_type: 'auction',
+        team_count: 2,
+        roster_size: 13,
+        total_roster_slots: 26,
+        auction_budget: '200.00',
+      },
+      owner_fantasy_team_id: 31,
+      fantasy_teams: [
+        { fantasy_team_id: 32, display_name: 'Alpha team' },
+        { fantasy_team_id: 31, display_name: 'Owner team' },
+      ],
+    },
+  ],
+} satisfies DraftSetupResponse
+
+describe('draft setup endpoint contract', () => {
+  it('requests the setup endpoint and accepts the complete persisted evidence shape', async () => {
+    const fetchMock = mockFetch({
+      '/api/v1/drafts/setup': { body: setupResponse },
+    })
+
+    await expect(getDraftSetup()).resolves.toEqual(setupResponse)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/drafts/setup')
+  })
+
+  it('matches the exact recorded OpenAPI field sets', () => {
+    const schemas = recordedOpenApi.components.schemas
+
+    expect(Object.keys(schemas.DraftSetupResponse.properties)).toEqual(['leagues'])
+    expect(Object.keys(schemas.DraftSetupLeagueOut.properties)).toEqual([
+      'league_id',
+      'name',
+      'season',
+      'format',
+      'owner_fantasy_team_id',
+      'fantasy_teams',
+    ])
+    expect(Object.keys(schemas.DraftSetupTeamOut.properties)).toEqual([
+      'fantasy_team_id',
+      'display_name',
+    ])
+  })
+
+  it('rejects added seat evidence instead of silently ignoring it', async () => {
+    const malformed = structuredClone(setupResponse) as unknown as {
+      leagues: { fantasy_teams: Record<string, unknown>[] }[]
+    }
+    const firstTeam = malformed.leagues[0]?.fantasy_teams[0]
+    if (firstTeam === undefined) throw new Error('fixture needs a fantasy team')
+    firstTeam.source_seat = 1
+
+    expect(isDraftSetupResponse(malformed)).toBe(false)
+    mockFetch({
+      '/api/v1/drafts/setup': {
+        body: malformed,
+        headers: { 'X-Request-ID': 'req-setup-contract' },
+      },
+    })
+
+    const error = await getDraftSetup().catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('invalid_response')
+    expect((error as ApiError).requestId).toBe('req-setup-contract')
+  })
+
+  it('rejects extra public fields at every setup boundary', () => {
+    expect(isDraftSetupResponse({ ...setupResponse, source: 'fantrax' })).toBe(false)
+
+    const leagueExtra = structuredClone(setupResponse) as unknown as {
+      leagues: Record<string, unknown>[]
+    }
+    leagueExtra.leagues[0]!.source = 'fantrax'
+    expect(isDraftSetupResponse(leagueExtra)).toBe(false)
+
+    const formatExtra = structuredClone(setupResponse) as unknown as {
+      leagues: { format: Record<string, unknown> }[]
+    }
+    formatExtra.leagues[0]!.format.owner_budget = '200.00'
+    expect(isDraftSetupResponse(formatExtra)).toBe(false)
+  })
+
+  it('rejects non-record values at every setup boundary', () => {
+    expect(isDraftSetupResponse(null)).toBe(false)
+    expect(isDraftSetupResponse({ leagues: [null] })).toBe(false)
+
+    const nullFormat = structuredClone(setupResponse) as unknown as {
+      leagues: { format: null }[]
+    }
+    nullFormat.leagues[0]!.format = null
+    expect(isDraftSetupResponse(nullFormat)).toBe(false)
+
+    const nullTeam = structuredClone(setupResponse) as unknown as {
+      leagues: { fantasy_teams: (DraftSetupResponse['leagues'][number]['fantasy_teams'][number] | null)[] }[]
+    }
+    nullTeam.leagues[0]!.fantasy_teams[0] = null
+    expect(isDraftSetupResponse(nullTeam)).toBe(false)
+
+    const nullTeamArray = structuredClone(setupResponse) as unknown as {
+      leagues: { fantasy_teams: null }[]
+    }
+    nullTeamArray.leagues[0]!.fantasy_teams = null
+    expect(isDraftSetupResponse(nullTeamArray)).toBe(false)
+  })
+
+  it('rejects malformed identifiers, labels, and format values', () => {
+    const badLeagueId = structuredClone(setupResponse)
+    badLeagueId.leagues[0]!.league_id = 0
+    expect(isDraftSetupResponse(badLeagueId)).toBe(false)
+
+    const fractionalLeagueId = structuredClone(setupResponse)
+    fractionalLeagueId.leagues[0]!.league_id = 1.5
+    expect(isDraftSetupResponse(fractionalLeagueId)).toBe(false)
+
+    const blankLeagueName = structuredClone(setupResponse)
+    blankLeagueName.leagues[0]!.name = ' '
+    expect(isDraftSetupResponse(blankLeagueName)).toBe(false)
+
+    const nullLeagueName = structuredClone(setupResponse) as unknown as {
+      leagues: { name: null }[]
+    }
+    nullLeagueName.leagues[0]!.name = null
+    expect(isDraftSetupResponse(nullLeagueName)).toBe(false)
+
+    const blankSeason = structuredClone(setupResponse)
+    blankSeason.leagues[0]!.season = ' '
+    expect(isDraftSetupResponse(blankSeason)).toBe(false)
+
+    const nullSeason = structuredClone(setupResponse) as unknown as {
+      leagues: { season: null }[]
+    }
+    nullSeason.leagues[0]!.season = null
+    expect(isDraftSetupResponse(nullSeason)).toBe(false)
+
+    const badTeamId = structuredClone(setupResponse)
+    badTeamId.leagues[0]!.fantasy_teams[0]!.fantasy_team_id = 0
+    expect(isDraftSetupResponse(badTeamId)).toBe(false)
+
+    const blankTeamName = structuredClone(setupResponse)
+    blankTeamName.leagues[0]!.fantasy_teams[0]!.display_name = ' '
+    expect(isDraftSetupResponse(blankTeamName)).toBe(false)
+
+    const nullTeamName = structuredClone(setupResponse) as unknown as {
+      leagues: { fantasy_teams: { display_name: null }[] }[]
+    }
+    nullTeamName.leagues[0]!.fantasy_teams[0]!.display_name = null
+    expect(isDraftSetupResponse(nullTeamName)).toBe(false)
+
+    const badDraftType = structuredClone(setupResponse) as unknown as {
+      leagues: { format: { auction_budget: string | null; draft_type: string } }[]
+    }
+    badDraftType.leagues[0]!.format.draft_type = 'serpentine'
+    badDraftType.leagues[0]!.format.auction_budget = null
+    expect(isDraftSetupResponse(badDraftType)).toBe(false)
+
+    const invalidBudget = structuredClone(setupResponse)
+    invalidBudget.leagues[0]!.format.auction_budget = 'USD 200'
+    expect(isDraftSetupResponse(invalidBudget)).toBe(false)
+
+    const zeroBudget = structuredClone(setupResponse)
+    zeroBudget.leagues[0]!.format.auction_budget = '0.00'
+    expect(isDraftSetupResponse(zeroBudget)).toBe(false)
+  })
+
+  it('rejects contradictory format, team-count, and owner evidence', () => {
+    const wrongTotal = structuredClone(setupResponse)
+    wrongTotal.leagues[0]!.format.total_roster_slots = 25
+    expect(isDraftSetupResponse(wrongTotal)).toBe(false)
+
+    const orderedWithBudget = structuredClone(setupResponse) as unknown as DraftSetupResponse
+    orderedWithBudget.leagues[0]!.format.draft_type = 'snake'
+    expect(isDraftSetupResponse(orderedWithBudget)).toBe(false)
+
+    const zeroTeamCount = structuredClone(setupResponse) as unknown as DraftSetupResponse
+    zeroTeamCount.leagues[0]!.format.team_count = 0
+    zeroTeamCount.leagues[0]!.format.total_roster_slots = 0
+    zeroTeamCount.leagues[0]!.owner_fantasy_team_id = null
+    zeroTeamCount.leagues[0]!.fantasy_teams = []
+    expect(isDraftSetupResponse(zeroTeamCount)).toBe(false)
+
+    const zeroRosterSize = structuredClone(setupResponse) as unknown as DraftSetupResponse
+    zeroRosterSize.leagues[0]!.format.roster_size = 0
+    zeroRosterSize.leagues[0]!.format.total_roster_slots = 0
+    expect(isDraftSetupResponse(zeroRosterSize)).toBe(false)
+
+    const missingTeam = structuredClone(setupResponse)
+    missingTeam.leagues[0]!.fantasy_teams.shift()
+    expect(isDraftSetupResponse(missingTeam)).toBe(false)
+
+    const duplicateTeam = structuredClone(setupResponse)
+    duplicateTeam.leagues[0]!.fantasy_teams[0]!.fantasy_team_id =
+      duplicateTeam.leagues[0]!.fantasy_teams[1]!.fantasy_team_id
+    expect(isDraftSetupResponse(duplicateTeam)).toBe(false)
+
+    const missingOwner = structuredClone(setupResponse)
+    missingOwner.leagues[0]!.owner_fantasy_team_id = 999
+    expect(isDraftSetupResponse(missingOwner)).toBe(false)
+
+    const duplicateLeague = structuredClone(setupResponse)
+    duplicateLeague.leagues.push(structuredClone(duplicateLeague.leagues[0]!))
+    expect(isDraftSetupResponse(duplicateLeague)).toBe(false)
+
+    expect(isDraftSetupResponse({ leagues: null })).toBe(false)
+  })
+
+  it('posts the complete explicit creation request through the typed client', async () => {
+    const body: CreateDraftRequest = {
+      league_id: 3,
+      name: 'Opening mock',
+      is_mock: true,
+      tool_usage: 'partial',
+      source_board_profile: null,
+      notes: 'Recorded without source-seat evidence.',
+      participants: [
+        {
+          team_slot: 1,
+          source_seat: null,
+          display_name: 'Owner team',
+          is_owner: true,
+          fantasy_team_id: 31,
+        },
+        {
+          team_slot: 2,
+          source_seat: null,
+          display_name: 'Alpha team',
+          is_owner: false,
+          fantasy_team_id: 32,
+        },
+      ],
+    }
+    const fetchMock = mockFetch({
+      '/api/v1/drafts': { body: recordedDraft },
+    })
+
+    await expect(createDraft(body)).resolves.toEqual(recordedDraft)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/drafts')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  })
 })
 
 describe('source-board endpoint contract', () => {
