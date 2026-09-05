@@ -34945,3 +34945,51 @@ for the corrected final commit.
 **Next:** Freeze and push the final commit, require exact-head hosted CI and a
 fresh independent cumulative review, then open the non-draft PR. Do not merge
 or self-approve.
+
+## 2026-09-05 - Fantrax playoff marker reconciliation repair
+
+**Delivered:** Fresh independent cumulative review of frozen head
+`e3a9ebbce21df3db73d81301908b1acc5ea31819` found one real contract bug in
+inline playoff-marker reconciliation. A top-level `used=false` object could not
+agree with scoring periods that explicitly marked every period false, and
+multiple true markers in non-numeric response order could falsely disagree with
+the same top-level period membership. Marker parsing is now deferred until the
+top-level object has supplied the disambiguating contract, permits an empty
+marker membership only in that corroboration path, and sorts marked period
+numbers before equality. The legacy marker-only path remains fail-closed on an
+all-false set when the top-level object is absent. Malformed marker values still
+raise `SourceContractError`; an all-false set with `used=true` now reaches and
+fails the explicit disagreement check.
+
+**Evidence:** Four focused regressions cover disabled/all-false agreement,
+enabled/all-false disagreement, marker-only all-false ambiguity, and
+out-of-order multi-period agreement. Removing `allow_empty=True` made the
+disabled regression fail with the expected "markers but none are true" contract
+error; restoring it returned green. Removing `sorted` made the order regression
+fail with the expected false disagreement; restoring it returned green. After
+restoration, all 67 league-settings tests passed. From `backend`,
+`python -m ruff check . && python -m ruff format --check .`, `python -m mypy`,
+`python -m pytest -q`, and `python -m pytest -m adapter_contract -q` passed.
+The superseded exact-head hosted run `33975950527` was successful for SHA
+`e3a9ebbce21df3db73d81301908b1acc5ea31819`: all ten executed jobs passed and
+the separately scheduled, non-blocking live-smoke job was skipped on push.
+
+**Failed approaches and side effects:** The first focused pytest invocation
+again ran from the repository root and could not find `tests/test_league_settings.py`;
+changing to `backend` with `PYTHONPATH=src` passed. The first post-repair lint
+call correctly found Ruff `SIM102`, but its following format command replaced
+the native exit status; the nested condition was simplified and the full gate
+was rerun with `&&` so lint failure could not be masked. No environment,
+credential, ignored config, fixture, raw capture, cache, database, remote API,
+or external account state changed during this repair.
+
+**Could not verify:** The repaired final commit does not yet have its own hosted
+exact-head CI or fresh independent cumulative review. Local configured-live
+Fantrax smoke remains unavailable because this worktree has no league-id
+configuration. No new source evidence was needed or claimed, and the unknown
+`mergePlayoffPeriods` meaning remains unknown. NBA adapter and live-smoke
+behavior remain untouched.
+
+**Next:** Freeze and push the repaired commit, require hosted CI and another
+fresh independent cumulative review on that exact SHA, then open the non-draft
+PR. Do not merge or self-approve.

@@ -185,6 +185,83 @@ def test_top_level_playoffs_can_explicitly_disable_playoffs() -> None:
     assert settings.playoffs.value == PlayoffRules(period_numbers=())
 
 
+def test_disabled_top_level_playoffs_agree_with_all_false_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+    payload["playoffs"] = _playoffs_payload(used=False, numPlayoffTeams=0)
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:no-playoffs-with-markers",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=())
+
+
+def test_enabled_top_level_playoffs_disagree_with_all_false_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+    payload["playoffs"] = _playoffs_payload()
+
+    with pytest.raises(SourceContractError, match="disagrees with scoringPeriods playoff markers"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:enabled-playoffs-with-false-markers",
+        )
+
+
+def test_marker_only_all_false_playoff_periods_remain_ambiguous() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+
+    with pytest.raises(SourceContractError, match="playoff markers but none are true"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:marker-only-false-playoffs",
+        )
+
+
+def test_top_level_playoffs_agree_with_out_of_order_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    periods.append(
+        {
+            "number": 3,
+            "startDate": "2026-11-02T00:00:00-05:00",
+            "endDate": "2026-11-08T23:59:59-05:00",
+        }
+    )
+    periods.reverse()
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = period["number"] in {2, 3}
+    payload["playoffs"] = _playoffs_payload()
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:out-of-order-playoff-markers",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=(2, 3))
+
+
 @pytest.mark.parametrize(
     ("playoffs", "message"),
     [

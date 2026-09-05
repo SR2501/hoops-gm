@@ -86,6 +86,10 @@ configuration with a conflicting boundary is a `SourceContractError`.
 `numPlayoffTeams` and `mergePlayoffPeriods` are shape-validated but not
 interpreted by the calendar: the current pipeline models period classification,
 not bracket membership or multi-period matchup behavior.
+Inline markers are reconciled as sorted period membership, not response-array
+order. With a top-level object present, an explicit all-false marker set
+corroborates `used=false` and conflicts with `used=true`; without that object,
+the legacy marker-only path still refuses an all-false set as ambiguous.
 
 The response still supplied **no fields naming or encoding**:
 

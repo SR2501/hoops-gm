@@ -554,10 +554,7 @@ def parse_official_league_settings(
     playoffs = _parse_playoffs(
         payload.get("playoffs", _MISSING),
         scoring_periods=scoring_periods,
-        scoring_period_markers=_parse_playoff_periods(
-            raw_scoring_periods,
-            capture_ref=capture_ref,
-        ),
+        raw_scoring_periods=raw_scoring_periods,
         capture_ref=capture_ref,
     )
     scoring_type = _parse_scoring_type(payload, capture_ref=capture_ref)
@@ -906,6 +903,7 @@ def _parse_playoff_periods(
     value: object,
     *,
     capture_ref: str,
+    allow_empty: bool = False,
 ) -> SourcedSetting[PlayoffRules]:
     if value is _MISSING:
         return _absent(capture_ref)
@@ -946,14 +944,14 @@ def _parse_playoff_periods(
 
     if not saw_marker:
         return _absent(capture_ref)
-    if not periods:
+    if not periods and not allow_empty:
         raise SourceContractError(
             "scoringPeriods has playoff markers but none are true",
             source=OFFICIAL_SOURCE,
             endpoint="getLeagueInfo",
         )
     return SourcedSetting(
-        value=PlayoffRules(period_numbers=tuple(periods)),
+        value=PlayoffRules(period_numbers=tuple(sorted(periods))),
         evidence=(_observed("$.scoringPeriods[*].isPlayoff", capture_ref),),
     )
 
@@ -973,11 +971,14 @@ def _parse_playoffs(
     value: object,
     *,
     scoring_periods: SourcedSetting[ScoringPeriodRules],
-    scoring_period_markers: SourcedSetting[PlayoffRules],
+    raw_scoring_periods: object,
     capture_ref: str,
 ) -> SourcedSetting[PlayoffRules]:
     if value is _MISSING:
-        return scoring_period_markers
+        return _parse_playoff_periods(
+            raw_scoring_periods,
+            capture_ref=capture_ref,
+        )
     if not isinstance(value, dict):
         _contract_error("playoffs", "must be an object")
 
@@ -1055,6 +1056,11 @@ def _parse_playoffs(
             ),
         )
 
+    scoring_period_markers = _parse_playoff_periods(
+        raw_scoring_periods,
+        capture_ref=capture_ref,
+        allow_empty=True,
+    )
     if scoring_period_markers.value is not None and scoring_period_markers.value != parsed.value:
         _contract_error(
             "playoffs",
