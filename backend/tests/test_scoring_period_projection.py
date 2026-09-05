@@ -41,11 +41,7 @@ from hoops_gm.db.models import (
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import (
-    BRIDGE_SOURCE,
     LeagueSettingsDocument,
-    PlayoffRules,
-    SettingEvidence,
-    SourcedSetting,
     parse_official_league_settings,
 )
 
@@ -68,20 +64,6 @@ def _league(session: Session) -> League:
     return league
 
 
-def _known_playoffs(*period_numbers: int) -> SourcedSetting[PlayoffRules]:
-    return SourcedSetting(
-        value=PlayoffRules(period_numbers=period_numbers),
-        evidence=(
-            SettingEvidence(
-                source=BRIDGE_SOURCE,
-                status="observed",
-                source_path="League Rules > Playoffs",
-                capture_ref="bridge_payload:period-test",
-            ),
-        ),
-    )
-
-
 def _document(
     *,
     periods: tuple[tuple[int, str, str], ...] = DEFAULT_PERIODS,
@@ -96,14 +78,20 @@ def _document(
             for number, start_at, end_at in periods
         ],
     }
-    document = parse_official_league_settings(
+    if playoff_numbers is not None:
+        assert playoff_numbers
+        payload["playoffs"] = {
+            "used": True,
+            "numPlayoffTeams": 4,
+            "lastRegularSeasonPeriod": playoff_numbers[0] - 1,
+            "firstPlayoffPeriod": playoff_numbers[0],
+            "mergePlayoffPeriods": False,
+        }
+    return parse_official_league_settings(
         payload,
         source_league_id=LEAGUE_ID,
         capture_ref="sha256:period-test",
     )
-    if playoff_numbers is None:
-        return document
-    return document.model_copy(update={"playoffs": _known_playoffs(*playoff_numbers)})
 
 
 def _write_settings(

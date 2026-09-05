@@ -418,6 +418,10 @@ class TestFantraxOfficialIsAlive:
         assert result.settings.source_season_year >= 2025
         assert result.settings.roster_limits.value is not None
         assert result.settings.scoring_periods.value
+        assert result.settings.playoffs.value is not None
+        assert result.settings.playoffs.value.period_numbers == (19, 20, 21), (
+            "the configured league no longer identifies periods 19-21 as playoffs"
+        )
         assert not result.unmapped_keys, (
             f"getLeagueInfo added unhandled top-level fields: {result.unmapped_keys}"
         )

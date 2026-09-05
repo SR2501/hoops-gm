@@ -34835,3 +34835,161 @@ or live-account write behaviour changed.
 **Next:** Require exact-head hosted Code-gate checks and an independent
 cumulative review from a different agent. Do not merge or self-approve from
 this session.
+
+## 2026-09-05 - Fantrax official playoff-field drift
+
+**Delivered:** The scheduled live smoke in run `33966362917`, job
+`101307087983`, correctly caught a new top-level `playoffs` object in official
+`getLeagueInfo`. The exact 106,899 source bytes were captured before decoding
+and preserved outside the repository at
+`C:\Users\steverones\.copilot\session-state\324c6b17-66f7-4013-bea4-8c564858aae6\files\fantrax_getleagueinfo_2026-09-05.raw.json`
+(`sha256:d3da00e96e9936412f3fcaf8733099d00eaa113fd9d5c0ef3532fbb5b89a3b8c`);
+the privacy-safe capture sidecar is beside it as
+`fantrax_getleagueinfo_2026-09-05.metadata.json`. No `userSecretId` was sent.
+Neither private league identity nor any identity-bearing raw section was
+printed or committed.
+
+The observed object says playoffs are used, period 18 is the last regular
+period, period 19 is the first playoff period, four teams qualify, and playoff
+periods are not merged. The same `used`, `lastRegularSeasonPeriod`, and
+`firstPlayoffPeriod` contract was independently published from another live
+Fantrax league in `TheCiege23/allfantasy-v2-main` commit
+`2511dd8019f57fc5b3f6a72d580da820a3fd93ff`. The official parser now validates
+the exact five-key object and strict types, requires adjacent boundaries that
+reference real scoring periods, and rejects disagreement with any inline
+playoff markers. It normalizes the established calendar meaning to
+`PlayoffRules(period_numbers=(19, 20, 21))`; known-disabled playoffs become an
+empty tuple, while a missing object still uses prior marker evidence or remains
+absent. The existing official-over-bridge merge is unchanged and tested.
+`LeagueDeadlineCalendar` receives authoritative booleans, and the scoring-period
+projection persists them through its existing lineage contract.
+
+**Fixture and privacy evidence:** The repository recorder now retains
+`playoffs`. Its privacy-safe projection of the preserved raw bytes matches
+`backend/tests/fixtures/fantrax_getleagueinfo_settings_sanitized.json` exactly
+under canonical LF bytes. Every previously retained JSON value is unchanged;
+the new object is the only changed retained section. The manifest records the
+raw digest, raw byte count, capture time, original top-level keys, retained and
+removed sections, and canonical fixture byte size. The fixture sanitizer itself
+is contract-tested so a future recording cannot silently drop `playoffs`.
+
+**Failure behavior and scope:** A present null/non-object, missing or extra
+object key, coerced boolean/integer, non-adjacent boundary, absent referenced
+period, absent `scoringPeriods`, or marker disagreement is a
+`SourceContractError`; none becomes absent evidence. `numPlayoffTeams` and
+`mergePlayoffPeriods` are retained and shape-validated but not interpreted by
+the current calendar, which has no bracket or multi-period-matchup model. No
+NBA adapter or smoke behavior changed. In particular, the unrelated
+`stats.nba.com` 60-second timeouts from the same scheduled job remain loud
+failures; nothing skips, catches-as-success, or softens them.
+
+**Code and Adapter evidence:** From `backend`, with `PYTHONPATH=src` where
+needed, the focused league-settings, recorded-fixture, live-smoke selection,
+and scoring-period-projection suite passed; `python -m ruff check .`,
+`python -m ruff format --check .`, `python -m mypy`, the full
+`python -m pytest -q`, and `python -m pytest -m adapter_contract -q` passed.
+From the repository root, `check_no_secrets.py`,
+`check_doc_terminators.py`, `backlog_graph.py`, `capture_openapi.py --check`,
+and `git diff --check` passed. The backlog recount is 194 total, 80 done, 114
+pending, with no structural defect. The refreshed fixture was independently
+checked against the recorder projection and its source digest/size.
+
+Each new guard was mutation-checked with a green targeted baseline, an asserted
+single source anchor, an asserted applied mutation, the named behavioral red,
+restoration, and a final green rerun. The mutations covered unknown and missing
+keys, strict booleans, strict integers, regular/playoff adjacency, required
+scoring periods, both referenced boundaries, marker disagreement, disabled
+playoffs, inclusive first-playoff classification, adapter known-key handling,
+rule-path mapping, and recorder retention. The adjacency fixture includes the
+otherwise-valid non-adjacent period so its red cannot come from the neighboring
+"period not found" guard.
+
+**Failed approaches and side effects:** `uv run pytest ...` failed because
+`uv` is not installed. The first direct pytest attempt ran from the repository
+root and found no `tests/` path; the next ran from `backend` without
+`PYTHONPATH=src` and could not import `hoops_gm.app`. Running from `backend`
+with `PYTHONPATH=src` resolved the local source-layout requirement. An attempted
+`backlog_graph.py --check` failed because that option does not exist; the
+documented positional invocation passed. The first full format check found two
+formatter-only changes, which `ruff format` applied before the final checks.
+The first `apply_patch` handoff append preserved the NUL but changed the
+pre-existing prefix hash; the exact Git blob was restored and this entry was
+re-appended as UTF-8/LF bytes before final checks.
+No environment variable, ignored project config, credential, cookie, cache,
+database, or external account state was changed. The only off-repository
+holdings are the raw response and safe sidecar paths named above.
+
+**Could not verify:** No first-party Fantrax reference was found for
+`mergePlayoffPeriods`, so this change does not claim bracket or matchup-merging
+semantics. The source still reports historical 2025-26 settings, not the final
+2026-27 league; season coherence continues to refuse attaching it to 2026-27.
+The configured live Fantrax smoke could not run locally because this worktree
+has no league-id environment/config value; its exact response was instead
+captured by the coordinating main session and preserved at the paths above.
+Hosted exact-head CI and fresh independent cumulative review remain pending
+until the final commit exists.
+
+**Next:** Freeze and push the final commit, require exact-head hosted CI and a
+fresh independent cumulative review, then open the non-draft PR. Do not merge
+or self-approve.
+
+## 2026-09-04 - Draft correction affordance states
+
+**Delivered:** On `/draft/:draftId`, every available `Try to void` correction
+keeps its quiet transparent, dashed and muted resting treatment, then changes
+to a raised background, solid accent border and readable foreground on pointer
+hover and keyboard focus-visible. A held press adds accent foreground,
+accent-tinted background and a one-pixel depressed transform. No padding,
+margin, width, height, font size or font weight changes between states, so the
+interaction does not move neighbouring controls or gain resting weight. The
+single guaranteed `Undo` remains the solid accent, weight-600 correction.
+Correction requests, refusal rendering, log tail/search/history state, copy,
+mobile layout and API contracts are unchanged.
+
+**Focused evidence and mutation:** `DraftLog.styles.test.ts` pins the quiet
+resting hierarchy, dedicated hover/focus-visible declarations, pressed
+declarations and the absence of size-changing declarations.
+`DraftPage.recorded.test.tsx` pins native enabled button semantics, correction
+classes, the exact existing caveat on every mounted `Try to void`, and the
+deliberate absence of a title on `Undo`; the two focused files pass **40/40**.
+After that green baseline, changing only the production pressed selector from
+`:active` to `:focus` was asserted present and made the pressed-state test fail
+at its selector-presence assertion while the other six style tests stayed
+green. Restoring `:active` returned the style suite to **7/7**.
+
+**Rendered evidence:** The real synthetic demo was served by
+`python scripts\run_demo.py` and driven in Microsoft Edge 152 over CDP at
+1280x720 and 390x844. At both widths a real `Try to void` was scrolled into
+view, reached by pointer hover, reached from the preceding focus stop with a
+real Tab key event, and captured while the primary pointer remained pressed.
+Computed styles changed from transparent/dashed/muted at rest to
+raised/solid/text on hover, a 2px accent outline plus that same state on
+focus-visible, and an accent-tinted/translated pressed state while `:active`
+was true. The same drive proved the control remained an enabled
+`type="button"`, retained the exact caveat, `Undo` retained no title and its
+solid accent weight, all 11 mounted corrections remained within the horizontal
+viewport, and document/body scroll width never exceeded client width. Metrics,
+the reusable drive and eight state screenshots are retained only in the
+session artifact directory, not in the repository.
+
+**Backlog boundary:** `draft-board-affordance-styling` now depends on completed
+`draft-tracker-persistence` and `draft-tracker-screen`, the correction and
+screen contracts it consumes. It no longer depends on pending automatic
+`draft-tracker`, whose remaining feed/profile evidence is unrelated to this
+client-only presentation unit. The finished backlog recounts **80 done, 0
+blocked, 114 pending, 194 total**.
+
+**Could not verify:** No live Fantrax draft, real owner timing trial, physical
+touchscreen, screen reader, high-contrast mode or non-Chromium browser was
+used. Pointer, keyboard and held-press states are real Edge input and rendered
+style evidence, not assistive-technology or cross-browser evidence. The demo
+contains invented draft events and 11 mounted correction controls, so it
+proves the shipped screen state and layout rather than a real auction's event
+distribution. Hosted exact-head CI and fresh independent cumulative review
+remain pending until the final commit exists. This is Code-gate-only: no
+backend/API, external source, model, recommendation, bridge, action protocol
+or live-account write behaviour changed.
+
+**Next:** Require exact-head hosted Code-gate checks and an independent
+cumulative review from a different agent. Do not merge or self-approve from
+this session.
