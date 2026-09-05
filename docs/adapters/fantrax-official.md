@@ -1,7 +1,7 @@
 # Adapter — Fantrax official API (`/fxea/general/`)
 
 **Status:** working. `getPlayerIds` and `getAdp` verified live 2026-08-17;
-`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` **verified reachable
+`getLeagueInfo` verified live 2026-09-05. `getDraftPicks` **verified reachable
 live 2026-08-28 and returned an empty list for a completed 216-pick draft**; its
 meaning is unresolved.
 
@@ -39,38 +39,80 @@ were data. Every parser calls `raise_for_error_envelope` before parsing
 anything, and the result is a `SourceRejected` — not retryable, because the
 request is wrong and repeating it is rude.
 
-### `getLeagueInfo` exposes only part of the rules boundary
+### `getLeagueInfo` now exposes playoff-period boundaries
 
 Verified against the target private league with one low-frequency request
 containing only its non-secret `leagueId`. No `userSecretId` was needed. The
 response described the historical 2025–26 league (`seasonYear: 2025`), not the
 future 2026–27 configuration.
 
-The response supplied roster totals and position constraints, roster-period
-boundaries, scoring-period boundaries, scoring categories, draft type, matchups,
-and season dates. It supplied **no fields naming or encoding**:
+The 2026-09-05 response retained the same historical 2025–26 settings and
+added this top-level object:
+
+```json
+{
+  "lastRegularSeasonPeriod": 18,
+  "numPlayoffTeams": 4,
+  "firstPlayoffPeriod": 19,
+  "mergePlayoffPeriods": false,
+  "used": true
+}
+```
+
+This is not a field-name guess. The same `used` / `firstPlayoffPeriod` /
+`lastRegularSeasonPeriod` contract was independently recorded live for another
+league on 2026-08-27 in
+[`TheCiege23/allfantasy-v2-main`](https://github.com/TheCiege23/allfantasy-v2-main/blob/2511dd8019f57fc5b3f6a72d580da820a3fd93ff/lib/league-import/fantrax/fantraxApi.ts#L93-L104),
+whose schedule test classifies periods at and after `firstPlayoffPeriod` as
+playoffs only when `used` is true. In this capture, period 18 exists in
+`scoringPeriods`, period 19 immediately follows it, and periods 19–21 are the
+remaining configured periods.
+
+The normalized `PlayoffRules` therefore records `(19, 20, 21)`. A known
+`used: false` records an empty period set, which is distinct from an absent
+`playoffs` key. The deadline calendar turns a known period set into explicit
+per-period booleans and the scoring-period projection persists those booleans;
+unknown evidence still remains `None` and cannot be projected.
+
+The exact five-key object and strict value types are always enforced, including
+a non-negative integer for `numPlayoffTeams`. When `used` is true, the
+regular/playoff boundary must be adjacent, both boundaries must reference real
+scoring-period numbers, and any inline scoring-period playoff markers must
+agree. When `used` is false, the boundary fields are still shape/type-validated
+but are not used to classify periods, and `scoringPeriods` need not be present.
+A missing top-level object preserves the older marker-based contract or remains
+absent; a present `null`, malformed object, added or missing key, or enabled
+configuration with a conflicting boundary is a `SourceContractError`.
+`numPlayoffTeams` and `mergePlayoffPeriods` are shape-validated but not
+interpreted by the calendar: the current pipeline models period classification,
+not bracket membership or multi-period matchup behavior.
+Inline markers are reconciled as sorted period membership, not response-array
+order. With a top-level object present, an explicit all-false marker set
+corroborates `used=false` and conflicts with `used=true`; without that object,
+the legacy marker-only path still refuses an all-false set as ambiguous.
+
+The response still supplied **no fields naming or encoding**:
 
 - lineup-lock type;
 - waiver period, processing time, priority or FAAB;
 - games-played caps;
 - IR slot count or eligibility;
 - trade deadline;
-- playoff periods or flags;
 - keeper rules.
 
-Those values are explicit unknowns in
+Those remaining values are explicit unknowns in
 `hoops_gm.ingest.league_settings.LeagueSettingsDocument`. They are not inferred
 from roster-period timing, reserve capacity, matchups, draft type, or the
 historical 2025–26 rules baseline. The existing read-only bridge may later fill
 an official unknown, but cannot override an official observation.
 
-For the roster and scoring-period fields the parser reserves absent evidence for
-a genuinely missing JSON key. A present `null`, wrong-shaped container, malformed
-period/position entry, or malformed alias is a `SourceContractError`. Where a
-payload supplies both supported aliases (`number`/`period`, `startDate`/`start`,
-`endDate`/`end`, or `isPlayoff`/`playoff`), both are validated before the
-preferred field wins; valid preferred evidence cannot hide malformed alternate
-evidence.
+For the roster, scoring-period, and playoff fields the parser reserves absent
+evidence for a genuinely missing JSON key. A present `null`, wrong-shaped
+container, malformed period/position entry, or malformed alias is a
+`SourceContractError`. Where a payload supplies both supported aliases
+(`number`/`period`, `startDate`/`start`, `endDate`/`end`, or
+`isPlayoff`/`playoff`), both are validated before the preferred field wins;
+valid preferred evidence cannot hide malformed alternate evidence.
 
 The persisted boundary is `league_settings_snapshots`: immutable versions of
 the validated document with per-concern evidence, source-payload hash, and
@@ -301,10 +343,13 @@ is exactly the response still available afterwards.
 
 ## Fixtures and live smoke
 
-The successful fixture removes identity-bearing sections (`leagueName`,
+The successful fixture was refreshed from the exact 2026-09-05 response after
+those raw bytes were preserved outside the repository. It removes
+identity-bearing sections (`leagueName`,
 `leagueHistoryId`, `teamInfo`, `playerInfo`, and `matchups`) whole. No retained
-source value is edited. Its manifest records the original payload hash, size,
-top-level keys, and exact removed sections.
+source value is edited; every previously retained value is byte-for-byte
+unchanged, and only the new `playoffs` object was added. Its manifest records the
+original payload hash, size, top-level keys, and exact removed sections.
 
 Refresh that fixture deliberately with:
 
@@ -314,8 +359,10 @@ python -m hoops_gm.ingest.record_fixtures fantrax-league-settings
 ```
 
 The matching live smoke bypasses cache when
-`HOOPS_GM_FANTRAX_LEAGUE_ID` is configured and fails on malformed required
-fields or newly appearing, unhandled rule-shaped paths.
+`HOOPS_GM_FANTRAX_LEAGUE_ID` is configured and requires the configured
+historical league to resolve playoff periods 19–21, rather than merely
+allow-listing the `playoffs` key. It also fails on malformed required fields or
+newly appearing, unhandled rule-shaped paths.
 
 ### The `getDraftPicks` fixture is a 24-byte recording and must stay one
 
@@ -344,6 +391,13 @@ catch, since an absent key and an empty list both parse to zero picks.
 2025–26 season and cannot verify future rule changes. Re-ingest after Fantrax
 rolls the league forward; until then, downstream 2026–27 consumers must treat
 every setting as unavailable rather than reuse the historical snapshot.
+
+**The playoff bracket semantics are not fully modeled.** The captured
+`numPlayoffTeams` and `mergePlayoffPeriods` values are retained and
+shape-validated, but no accessible first-party reference established how
+Fantrax applies `mergePlayoffPeriods`, and the existing deadline/scoring-period
+pipeline has no bracket representation. Only enabled state and period
+classification are normalized.
 
 **`getDraftPicks` has never returned a populated payload.** It is reachable —
 verified live 2026-08-28, see the section above — but it returned `[]` for a

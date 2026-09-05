@@ -1045,5 +1045,12 @@
   "type": "HEAD_TO_HEAD_ROTI_MULTI_WIN"
  },
  "seasonYear": 2025,
- "startDate": "2025-10-21"
+ "startDate": "2025-10-21",
+ "playoffs": {
+  "lastRegularSeasonPeriod": 18,
+  "numPlayoffTeams": 4,
+  "firstPlayoffPeriod": 19,
+  "mergePlayoffPeriods": false,
+  "used": true
+ }
 }

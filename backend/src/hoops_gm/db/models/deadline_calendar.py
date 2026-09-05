@@ -4,10 +4,11 @@
 future deadline from ingested settings — lineup lock, waiver cutoffs, a
 games-cap threshold, the trade deadline, playoff roster deadlines, keeper
 cutoffs. `league-settings-ingest` already discovered, against the real
-``getLeagueInfo`` endpoint, that Fantrax's official surface supplies only
-roster limits and scoring-period boundaries; every other timing rule is
-absent from every source observed so far and can only become known through
-the existing, source-attributed read-only bridge capture (see
+``getLeagueInfo`` endpoint, that Fantrax's official surface supplies roster
+limits, scoring-period boundaries, and the scoring periods it classifies as
+playoffs; every other timing rule is absent from every source observed so far
+and can only become known through the existing, source-attributed read-only
+bridge capture (see
 ``hoops_gm.ingest.league_settings``'s module docstring) — never from
 ``docs/league/2025-26-rules-baseline.md``, which is explicitly historical
 reference only.

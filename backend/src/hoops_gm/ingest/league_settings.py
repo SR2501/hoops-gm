@@ -212,7 +212,7 @@ class TradeDeadlineRules(BaseModel):
 class PlayoffRules(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    period_numbers: tuple[StrictInt, ...] = Field(min_length=1)
+    period_numbers: tuple[StrictInt, ...]
 
 
 class KeeperRules(BaseModel):
@@ -527,10 +527,11 @@ def parse_official_league_settings(
     """Normalize the settings ``getLeagueInfo`` actually exposes.
 
     The official response currently supplies roster limits, scoring-period
-    boundaries, scoring type, and scoring categories. It does not expose the
-    timing and transaction-rule concerns below in the observed NBA payload;
-    those remain unknown, with an ``absent`` observation, rather than
-    borrowing values from the historical baseline.
+    boundaries, playoff-period boundaries, scoring type, and scoring
+    categories. It does not expose the other timing and transaction-rule
+    concerns below in the observed NBA payload; those remain unknown, with an
+    ``absent`` observation, rather than borrowing values from the historical
+    baseline.
     """
 
     endpoint = "getLeagueInfo"
@@ -550,6 +551,12 @@ def parse_official_league_settings(
         raw_scoring_periods,
         capture_ref=capture_ref,
     )
+    playoffs = _parse_playoffs(
+        payload.get("playoffs", _MISSING),
+        scoring_periods=scoring_periods,
+        raw_scoring_periods=raw_scoring_periods,
+        capture_ref=capture_ref,
+    )
     scoring_type = _parse_scoring_type(payload, capture_ref=capture_ref)
     scoring_categories = _parse_scoring_categories(payload, capture_ref=capture_ref)
     return LeagueSettingsDocument(
@@ -563,7 +570,7 @@ def parse_official_league_settings(
         roster_limits=roster_limits,
         scoring_periods=scoring_periods,
         trade_deadline=_absent(capture_ref),
-        playoffs=_parse_playoff_periods(raw_scoring_periods, capture_ref=capture_ref),
+        playoffs=playoffs,
         keepers=_absent(capture_ref),
         scoring_type=scoring_type,
         scoring_categories=scoring_categories,
@@ -896,6 +903,7 @@ def _parse_playoff_periods(
     value: object,
     *,
     capture_ref: str,
+    allow_empty: bool = False,
 ) -> SourcedSetting[PlayoffRules]:
     if value is _MISSING:
         return _absent(capture_ref)
@@ -936,16 +944,129 @@ def _parse_playoff_periods(
 
     if not saw_marker:
         return _absent(capture_ref)
-    if not periods:
+    if not periods and not allow_empty:
         raise SourceContractError(
             "scoringPeriods has playoff markers but none are true",
             source=OFFICIAL_SOURCE,
             endpoint="getLeagueInfo",
         )
     return SourcedSetting(
-        value=PlayoffRules(period_numbers=tuple(periods)),
+        value=PlayoffRules(period_numbers=tuple(sorted(periods))),
         evidence=(_observed("$.scoringPeriods[*].isPlayoff", capture_ref),),
     )
+
+
+_PLAYOFF_KEYS = frozenset(
+    {
+        "firstPlayoffPeriod",
+        "lastRegularSeasonPeriod",
+        "mergePlayoffPeriods",
+        "numPlayoffTeams",
+        "used",
+    }
+)
+
+
+def _parse_playoffs(
+    value: object,
+    *,
+    scoring_periods: SourcedSetting[ScoringPeriodRules],
+    raw_scoring_periods: object,
+    capture_ref: str,
+) -> SourcedSetting[PlayoffRules]:
+    if value is _MISSING:
+        return _parse_playoff_periods(
+            raw_scoring_periods,
+            capture_ref=capture_ref,
+        )
+    if not isinstance(value, dict):
+        _contract_error("playoffs", "must be an object")
+
+    observed_keys = set(value)
+    missing_keys = sorted(_PLAYOFF_KEYS - observed_keys)
+    unknown_keys = sorted(observed_keys - _PLAYOFF_KEYS)
+    if missing_keys or unknown_keys:
+        detail: list[str] = []
+        if missing_keys:
+            detail.append(f"missing keys {missing_keys!r}")
+        if unknown_keys:
+            detail.append(f"unknown keys {unknown_keys!r}")
+        _contract_error("playoffs", f"has changed shape ({'; '.join(detail)})")
+
+    used = _required_boolean(value["used"], path="playoffs.used")
+    _required_boolean(
+        value["mergePlayoffPeriods"],
+        path="playoffs.mergePlayoffPeriods",
+    )
+    first_playoff_period = _required_strict_positive_int(
+        value["firstPlayoffPeriod"],
+        path="playoffs.firstPlayoffPeriod",
+    )
+    last_regular_season_period = _required_strict_positive_int(
+        value["lastRegularSeasonPeriod"],
+        path="playoffs.lastRegularSeasonPeriod",
+    )
+    _required_strict_non_negative_int(
+        value["numPlayoffTeams"],
+        path="playoffs.numPlayoffTeams",
+    )
+
+    # These fields are part of the observed exact source contract even though
+    # the deadline calendar only needs the enabled flag and period boundary.
+    parsed: SourcedSetting[PlayoffRules]
+    if not used:
+        parsed = SourcedSetting(
+            value=PlayoffRules(period_numbers=()),
+            evidence=(_observed("$.playoffs.used", capture_ref),),
+        )
+    else:
+        if first_playoff_period != last_regular_season_period + 1:
+            _contract_error(
+                "playoffs",
+                "must make firstPlayoffPeriod immediately follow lastRegularSeasonPeriod",
+            )
+        if scoring_periods.value is None:
+            _contract_error(
+                "playoffs",
+                "cannot identify playoff periods without scoringPeriods",
+            )
+        period_numbers = tuple(
+            sorted(period.period_number for period in scoring_periods.value.periods)
+        )
+        if last_regular_season_period not in period_numbers:
+            _contract_error(
+                "playoffs.lastRegularSeasonPeriod",
+                "must reference an observed scoringPeriods number",
+            )
+        if first_playoff_period not in period_numbers:
+            _contract_error(
+                "playoffs.firstPlayoffPeriod",
+                "must reference an observed scoringPeriods number",
+            )
+        parsed = SourcedSetting(
+            value=PlayoffRules(
+                period_numbers=tuple(
+                    number for number in period_numbers if number >= first_playoff_period
+                )
+            ),
+            evidence=(
+                _observed("$.playoffs.used", capture_ref),
+                _observed("$.playoffs.lastRegularSeasonPeriod", capture_ref),
+                _observed("$.playoffs.firstPlayoffPeriod", capture_ref),
+            ),
+        )
+
+    scoring_period_markers = _parse_playoff_periods(
+        raw_scoring_periods,
+        capture_ref=capture_ref,
+        allow_empty=True,
+    )
+    if scoring_period_markers.value is not None and scoring_period_markers.value != parsed.value:
+        _contract_error(
+            "playoffs",
+            "disagrees with scoringPeriods playoff markers",
+        )
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -1237,6 +1358,12 @@ def _find_unmapped_rule_paths(payload: dict[object, object]) -> tuple[str, ...]:
         "$.scoringPeriods",
         "$.scoringPeriods[*].isPlayoff",
         "$.scoringPeriods[*].playoff",
+        "$.playoffs",
+        "$.playoffs.firstPlayoffPeriod",
+        "$.playoffs.lastRegularSeasonPeriod",
+        "$.playoffs.mergePlayoffPeriods",
+        "$.playoffs.numPlayoffTeams",
+        "$.playoffs.used",
     }
     needles = (
         "waiver",
@@ -1333,6 +1460,24 @@ def _required_positive_int(value: object, *, path: str) -> int:
     if parsed is None or parsed < 1:
         _contract_error(path, "must be a positive integer")
     return parsed
+
+
+def _required_boolean(value: object, *, path: str) -> bool:
+    if not isinstance(value, bool):
+        _contract_error(path, "must be boolean")
+    return value
+
+
+def _required_strict_non_negative_int(value: object, *, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        _contract_error(path, "must be a non-negative integer")
+    return value
+
+
+def _required_strict_positive_int(value: object, *, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        _contract_error(path, "must be a positive integer")
+    return value
 
 
 def _positive_int_candidate(
