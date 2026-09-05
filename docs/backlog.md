@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**81 done - 0 blocked - 114 pending - 195 total**
+**82 done - 0 blocked - 113 pending - 195 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2893,23 +2893,29 @@ errors rather than returning a partial or defaulted collection.
 
 ### `draft-setup-screen` - Creating a draft and its seats from the browser
 
-- [ ] **pending**
-- **Depends on:** `draft-tracker`, `frontend-skeleton`, `draft-setup-read-contract`
+- [x] **done** - Completed 2026-09-05 by `frontend`.
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `frontend-skeleton`, `draft-setup-read-contract`
 
-`POST /api/v1/drafts` exists and takes a league, a name, a `tool_usage`
-declaration and the full participant list, but nothing in the browser calls it.
-Today the only way to bring a draft into being is `hoops_gm.dev.seed_draft`, a
-development CLI that invents synthetic seats, or a hand-written POST. The draft
-board at `/draft` deliberately does not offer creation: it is built to be used
-under an auction clock, and a twelve-seat setup form is a calm, once-per-draft
-task that would enlarge that surface for no benefit at the moment it matters.
+`/draft` now reads `GET /api/v1/drafts/setup` independently from the recorded
+draft list and calls `POST /api/v1/drafts` through the typed client. The owner
+chooses the persisted league, names the draft, declares mock versus real and
+`tool_usage`, confirms the owner team (explicitly when persisted evidence is
+null), and assigns every persisted fantasy team to one unique local slot.
+Presentation order seeds no slot and no source seat: every submitted
+`source_seat` and `source_board_profile` remains null.
 
-This is small but it is on the critical path, because the owner cannot record
-his mock auction - or the real draft on **18 October 2026** - without a draft to
-record into. Needs seat names, the league-frozen shared budget for an auction,
-draft order for a snake, and the `is_mock` / `tool_usage` declaration surfaced
-honestly rather than defaulted past, since `tool_usage` is the field that
-records how much help was used and is the one a leaguemate would care about.
+Auction budget is displayed as the league-frozen shared amount, never edited or
+invented per team; ordered formats show it as not applicable. Strict runtime
+guards refuse added fields, malformed values, duplicate identities, incomplete
+team cohorts and contradictory format evidence rather than filtering or
+defaulting them. Setup and creation failures retain backend wording, stable code
+and request id with a recovery action; request failures retain the completed
+form. A creation timeout, lost connection, or malformed success response is
+treated as potentially committed: the recorded list refreshes and the form
+locks until page reload rather than offering a duplicate-producing retry. A
+successful creation opens the existing `/draft/:id` board. The recorded draft
+list keeps its prior loading, empty, refusal and navigation behaviour regardless
+of setup state.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 

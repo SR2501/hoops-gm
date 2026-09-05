@@ -39,7 +39,7 @@ export function requestUrl(input: RequestInfo | URL): string {
 
 /** Stub `fetch`, routing by URL substring. Unmatched requests fail loudly. */
 export function mockFetch(routes: Record<string, MockResponse | (() => never)>) {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url = requestUrl(input)
     const match = Object.entries(routes).find(([path]) => url.includes(path))
 

@@ -35106,3 +35106,199 @@ behavior remain untouched.
 **Next:** Freeze and push the repaired commit, require hosted CI and another
 fresh independent cumulative review on that exact SHA, then open the non-draft
 PR. Do not merge or self-approve.
+
+## 2026-09-05 - Browser draft setup screen
+
+**Delivered:** `/draft` now has a calm setup path above the unchanged recorded-draft list. It loads `GET /api/v1/drafts/setup` through the typed client, exposes the persisted league, season, canonical format, complete fantasy-team cohort and nullable owner assignment, and requires the owner to supply every remaining immutable creation choice: draft name, mock versus real, `tool_usage`, owner team when persistence has none, and one unique local slot for every fantasy team. A successful `POST /api/v1/drafts` follows the existing router convention to `/draft/:id`.
+
+No source identity is invented. Team response order is presentation only; every slot starts blank, every submitted participant is sorted by the slot the owner explicitly assigned, every `source_seat` is null, and `source_board_profile` is null. Auction screens show the league-frozen shared budget read-only; snake and linear screens say it is not applicable. There is no per-team budget editor. Automatic picks and budget tracking remain downstream of this setup path.
+
+**Contract and failure handling:** The setup response guard accepts only the recorded OpenAPI field sets and rejects non-records, added fields, unsupported draft types, non-positive or fractional ids/counts, blank labels, invalid or zero auction budgets, ordered formats carrying a budget, contradictory total slots, incomplete or duplicate team cohorts, owner ids outside the cohort, and duplicate leagues. It does not filter or default malformed evidence. Setup and recorded-list requests have independent loading, empty and error boundaries. Setup 403/422 refusals and creation refusals retain backend detail, stable code and request id with a recovery action; creation transport failure retains the completed form and warns that a timed-out POST may already have landed before retry. Existing draft-list links and states are unchanged.
+
+**Rendered browser evidence:** An isolated synthetic SQLite database held one four-team auction league with an explicit owner and shared `$200.00` budget plus one four-team snake league with null owner evidence. Microsoft Edge 152 drove the served Vite/FastAPI application over CDP. At 1366x768, the auction view rendered the shared budget and persisted owner, all 11 form fields had native labels, all four slot values were initially blank, the focused league select had a computed solid 2px outline, and document/body horizontal overflow was 0/0. At 390x844, the snake view rendered `Not applicable` budget and `Not assigned` owner evidence, again labeled 11/11 fields, used seven native selects and two native radios, gave the mobile controls and radio-label targets at least 44px height, and measured 0/0 horizontal overflow. A third real-browser drive completed the auction form, created draft 1, navigated to `/draft/1`, and rendered heading `Browser evidence auction` with four empty seats and `$200.00` shared-bank derivations. `DraftsPage.test.tsx` separately walks the native keyboard order from league to name, owner and mock/real evidence. The Impeccable detector returned no deterministic findings for the changed setup component, route and CSS.
+
+The retained browser evidence is off-repository under `session-state/ab309940-1259-4d25-99b7-574ef90a5b5c/files/draft-setup-browser/`: `laptop-probe.json`, `mobile-probe.json`, `creation-probe.json`, and the synthetic `setup-evidence.db`. The temporary probe scripts and isolated Edge profile were removed; backend, Vite and browser ports 8011, 5181 and 9223 were confirmed closed.
+
+**Tests, mutation and gates:** The focused client/interaction files pass **42/42** after the final keyboard test. The full frontend Code gate passes on the final production tree: ESLint, strict TypeScript, **466/466 tests**, and the Vite production build. The recorded OpenAPI check reports zero added, removed or changed fields. `scripts/mutate_draft_setup_frontend.mjs` is a permanent attributable matrix: it asserts a green 32-test baseline, exact one-anchor application, changed source bytes, a Vitest test-failure count rather than a collection/build error, byte-for-byte source restoration and a green restored run. The final result is **35 mutations caught, 0 survived, 0 harness failures**; the script also passes the repository JavaScript lint configuration.
+
+The first complete mutation run did its job rather than merely confirming the tests: five guards survived and one anchor was ambiguous. The fixtures were sharpened so malformed decimal text still carried digits, whitespace-only season evidence differed from empty text, null team arrays were reached, missing-team evidence retained the owner, duplicate ids retained owner membership, and a null display name reached the name-type guard. The next and final matrix caught all 35.
+
+**Backlog boundary:** Only `draft-setup-screen` changed status. Its dependency was narrowed from the pending automatic `draft-tracker` umbrella to the completed persistence and screen units it actually consumes; keeping the umbrella edge would claim this manual creation path depends on real NBA auction feed evidence, contradicting both the implementation and the requirement that automatic tracking remain downstream. The finished backlog recounts **82 done, 0 blocked, 113 pending, 195 total**. The graph has no defects, and the exact-base/current slug comparison reports 195/195 with zero additions and zero drops.
+
+**Failed approaches and side effects:** The initial npm commands were issued from repository root, then corrected to `frontend`; dependencies were absent, so `npm ci --no-audit --no-fund` created ignored `frontend/node_modules`. Early static checks caught a nested export, an unhandled navigation promise, unsafe body stringification and an optional tuple mismatch. Three first-pass route tests used exact text against longer empty-state copy; regex matching fixed the test, not the product. The first mobile probe waited for lowercase `snake` while the evidence rendered `Snake`, and the first laptop probe intentionally remained on the required league placeholder; the corrected probe explicitly selected one format at each width. The first mutation harness launch used `npm.cmd` directly and returned no child status on Windows; routing the static command through `ComSpec` fixed process creation. Its next green baseline was hidden by ANSI sequences, so verdict parsing now strips terminal control codes. The first backlog graph correctly refused a done item resting on the pending automatic tracker umbrella; the dependency correction above made the recorded graph match the shipped boundary. A one-line slug probe lost Markdown backticks to PowerShell escaping and established nothing; the corrected stdin script produced the 195/195 result. The evidence browser cleanup command matched its own PowerShell command line and terminated that shell, after which direct port checks established all three processes were stopped.
+
+`npm ci` and the build leave only ignored `frontend/node_modules` and `frontend/dist`. No dependency manifest, lockfile, backend source, migration, database outside the isolated session evidence directory, environment file, repository configuration, bridge capture, Fantrax access, action protocol, model, valuation, recommendation or live-account write path changed.
+
+**Could not verify:** No live Fantrax draft or source-seat payload, real owner timing trial, physical mobile device, screen reader, non-Chromium browser, high-contrast mode or live account was used. The synthetic browser database proves the served setup/create/board path, not the shape or timing of the October room. Automatic pick and budget tracking are explicitly outside this unit and remain unestablished for an NBA auction. Hosted exact-head checks, the non-draft PR against `main`, and fresh independent exact-base-to-head review remain pending until the final commit is frozen. Do not merge or self-approve from this session.
+
+**Next:** Freeze and push the exact head, open the PR against `main`, require hosted checks and a fresh independent cumulative review, then report without merging.
+
+## 2026-09-05 - Draft setup uncertain-write correction
+
+Fresh independent review of exact base `22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to first frozen head `413d30b81f365e7a2a82137b316a891f1d3d1043` found one medium-confidence defect and no other finding: creation-specific handling treated only timeout as indeterminate. A connection rejection can happen after the backend commits but before the response arrives, and a malformed 201 body proves only that the client cannot read the success response. The old `unreachable` copy claimed nothing was recorded and invited an immediate retry while the independent draft list remained stale, so either path could create a duplicate.
+
+**Corrected:** `timeout`, `unreachable` and `invalid_response` are now the exact uncertain-creation set. Any of them keeps the completed values visible, locks the setup fieldset so the same page cannot resubmit, refreshes the independent recorded-drafts list, and tells the owner to inspect that list and reload the page before trying again. A typed 4xx/5xx refusal remains definitive and leaves the form editable. This is the strongest safe client behavior available under the frozen POST contract; no idempotency key or backend uniqueness rule was invented.
+
+Two rendered interaction tests drive the previously unsafe paths: rejected fetch and malformed 201. Each proves the result is described as unknown, the create control is disabled, no navigation occurs, and the draft list receives a second GET. A focused unit test pins all three uncertain codes and two definitive controls. The expanded permanent mutation harness now runs three green baselines and catches removal of each uncertain code, the form branch, the resubmission lock and the list refresh. Final result: **41 mutations caught, 0 survived, 0 harness failures**, with exact byte restoration and all three restored suites green.
+
+The final frontend Code gate after this correction passes: ESLint, strict TypeScript, **472/472 tests** across 36 files, and production build. The recorded OpenAPI check still reports zero added, removed or changed fields. The prior browser success-path evidence remains attributable because this correction changes only post-failure behavior; it does not alter setup rendering, request construction or successful navigation.
+
+**Could not verify:** The first review is not final-head approval because this correction changes the head it reviewed. Hosted checks, push, PR-head update and a fresh independent review over the new exact base-to-head diff remain required. No backend idempotency mechanism exists in the frozen contract, so page reload plus list inspection is a duplicate-risk control, not proof that a network-ambiguous POST did or did not commit. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup ambiguous-label correction
+
+A fresh independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to head
+`66bd0330cf8aae8989af5fb02602e0e3a57c9698` found one medium-confidence
+defect: persisted fantasy teams may have distinct immutable ids but duplicate
+display names. The setup controls identified teams only by display name, so
+two such records would present indistinguishable owner and slot choices while
+binding different `fantasy_team_id` values. Presentation order cannot supply
+the missing distinction.
+
+**Corrected:** The setup boundary now refuses a league whose team labels
+become identical after trimming and collapsing rendered whitespace. It still
+accepts distinct visible labels and never infers identity, filters a team, or
+uses response order. The refusal uses the existing actionable malformed-
+response state rather than allowing an ambiguous immutable binding.
+
+The contract test now constructs distinct ids with labels that render as the
+same text and proves the entire setup response is rejected. A new attributable
+mutation removes only this guard and is caught by that test. The complete
+matrix now reports **42 mutations caught, 0 survived, 0 harness failures**,
+with every source restored byte-for-byte and all three focused suites green.
+The full frontend Code gate remains green: ESLint, strict TypeScript,
+**472/472 tests**, and production build. OpenAPI comparison remains zero
+added, removed, or changed fields; backlog graph, secret scan, document
+terminators, script lint, and diff checks pass.
+
+**Could not verify:** No persisted real league with duplicate rendered team
+names was available, so the unsafe state and refusal are deterministic
+contract fixtures rather than live league evidence. The prior browser bundle
+contains unique labels and therefore does not render this refusal. Hosted
+checks and a fresh independent review of the next frozen head remain required.
+Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup ambiguous-league correction
+
+Independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to the next frozen head
+`1922293d59194db98c385d5accb802f05273b556` found the analogous remaining
+ambiguity in the league selector: distinct league ids may share the same
+rendered `name (season)` label, making the immutable target indistinguishable.
+
+**Corrected:** The response boundary now also rejects duplicate league labels
+after applying the same rendered-whitespace normalization to name and season.
+Distinct visible labels remain valid; no league is filtered, renamed, or
+selected by order. The contract fixture proves equal rendered labels with
+different ids are refused. The first mutation run exposed a weak existing
+duplicate-id fixture because the new label guard also rejected it; changing
+that fixture to retain duplicate ids under distinct labels isolated both
+guards. The complete rerun reports **43 mutations caught, 0 survived, 0
+harness failures**.
+
+The final local Code gate remains green: ESLint, strict TypeScript,
+**472/472 tests**, and production build. OpenAPI comparison remains zero
+added, removed, or changed fields; backlog graph, secret scan, document
+terminators, script lint, and diff checks pass.
+
+**Could not verify:** No real setup response with duplicate rendered league
+labels was available, and the retained browser bundle uses distinct league
+labels, so this refusal is fixture-driven rather than live evidence. Hosted
+checks and fresh independent review of the final frozen head remain required.
+Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup final response guards
+
+Fresh independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to head
+`4a85967042e07561018597a4978a7025e405109d` found two remaining ambiguous-
+success paths.
+
+First, an explicitly persisted owner named `Alpha` and a different team named
+`Alpha (persisted owner)` produced identical owner-selector options after the
+UI appended its suffix, despite distinct raw names and ids. The setup boundary
+now validates the exact normalized option labels including that suffix and
+refuses the whole response on collision.
+
+Second, the shared draft-state guard accepts any numeric id for existing read
+compatibility. A full 201 response carrying a fractional id could therefore
+navigate to an invalid route without entering uncertain-write handling. Draft
+creation now uses a dedicated success contract requiring a positive integer
+id. The rendered malformed-success test uses an otherwise complete response
+with id `1.5` and proves the form locks, the list refreshes, no navigation
+occurs, and the duplicate-risk warning remains visible.
+
+Both guards have attributable mutations. The complete matrix reports **45
+mutations caught, 0 survived, 0 harness failures** after source restoration
+and green focused suites.
+
+**Could not verify:** The full Code gate has not yet run after these two final
+changes. While they were being corrected, `origin/main` advanced to
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26`; the branch still requires the
+requested byte-safe merge, complete post-merge gates, hosted checks, and a
+fresh independent review of the resulting exact base-to-head diff. No real
+league carried either ambiguous label shape, and no real backend emitted a
+fractional created id. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup merged-main finalization
+
+**Integrated:** Merged current `origin/main` at
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26` without rewriting either the
+merged backend contract history or the frontend commits. The only conflict was
+append-versus-append in this file. It was resolved from git's three blobs:
+current main's 2,301,906 bytes are the exact prefix, followed by this lane's
+16,335-byte suffix relative to their shared
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` base. The combined file retains
+exactly the 149 historical CR bytes present on both sides and introduces none.
+`docs/backlog.md` merged automatically and still recounts **82 done, 0
+blocked, 113 pending, 195 total** with no graph defect.
+
+**Post-merge evidence:** The complete mutation harness reran after the merge:
+**45 caught, 0 survived, 0 harness failures**, with every edited source
+restored and all focused baselines green. The complete frontend Code gate
+passes on the merged tree: ESLint, strict TypeScript, **472/472 tests**, and
+production build. OpenAPI comparison reports zero added, removed, or changed
+fields. The backlog graph, secret scan over 549 tracked files, document
+terminators, mutation-script lint, and cumulative diff check all pass.
+
+**Could not verify:** Hosted checks and the fresh independent review must run
+against the final post-documentation commit, not the merge commit described
+above. The retained browser evidence predates the four fail-closed edge guards
+added during review; those guards are covered by deterministic interaction and
+contract tests rather than a second browser drive. The existing live,
+assistive-technology, cross-browser, and network-ambiguous-write limitations
+remain as recorded above. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup proxy-uncertainty correction
+
+Fresh independent review of exact base
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26` to head
+`0b04240331c1510331db61ef1475500e186c1329` found one remaining
+deployment-path gap. A rejected browser fetch becomes `unreachable`, but the
+default Vite proxy answers an upstream failure with an empty HTTP 500. The
+typed client correctly classified that unstructured response as `http_error`;
+creation-specific handling incorrectly treated it as a definitive refusal,
+leaving retry enabled after a response that cannot establish whether the
+backend committed.
+
+**Corrected:** Creation now treats only an unstructured server-side
+`http_error` - status 500 or greater with a null parsed body - as uncertain,
+alongside timeout, unreachable, and invalid response. Typed backend errors and
+structured generic HTTP failures remain definitive and editable. A rendered
+regression uses an actual empty `Response` with status 500, then proves the
+form locks, navigation does not occur, the recorded list receives a second
+GET, and duplicate-risk guidance names `http_error`. Unit coverage pins the
+null-body distinction.
+
+The new guard has an attributable mutation. The complete matrix reports **46
+mutations caught, 0 survived, 0 harness failures**. The full post-correction
+frontend Code gate passes: ESLint, strict TypeScript, **475/475 tests**, and
+production build. OpenAPI comparison remains unchanged; backlog graph, secret
+scan, terminators, script lint, and diff checks pass.
+
+**Could not verify:** The test drives the actual client classification from an
+empty 500 response, but it does not kill a real Vite proxy connection after a
+backend commit; reproducing that timing safely would require a purpose-built
+faulting server. Hosted checks and another fresh exact-head review remain
+required. Do not merge or self-approve from this session.
