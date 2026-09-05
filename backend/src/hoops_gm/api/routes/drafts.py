@@ -73,7 +73,8 @@ from hoops_gm.db.models.enums import (
 )
 from hoops_gm.db.models.league import League
 from hoops_gm.draft import service
-from hoops_gm.draft.formats import AuctionDraftFormat
+from hoops_gm.draft.formats import AuctionDraftFormat, DraftFormat
+from hoops_gm.draft.setup import list_draft_setup_leagues
 from hoops_gm.draft.state import DraftLogError, DraftStateView
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
@@ -262,7 +263,7 @@ EventRequest = Annotated[EventRequestT, Field(discriminator="event_type")]
 
 
 class FormatOut(BaseModel):
-    """The configuration this draft was recorded under. Frozen at creation."""
+    """Canonical draft configuration; draft responses expose the frozen copy."""
 
     draft_type: DraftType
     team_count: int
@@ -381,6 +382,30 @@ class DraftListResponse(BaseModel):
     drafts: list[DraftSummary]
 
 
+class DraftSetupTeamOut(BaseModel):
+    """A stored team available for an explicit participant binding."""
+
+    fantasy_team_id: int
+    display_name: str
+
+
+class DraftSetupLeagueOut(BaseModel):
+    """One league whose format and complete stored team cohort are usable."""
+
+    league_id: int
+    name: str
+    season: str
+    format: FormatOut
+    owner_fantasy_team_id: int | None
+    fantasy_teams: list[DraftSetupTeamOut]
+
+
+class DraftSetupResponse(BaseModel):
+    """Every league that may be used to construct a draft creation request."""
+
+    leagues: list[DraftSetupLeagueOut]
+
+
 class DraftStateResponse(BaseModel):
     """Everything a draft screen needs, derived from the log on this request."""
 
@@ -425,8 +450,7 @@ class EventsResponse(BaseModel):
     last_sequence: int
 
 
-def _format_out(state: DraftStateView) -> FormatOut:
-    fmt = state.format
+def _format_value_out(fmt: DraftFormat) -> FormatOut:
     return FormatOut(
         draft_type=fmt.draft_type,
         team_count=fmt.team_count,
@@ -434,6 +458,10 @@ def _format_out(state: DraftStateView) -> FormatOut:
         total_roster_slots=fmt.total_roster_slots,
         auction_budget=fmt.auction_budget if isinstance(fmt, AuctionDraftFormat) else None,
     )
+
+
+def _format_out(state: DraftStateView) -> FormatOut:
+    return _format_value_out(state.format)
 
 
 def _state_response(
@@ -577,6 +605,48 @@ def list_drafts(session: SessionDep, request: Request) -> DraftListResponse:
             )
         )
     return DraftListResponse(drafts=summaries)
+
+
+@router.get(
+    "/setup",
+    response_model=DraftSetupResponse,
+    responses={
+        403: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
+    },
+    summary="Persisted leagues and teams that may be bound to a new draft",
+)
+def get_draft_setup(session: SessionDep, request: Request) -> DraftSetupResponse:
+    """Publish evidence only; array order is not a seat binding."""
+
+    require_loopback_host(
+        request,
+        error_code="drafts_local_only",
+        detail="Draft setup evidence is only served to the local machine.",
+    )
+    try:
+        leagues = list_draft_setup_leagues(session)
+    except DraftLogError as error:
+        raise _from_log_error(error) from error
+    return DraftSetupResponse(
+        leagues=[
+            DraftSetupLeagueOut(
+                league_id=league.league_id,
+                name=league.name,
+                season=league.season,
+                format=_format_value_out(league.format),
+                owner_fantasy_team_id=league.owner_fantasy_team_id,
+                fantasy_teams=[
+                    DraftSetupTeamOut(
+                        fantasy_team_id=team.fantasy_team_id,
+                        display_name=team.display_name,
+                    )
+                    for team in league.fantasy_teams
+                ],
+            )
+            for league in leagues
+        ]
+    )
 
 
 @router.post(
