@@ -52,6 +52,7 @@ interface ApiPlan {
   setupPending?: boolean
   list?: unknown
   createError?: { status: number; error: string; detail: string; requestId: string }
+  createInvalidResponse?: boolean
   createReject?: boolean
   createdId?: number
 }
@@ -95,6 +96,7 @@ function installApi(plan: ApiPlan = {}) {
 
     if (url === '/api/v1/drafts' && method === 'POST') {
       if (plan.createReject) return Promise.reject(new TypeError('connection refused'))
+      if (plan.createInvalidResponse) return Promise.resolve(response({ id: 'not-a-number' }, 201))
       if (plan.createError) {
         return Promise.resolve(
           response(
@@ -316,17 +318,46 @@ describe('draft setup screen', () => {
 
   it('keeps the completed form intact and gives creation-specific guidance after a request failure', async () => {
     const user = userEvent.setup()
-    installApi({ createReject: true })
+    const fetchMock = installApi({ createReject: true })
     renderPage()
     await chooseAuctionSetup(user)
 
     await user.click(screen.getByRole('button', { name: 'Create draft and open board' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('backend did not answer')
-    expect(alert).toHaveTextContent('Start the backend and retry')
+    expect(alert).toHaveTextContent('whether the draft was created is unknown')
+    expect(alert).toHaveTextContent('recorded drafts list is refreshing')
+    expect(alert).toHaveTextContent('reload this page')
     expect(screen.getByLabelText('Draft name')).toHaveValue('September auction mock')
+    expect(screen.getByRole('button', { name: 'Create draft and open board' })).toBeDisabled()
     expect(screen.queryByTestId('location')).not.toBeInTheDocument()
+    await vi.waitFor(() => {
+      const listRequests = fetchMock.mock.calls.filter(
+        ([input, init]) => requestUrl(input) === '/api/v1/drafts' && (init?.method ?? 'GET') === 'GET',
+      )
+      expect(listRequests).toHaveLength(2)
+    })
+  })
+
+  it('locks and refreshes after a malformed success response could hide a committed draft', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installApi({ createInvalidResponse: true })
+    renderPage()
+    await chooseAuctionSetup(user)
+
+    await user.click(screen.getByRole('button', { name: 'Create draft and open board' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('whether the draft was created is unknown')
+    expect(alert).toHaveTextContent('retry here could create a duplicate')
+    expect(alert).toHaveTextContent('invalid_response')
+    expect(screen.getByRole('button', { name: 'Create draft and open board' })).toBeDisabled()
+    await vi.waitFor(() => {
+      const listRequests = fetchMock.mock.calls.filter(
+        ([input, init]) => requestUrl(input) === '/api/v1/drafts' && (init?.method ?? 'GET') === 'GET',
+      )
+      expect(listRequests).toHaveLength(2)
+    })
   })
 
   it('keeps backend creation refusal detail, code, and request id visible', async () => {

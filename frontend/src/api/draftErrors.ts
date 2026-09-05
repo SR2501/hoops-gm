@@ -248,14 +248,20 @@ export function describeDraftError(error: Error | null): DraftErrorCopy {
   }
 }
 
+const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable', 'invalid_response'])
+
+export function isDraftCreationOutcomeUncertain(error: Error | null): boolean {
+  return error instanceof ApiError && UNCERTAIN_CREATION_CODES.has(error.code)
+}
+
 /** Creation-specific transport guidance for a write whose result may be uncertain. */
 export function describeDraftCreationError(error: Error | null): DraftErrorCopy {
-  if (error instanceof ApiError && error.code === 'timeout') {
+  if (isDraftCreationOutcomeUncertain(error)) {
     return {
       summary:
-        'The backend did not answer the creation request in time, so whether the draft was created is unknown.',
+        'The creation response was not trustworthy, so whether the draft was created is unknown.',
       action:
-        'Check the recorded drafts list before submitting again. A retry could create a second draft if the first request landed.',
+        'The recorded drafts list is refreshing below. Check it before doing anything else, then reload this page before trying to create again; a retry here could create a duplicate.',
     }
   }
   return describeDraftError(error)

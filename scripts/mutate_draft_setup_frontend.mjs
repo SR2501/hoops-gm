@@ -1,5 +1,5 @@
 /**
- * Mutation proof for the draft-setup response guards.
+ * Mutation proof for the draft-setup response and uncertain-write guards.
  *
  * Each mutation removes one boundary or invariant while the corresponding test
  * constructs the malformed response that boundary exists to reject. A mutation
@@ -8,7 +8,7 @@
  * the original bytes are restored, and the focused test is green again.
  *
  * Do not run this concurrently with another frontend test process: the harness
- * edits draftEndpoints.ts in place and restores its exact bytes after every run.
+ * edits frontend source in place and restores its exact bytes after every run.
  */
 
 import { Buffer } from 'node:buffer'
@@ -19,8 +19,12 @@ import { fileURLToPath } from 'node:url'
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)))
 const FRONTEND = join(REPO, 'frontend')
-const SOURCE = join(FRONTEND, 'src', 'api', 'draftEndpoints.ts')
-const TEST_COMMAND = ['npm', 'test', '--', '--run', 'src/api/draftEndpoints.test.ts']
+const SOURCES = {
+  setup: join(FRONTEND, 'src', 'api', 'draftEndpoints.ts'),
+  errors: join(FRONTEND, 'src', 'api', 'draftErrors.ts'),
+  form: join(FRONTEND, 'src', 'components', 'DraftSetupForm.tsx'),
+}
+const DEFAULT_TESTS = ['src/api/draftEndpoints.test.ts']
 
 const mutations = [
   {
@@ -203,14 +207,58 @@ const mutations = [
     old: '  return new Set(leagueIds).size === leagueIds.length',
     replacement: '  return true',
   },
+  {
+    name: 'timeout removed from uncertain creation outcomes',
+    source: 'errors',
+    tests: ['src/api/draftErrors.test.ts'],
+    old: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable', 'invalid_response'])",
+    replacement:
+      "const UNCERTAIN_CREATION_CODES = new Set(['unreachable', 'invalid_response'])",
+  },
+  {
+    name: 'unreachable removed from uncertain creation outcomes',
+    source: 'errors',
+    tests: ['src/api/draftErrors.test.ts'],
+    old: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable', 'invalid_response'])",
+    replacement: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'invalid_response'])",
+  },
+  {
+    name: 'invalid response removed from uncertain creation outcomes',
+    source: 'errors',
+    tests: ['src/api/draftErrors.test.ts'],
+    old: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable', 'invalid_response'])",
+    replacement: "const UNCERTAIN_CREATION_CODES = new Set(['timeout', 'unreachable'])",
+  },
+  {
+    name: 'uncertain creation branch removed',
+    source: 'form',
+    tests: ['src/routes/DraftsPage.test.tsx'],
+    old: '      if (isDraftCreationOutcomeUncertain(failure)) {',
+    replacement: '      if (false) {',
+  },
+  {
+    name: 'uncertain creation lock removed',
+    source: 'form',
+    tests: ['src/routes/DraftsPage.test.tsx'],
+    old: '        disabled={pending || creationLocked}',
+    replacement: '        disabled={pending}',
+  },
+  {
+    name: 'recorded draft refresh removed after uncertain creation',
+    source: 'form',
+    tests: ['src/routes/DraftsPage.test.tsx'],
+    old: '        onCreationUncertain()',
+    replacement: '        void onCreationUncertain',
+  },
 ]
 
-function runFocusedTest() {
-  const command = process.platform === 'win32' ? process.env.ComSpec : TEST_COMMAND[0]
+function runFocusedTest(testFiles) {
+  const testCommand = ['npm', 'test', '--', '--run', ...testFiles]
+  const command = process.platform === 'win32' ? process.env.ComSpec : testCommand[0]
   const args =
     process.platform === 'win32'
-      ? ['/d', '/s', '/c', TEST_COMMAND.join(' ')]
-      : TEST_COMMAND.slice(1)
+      ? ['/d', '/s', '/c', testCommand.join(' ')]
+      : testCommand.slice(1)
   const result = spawnSync(command, args, {
     cwd: FRONTEND,
     encoding: 'utf8',
@@ -244,46 +292,68 @@ function failedTestCount(output) {
   return withoutAnsi(output).match(/Tests\s+(\d+) failed/)?.[1] ?? null
 }
 
-const originalBytes = readFileSync(SOURCE)
-const original = originalBytes.toString('utf8')
-const newline = original.includes('\r\n') ? '\r\n' : '\n'
-const withNativeNewlines = (text) => text.replaceAll('\n', newline)
+const sourceNames = new Set(mutations.map((mutation) => mutation.source ?? 'setup'))
+const originals = new Map(
+  [...sourceNames].map((sourceName) => {
+    const path = SOURCES[sourceName]
+    const bytes = readFileSync(path)
+    const text = bytes.toString('utf8')
+    return [sourceName, { path, bytes, text, newline: text.includes('\r\n') ? '\r\n' : '\n' }]
+  }),
+)
+const suites = new Map()
+for (const mutation of mutations) {
+  const tests = mutation.tests ?? DEFAULT_TESTS
+  suites.set(tests.join('\0'), tests)
+}
 
-console.log('=== baseline ===')
-const baseline = runFocusedTest()
-const baselinePassed = passedTestCount(baseline.output)
-if (baseline.status !== 0 || baselinePassed === null) {
-  console.error(`BASELINE NOT GREEN (exit ${String(baseline.status)}); refusing to mutate`)
-  console.error(baseline.output.slice(-3000))
+console.log('=== baselines ===')
+let baselinesGreen = true
+for (const tests of suites.values()) {
+  const baseline = runFocusedTest(tests)
+  const baselinePassed = passedTestCount(baseline.output)
+  if (baseline.status !== 0 || baselinePassed === null) {
+    console.error(
+      `BASELINE NOT GREEN for ${tests.join(', ')} (exit ${String(baseline.status)}); refusing to mutate`,
+    )
+    console.error(baseline.output.slice(-3000))
+    baselinesGreen = false
+  } else {
+    console.log(`${tests.join(', ')}: ${baselinePassed} passed`)
+  }
+}
+
+if (!baselinesGreen) {
   process.exitCode = 1
 } else {
-  console.log(`baseline: ${baselinePassed} passed`)
 
   let caught = 0
   let survived = 0
   let harnessFailures = 0
 
   for (const mutation of mutations) {
-    const old = withNativeNewlines(mutation.old)
-    const replacement = withNativeNewlines(mutation.replacement)
-    const occurrences = countOccurrences(original, old)
+    const sourceName = mutation.source ?? 'setup'
+    const source = originals.get(sourceName)
+    const old = mutation.old.replaceAll('\n', source.newline)
+    const replacement = mutation.replacement.replaceAll('\n', source.newline)
+    const occurrences = countOccurrences(source.text, old)
     if (occurrences !== 1) {
       console.log(`[${mutation.name}] HARNESS_FAILURE(anchor count ${occurrences}, expected 1)`)
       harnessFailures += 1
       continue
     }
 
-    const mutated = original.replace(old, replacement)
+    const mutated = source.text.replace(old, replacement)
     const mutatedBytes = Buffer.from(mutated, 'utf8')
-    if (mutatedBytes.equals(originalBytes)) {
+    if (mutatedBytes.equals(source.bytes)) {
       console.log(`[${mutation.name}] HARNESS_FAILURE(source bytes did not change)`)
       harnessFailures += 1
       continue
     }
 
-    writeFileSync(SOURCE, mutatedBytes)
+    writeFileSync(source.path, mutatedBytes)
     try {
-      const result = runFocusedTest()
+      const result = runFocusedTest(mutation.tests ?? DEFAULT_TESTS)
       const failed = failedTestCount(result.output)
       if (result.status === 1 && failed !== null) {
         console.log(`[${mutation.name}] CAUGHT(${failed} failed)`)
@@ -299,24 +369,29 @@ if (baseline.status !== 0 || baselinePassed === null) {
         harnessFailures += 1
       }
     } finally {
-      writeFileSync(SOURCE, originalBytes)
+      writeFileSync(source.path, source.bytes)
     }
   }
 
-  const restoredBytes = readFileSync(SOURCE)
-  if (!restoredBytes.equals(originalBytes)) {
-    console.error('HARNESS_FAILURE(source was not restored byte-for-byte)')
-    harnessFailures += 1
+  for (const [sourceName, source] of originals) {
+    if (!readFileSync(source.path).equals(source.bytes)) {
+      console.error(`HARNESS_FAILURE(${sourceName} was not restored byte-for-byte)`)
+      harnessFailures += 1
+    }
   }
 
-  const restored = runFocusedTest()
-  const restoredPassed = passedTestCount(restored.output)
-  if (restored.status !== 0 || restoredPassed === null) {
-    console.error(`HARNESS_FAILURE(restored test exit ${String(restored.status)})`)
-    console.error(restored.output.slice(-3000))
-    harnessFailures += 1
-  } else {
-    console.log(`restored: ${restoredPassed} passed`)
+  for (const tests of suites.values()) {
+    const restored = runFocusedTest(tests)
+    const restoredPassed = passedTestCount(restored.output)
+    if (restored.status !== 0 || restoredPassed === null) {
+      console.error(
+        `HARNESS_FAILURE(restored ${tests.join(', ')} exit ${String(restored.status)})`,
+      )
+      console.error(restored.output.slice(-3000))
+      harnessFailures += 1
+    } else {
+      console.log(`restored ${tests.join(', ')}: ${restoredPassed} passed`)
+    }
   }
 
   console.log(

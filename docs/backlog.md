@@ -2910,9 +2910,12 @@ guards refuse added fields, malformed values, duplicate identities, incomplete
 team cohorts and contradictory format evidence rather than filtering or
 defaulting them. Setup and creation failures retain backend wording, stable code
 and request id with a recovery action; request failures retain the completed
-form. A successful creation opens the existing `/draft/:id` board. The recorded
-draft list keeps its prior loading, empty, refusal and navigation behaviour
-regardless of setup state.
+form. A creation timeout, lost connection, or malformed success response is
+treated as potentially committed: the recorded list refreshes and the form
+locks until page reload rather than offering a duplicate-producing retry. A
+successful creation opens the existing `/draft/:id` board. The recorded draft
+list keeps its prior loading, empty, refusal and navigation behaviour regardless
+of setup state.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 

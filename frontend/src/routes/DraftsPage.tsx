@@ -51,6 +51,7 @@ export function DraftsPage() {
               onCreated={(draftId) => {
                 void navigate(`/draft/${String(draftId)}`)
               }}
+              onCreationUncertain={drafts.reload}
             />
           )}
         </AsyncBoundary>

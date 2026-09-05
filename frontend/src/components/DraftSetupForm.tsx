@@ -1,7 +1,10 @@
 import { useId, useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { createDraft } from '../api/draftEndpoints'
-import { describeDraftCreationError } from '../api/draftErrors'
+import {
+  describeDraftCreationError,
+  isDraftCreationOutcomeUncertain,
+} from '../api/draftErrors'
 import {
   DRAFT_TOOL_USAGES,
   type CreateDraftRequest,
@@ -12,6 +15,7 @@ import {
 interface DraftSetupFormProps {
   leagues: DraftSetupLeague[]
   onCreated: (draftId: number) => void
+  onCreationUncertain: () => void
 }
 
 type DraftKind = 'mock' | 'real'
@@ -26,7 +30,11 @@ function slotLabel(league: DraftSetupLeague): string {
   return league.format.draft_type === 'auction' ? 'Tracker slot' : 'Draft position'
 }
 
-export function DraftSetupForm({ leagues, onCreated }: DraftSetupFormProps) {
+export function DraftSetupForm({
+  leagues,
+  onCreated,
+  onCreationUncertain,
+}: DraftSetupFormProps) {
   const ids = useId()
   const [leagueId, setLeagueId] = useState('')
   const [name, setName] = useState('')
@@ -36,6 +44,7 @@ export function DraftSetupForm({ leagues, onCreated }: DraftSetupFormProps) {
   const [ownerTeamId, setOwnerTeamId] = useState('')
   const [teamSlots, setTeamSlots] = useState<Record<string, string>>({})
   const [pending, setPending] = useState(false)
+  const [creationLocked, setCreationLocked] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [creationError, setCreationError] = useState<Error | null>(null)
 
@@ -146,7 +155,12 @@ export function DraftSetupForm({ leagues, onCreated }: DraftSetupFormProps) {
       const created = await createDraft(request)
       onCreated(created.id)
     } catch (cause) {
-      setCreationError(cause instanceof Error ? cause : new Error(String(cause)))
+      const failure = cause instanceof Error ? cause : new Error(String(cause))
+      setCreationError(failure)
+      if (isDraftCreationOutcomeUncertain(failure)) {
+        setCreationLocked(true)
+        onCreationUncertain()
+      }
     } finally {
       setPending(false)
     }
@@ -162,7 +176,11 @@ export function DraftSetupForm({ leagues, onCreated }: DraftSetupFormProps) {
 
   return (
     <form className="draft-setup__form" onSubmit={(event) => void submit(event)} noValidate>
-      <fieldset className="draft-setup__fieldset" disabled={pending} aria-busy={pending}>
+      <fieldset
+        className="draft-setup__fieldset"
+        disabled={pending || creationLocked}
+        aria-busy={pending}
+      >
         <legend>Required setup</legend>
 
         <label className="draft-setup__field" htmlFor={`${ids}-league`}>
