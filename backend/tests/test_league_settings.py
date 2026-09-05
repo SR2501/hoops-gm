@@ -22,6 +22,7 @@ from hoops_gm.ingest.fantrax_official import (
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
+    OFFICIAL_SOURCE,
     GamesCapRules,
     KeeperRules,
     LeagueSettingsDocument,
@@ -68,6 +69,24 @@ def _official_payload() -> dict[str, object]:
             },
         ],
     }
+
+
+def _playoffs_payload(
+    *,
+    without: str | None = None,
+    **overrides: object,
+) -> dict[str, object]:
+    playoffs: dict[str, object] = {
+        "used": True,
+        "numPlayoffTeams": 4,
+        "lastRegularSeasonPeriod": 1,
+        "firstPlayoffPeriod": 2,
+        "mergePlayoffPeriods": False,
+    }
+    playoffs.update(overrides)
+    if without is not None:
+        del playoffs[without]
+    return playoffs
 
 
 class _StubLeagueSettingsClient(FantraxOfficialClient):
@@ -139,6 +158,242 @@ def test_official_fields_are_known_and_absent_fields_stay_unknown() -> None:
     assert settings.source_season_year == 2025
 
 
+def test_top_level_playoffs_define_the_official_playoff_periods() -> None:
+    payload = _official_payload()
+    payload["playoffs"] = _playoffs_payload()
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:playoffs",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=(2,))
+    assert settings.unmapped_rule_paths == ()
+
+
+def test_top_level_playoffs_can_explicitly_disable_playoffs() -> None:
+    payload = _official_payload()
+    payload["playoffs"] = _playoffs_payload(used=False, numPlayoffTeams=0)
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:no-playoffs",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=())
+
+
+def test_disabled_top_level_playoffs_agree_with_all_false_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+    payload["playoffs"] = _playoffs_payload(used=False, numPlayoffTeams=0)
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:no-playoffs-with-markers",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=())
+
+
+def test_enabled_top_level_playoffs_disagree_with_all_false_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+    payload["playoffs"] = _playoffs_payload()
+
+    with pytest.raises(SourceContractError, match="disagrees with scoringPeriods playoff markers"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:enabled-playoffs-with-false-markers",
+        )
+
+
+def test_marker_only_all_false_playoff_periods_remain_ambiguous() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = False
+
+    with pytest.raises(SourceContractError, match="playoff markers but none are true"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:marker-only-false-playoffs",
+        )
+
+
+def test_top_level_playoffs_agree_with_out_of_order_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    periods.append(
+        {
+            "number": 3,
+            "startDate": "2026-11-02T00:00:00-05:00",
+            "endDate": "2026-11-08T23:59:59-05:00",
+        }
+    )
+    periods.reverse()
+    for period in periods:
+        assert isinstance(period, dict)
+        period["isPlayoff"] = period["number"] in {2, 3}
+    payload["playoffs"] = _playoffs_payload()
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:out-of-order-playoff-markers",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=(2, 3))
+
+
+@pytest.mark.parametrize(
+    ("playoffs", "message"),
+    [
+        (None, "playoffs must be an object"),
+        ([], "playoffs must be an object"),
+        (
+            _playoffs_payload(without="mergePlayoffPeriods"),
+            "playoffs has changed shape",
+        ),
+        (
+            _playoffs_payload(rounds=3),
+            "playoffs has changed shape",
+        ),
+        (
+            _playoffs_payload(used="true"),
+            "playoffs.used must be boolean",
+        ),
+        (
+            _playoffs_payload(mergePlayoffPeriods="false"),
+            "playoffs.mergePlayoffPeriods must be boolean",
+        ),
+        (
+            _playoffs_payload(firstPlayoffPeriod="2"),
+            "playoffs.firstPlayoffPeriod must be a positive integer",
+        ),
+        (
+            _playoffs_payload(lastRegularSeasonPeriod=None),
+            "playoffs.lastRegularSeasonPeriod must be a positive integer",
+        ),
+        (
+            _playoffs_payload(numPlayoffTeams=-1),
+            "playoffs.numPlayoffTeams must be a non-negative integer",
+        ),
+    ],
+)
+def test_malformed_top_level_playoffs_fail_closed(
+    playoffs: object,
+    message: str,
+) -> None:
+    payload = _official_payload()
+    payload["playoffs"] = playoffs
+
+    with pytest.raises(SourceContractError, match=message):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:malformed-playoffs",
+        )
+
+
+def test_first_playoff_period_must_immediately_follow_the_regular_season() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    periods.append(
+        {
+            "number": 3,
+            "startDate": "2026-11-02T00:00:00-05:00",
+            "endDate": "2026-11-08T23:59:59-05:00",
+        }
+    )
+    payload["playoffs"] = _playoffs_payload(firstPlayoffPeriod=3)
+
+    with pytest.raises(SourceContractError, match="firstPlayoffPeriod immediately follow"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:non-adjacent-playoff-period",
+        )
+
+
+def test_top_level_playoffs_require_scoring_periods() -> None:
+    payload = _official_payload()
+    del payload["scoringPeriods"]
+    payload["playoffs"] = _playoffs_payload()
+
+    with pytest.raises(
+        SourceContractError,
+        match="cannot identify playoff periods without scoringPeriods",
+    ):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:missing-scoring-periods",
+        )
+
+
+@pytest.mark.parametrize(
+    ("removed_index", "field"),
+    [
+        (0, "lastRegularSeasonPeriod"),
+        (1, "firstPlayoffPeriod"),
+    ],
+)
+def test_top_level_playoffs_must_reference_observed_scoring_periods(
+    removed_index: int,
+    field: str,
+) -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    periods.pop(removed_index)
+    payload["playoffs"] = _playoffs_payload()
+
+    with pytest.raises(
+        SourceContractError,
+        match=rf"{field} must reference an observed scoringPeriods number",
+    ):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:missing-playoff-period",
+        )
+
+
+def test_top_level_playoffs_must_agree_with_scoring_period_markers() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    for index, period in enumerate(periods):
+        assert isinstance(period, dict)
+        period["isPlayoff"] = index == 0
+    payload["playoffs"] = _playoffs_payload()
+
+    with pytest.raises(SourceContractError, match="disagrees with scoringPeriods playoff markers"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:conflicting-playoff-evidence",
+        )
+
+
 def test_no_ir_limit_is_inferred_from_the_total_reserve_limit() -> None:
     settings = parse_official_league_settings(
         _official_payload(),
@@ -208,6 +463,34 @@ def test_bridge_fills_only_an_official_unknown() -> None:
         "fantrax_official",
         "fantrax_bridge",
     }
+
+
+def test_bridge_cannot_override_official_top_level_playoffs() -> None:
+    payload = _official_payload()
+    payload["playoffs"] = _playoffs_payload()
+    official = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:official-playoffs",
+    )
+    bridge = parse_bridge_league_settings(
+        {
+            "schema_version": 1,
+            "league_id": "league-1",
+            "season_year": 2025,
+            "start_date": "2025-10-21",
+            "end_date": "2026-03-15",
+            "observed_at": "2026-09-05T14:51:39Z",
+            "settings": {"playoffs": {"period_numbers": [1]}},
+        },
+        capture_ref="bridge_payload:playoffs",
+        source_payload_sha256="a" * 64,
+    ).document
+
+    merged = merge_settings(official, bridge)
+
+    assert merged.playoffs.value == PlayoffRules(period_numbers=(2,))
+    assert {item.source for item in merged.playoffs.evidence} == {OFFICIAL_SOURCE}
 
 
 def test_bridge_cannot_fill_rules_across_league_seasons() -> None:

@@ -240,6 +240,7 @@ _LEAGUE_INFO_KNOWN_KEYS = frozenset(
         "leagueHistoryId",
         "matchups",
         "playerInfo",
+        "playoffs",
         "poolSettings",
         "rosterInfo",
         "rosterPeriods",

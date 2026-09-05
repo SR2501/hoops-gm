@@ -34,7 +34,7 @@ Gathered before planning; these are load-bearing constraints, not trivia.
 
 | Area | Finding | Consequence |
 |---|---|---|
-| Fantrax official API | Beta REST at `fantrax.com/fxea/general/` — `getPlayerIds`, `getAdp`, `getLeagues`, `getLeagueInfo`, `getDraftPicks`. No auth for some; `userSecretId` for others. **✅ Verified live:** on 2026-08-17 `getPlayerIds?sport=NBA` returned ~278KB unauthenticated and `getAdp?sport=NBA` returned live 2026-27 ADP; `limit=5` returned 4 rows. On 2026-08-18 the target private league's `getLeagueInfo` succeeded with only `leagueId`, returning historical 2025–26 roster and scoring-period configuration. | Use for player ID map, ADP, the settings it actually exposes, and draft picks. Free and low-risk. **It exposes no NBA.com id** (R23) and no waiver, lineup-lock, games-cap, trade, playoff, keeper, or IR-specific rules (R43). |
+| Fantrax official API | Beta REST at `fantrax.com/fxea/general/` — `getPlayerIds`, `getAdp`, `getLeagues`, `getLeagueInfo`, `getDraftPicks`. No auth for some; `userSecretId` for others. **✅ Verified live:** on 2026-08-17 `getPlayerIds?sport=NBA` returned ~278KB unauthenticated and `getAdp?sport=NBA` returned live 2026-27 ADP; `limit=5` returned 4 rows. On 2026-09-05 the target private league's `getLeagueInfo` succeeded with only `leagueId`, returning historical 2025–26 roster, scoring-period, and playoff-period configuration. | Use for player ID map, ADP, the settings it actually exposes, and draft picks. Free and low-risk. **It exposes no NBA.com id** (R23) and no waiver, lineup-lock, games-cap, trade, keeper, or IR-specific rules (R43). |
 | Fantrax gaps | No documented endpoints for matchups/live scores, transactions, waivers, or **any write operation**. | Everything else must come from `fantraxapi` or the Tampermonkey bridge. |
 | `fantraxapi` (MIT, maintained) | Wraps internal `/fxpa/req`. Read-only. Private leagues need a `FANTRAXUSER` session cookie, obtained via Selenium login. | Primary private-league read path. Pin the version — internal schema can change without notice. |
 | `/fxpa/req` | Internal JSON-RPC used by the Fantrax SPA. Undocumented; no public login endpoint. | Treat as unstable. Isolate behind an adapter with contract tests. |
@@ -445,7 +445,7 @@ None of this can be computed without knowing the league's actual rules. Ingest a
 - **Scoring periods** — week boundaries, which already live on `scoring_periods`
 - **Trade deadline, playoff weeks, keeper rules**
 
-Verified live on 2026-08-18, `getLeagueInfo` returns roster and scoring-period configuration but omits waiver, lineup-lock, games-cap, trade-deadline, playoff, keeper, and IR-specific fields (R43). Preserve those omissions as explicit unknowns; the read-only bridge is the fallback.
+Verified live on 2026-09-05, `getLeagueInfo` returns roster, scoring-period, and playoff-period configuration but omits waiver, lineup-lock, games-cap, trade-deadline, keeper, and IR-specific fields (R43). Preserve those omissions as explicit unknowns; the read-only bridge is the fallback.
 
 ### The four timing edges, in order of value
 

@@ -34,6 +34,7 @@ from hoops_gm.ingest.fantrax_official import (
     parse_player_ids,
 )
 from hoops_gm.ingest.importers import _missing_participation_player_anchors
+from hoops_gm.ingest.league_settings import PlayoffRules
 from hoops_gm.ingest.nba import (
     MIN_POSITION_COVERAGE,
     PLAYER_INDEX_POSITIONS,
@@ -50,6 +51,7 @@ from hoops_gm.ingest.nba import (
 )
 from hoops_gm.ingest.record_fixtures import (
     _league_game_finder_fixture_ids,
+    _sanitize_league_settings,
     _select_league_game_finder_games,
 )
 
@@ -295,6 +297,12 @@ class TestFantraxLeagueSettings:
         assert settings.roster_limits.value.injured_reserve is None
         assert settings.scoring_periods.value is not None
         assert len(settings.scoring_periods.value.periods) == 21
+        assert settings.playoffs.value == PlayoffRules(period_numbers=(19, 20, 21))
+        assert {evidence.source_path for evidence in settings.playoffs.evidence} == {
+            "$.playoffs.used",
+            "$.playoffs.lastRegularSeasonPeriod",
+            "$.playoffs.firstPlayoffPeriod",
+        }
         # The settings document itself -- not just the adapter's own
         # FantraxLeagueInfo view -- must carry the same scoring evidence,
         # since `LeagueSettingsDocument` (not `FantraxLeagueInfo`) is what
@@ -318,7 +326,6 @@ class TestFantraxLeagueSettings:
             result.settings.waivers,
             result.settings.games_caps,
             result.settings.trade_deadline,
-            result.settings.playoffs,
             result.settings.keepers,
         )
         assert all(setting.value is None for setting in unknown)
@@ -332,8 +339,9 @@ class TestFantraxLeagueSettings:
     ) -> None:
         metadata = manifest["fantrax_getleagueinfo_settings_sanitized.json"]
         assert metadata["original_sha256"] == (
-            "722b95c7bbecde2950aea9fea0ccc24519311248ee79a1320fe07455d718ae54"
+            "d3da00e96e9936412f3fcaf8733099d00eaa113fd9d5c0ef3532fbb5b89a3b8c"
         )
+        assert metadata["original_byte_size"] == 106899
         assert set(metadata["removed_sections"]) == {
             "leagueHistoryId",
             "leagueName",
@@ -344,6 +352,7 @@ class TestFantraxLeagueSettings:
         assert "userSecretId" not in metadata["params"]
         payload = load("fantrax_getleagueinfo_settings_sanitized.json")
         assert not set(metadata["removed_sections"]) & set(payload)
+        assert _sanitize_league_settings(payload) == payload
 
 
 class TestFantraxDraftPicks:

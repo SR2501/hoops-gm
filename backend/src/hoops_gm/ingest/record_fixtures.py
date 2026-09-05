@@ -73,6 +73,7 @@ _LEAGUE_SETTINGS_RETAINED_SECTIONS = frozenset(
         "draftSettings",
         "draftType",
         "endDate",
+        "playoffs",
         "poolSettings",
         "rosterInfo",
         "rosterPeriods",

@@ -34948,3 +34948,161 @@ not a content conflict.
 cumulative review still require the final documentation commit. Local
 Postgres remains unavailable because Docker is not installed. Do not merge or
 self-approve from this session.
+
+## 2026-09-05 - Fantrax official playoff-field drift
+
+**Delivered:** The scheduled live smoke in run `33966362917`, job
+`101307087983`, correctly caught a new top-level `playoffs` object in official
+`getLeagueInfo`. The exact 106,899 source bytes were captured before decoding
+and preserved outside the repository at
+`C:\Users\steverones\.copilot\session-state\324c6b17-66f7-4013-bea4-8c564858aae6\files\fantrax_getleagueinfo_2026-09-05.raw.json`
+(`sha256:d3da00e96e9936412f3fcaf8733099d00eaa113fd9d5c0ef3532fbb5b89a3b8c`);
+the privacy-safe capture sidecar is beside it as
+`fantrax_getleagueinfo_2026-09-05.metadata.json`. No `userSecretId` was sent.
+Neither private league identity nor any identity-bearing raw section was
+printed or committed.
+
+The observed object says playoffs are used, period 18 is the last regular
+period, period 19 is the first playoff period, and carries
+`numPlayoffTeams=4` and `mergePlayoffPeriods=false`. The latter values are
+retained but not interpreted by this change. The same `used`,
+`lastRegularSeasonPeriod`, and `firstPlayoffPeriod` contract was independently
+published from another live Fantrax league in `TheCiege23/allfantasy-v2-main` commit
+`2511dd8019f57fc5b3f6a72d580da820a3fd93ff`. The official parser always
+validates the exact five-key object and strict types, including a non-negative
+team count. For enabled playoffs it also requires adjacent boundaries that reference real scoring periods and rejects
+disagreement with any inline playoff markers. It normalizes the established
+calendar meaning to `PlayoffRules(period_numbers=(19, 20, 21))`; known-disabled
+playoffs become an empty tuple, while a missing object still uses prior marker evidence or remains
+absent. The existing official-over-bridge merge is unchanged and tested.
+`LeagueDeadlineCalendar` receives authoritative booleans, and the scoring-period
+projection persists them through its existing lineage contract.
+
+**Fixture and privacy evidence:** The repository recorder now retains
+`playoffs`. Its privacy-safe projection of the preserved raw bytes matches
+`backend/tests/fixtures/fantrax_getleagueinfo_settings_sanitized.json` exactly
+under canonical LF bytes. Every previously retained JSON value is unchanged;
+the new object is the only changed retained section. The manifest records the
+raw digest, raw byte count, capture time, original top-level keys, retained and
+removed sections, and canonical fixture byte size. The fixture sanitizer itself
+is contract-tested so a future recording cannot silently drop `playoffs`.
+
+**Failure behavior and scope:** A present null/non-object, missing or extra
+object key, or coerced boolean/integer is a `SourceContractError`. When
+`used=true`, a non-adjacent boundary, absent referenced period, absent
+`scoringPeriods`, or marker disagreement is also a contract error. Disabled
+playoffs retain strict field shapes but do not consume the boundary references;
+none of these malformed states becomes absent evidence. `numPlayoffTeams` and
+`mergePlayoffPeriods` are retained and shape-validated but not interpreted by
+the current calendar, which has no bracket or multi-period-matchup model. No
+NBA adapter or smoke behavior changed. In particular, the unrelated
+`stats.nba.com` 60-second timeouts from the same scheduled job remain loud
+failures; nothing skips, catches-as-success, or softens them.
+
+**Code and Adapter evidence:** From `backend`, with `PYTHONPATH=src` where
+needed, the focused league-settings, recorded-fixture, live-smoke selection,
+and scoring-period-projection suite passed; `python -m ruff check .`,
+`python -m ruff format --check .`, `python -m mypy`, the full
+`python -m pytest -q`, and `python -m pytest -m adapter_contract -q` passed.
+From the repository root, `check_no_secrets.py`,
+`check_doc_terminators.py`, `backlog_graph.py`, `capture_openapi.py --check`,
+and `git diff --check` passed. The backlog recount is 194 total, 80 done, 114
+pending, with no structural defect. The refreshed fixture was independently
+checked against the recorder projection and its source digest/size.
+
+Each new guard was mutation-checked with a green targeted baseline, an asserted
+single source anchor, an asserted applied mutation, the named behavioral red,
+restoration, and a final green rerun. The mutations covered unknown and missing
+keys, strict booleans, strict integers, regular/playoff adjacency, required
+scoring periods, both referenced boundaries, marker disagreement, disabled
+playoffs, inclusive first-playoff classification, adapter known-key handling,
+rule-path mapping, and recorder retention. The adjacency fixture includes the
+otherwise-valid non-adjacent period so its red cannot come from the neighboring
+"period not found" guard. An independent cumulative review of frozen head
+`9490525958c104fad861195028562fdf91812792` reported no implementation or
+privacy defect and found two documentation overclaims: enabled-only boundary
+validation and the derivation/projection boundary for unknown playoff flags.
+Both are corrected here; the corrected exact head requires a fresh review.
+
+**Failed approaches and side effects:** `uv run pytest ...` failed because
+`uv` is not installed. The first direct pytest attempt ran from the repository
+root and found no `tests/` path; the next ran from `backend` without
+`PYTHONPATH=src` and could not import `hoops_gm.app`. Running from `backend`
+with `PYTHONPATH=src` resolved the local source-layout requirement. An attempted
+`backlog_graph.py --check` failed because that option does not exist; the
+documented positional invocation passed. The first full format check found two
+formatter-only changes, which `ruff format` applied before the final checks.
+The first push used the default credential helper identity
+`steverones_microsoft` and was rejected with HTTP 403; the retry used the
+already-authorized `SR2501` GitHub CLI identity through a per-command helper
+override and made no persistent credential configuration change.
+The first `apply_patch` handoff append preserved the NUL but changed the
+pre-existing prefix hash; after restoration, the patch append duplicated its
+context block. The final binary append was rebuilt from the exact parent blob,
+dropping the duplicate and preserving all parent bytes as the file prefix. No
+environment variable, ignored project config, credential, cookie, cache,
+database, or external Fantrax/NBA account state was changed. The pushed remote
+branch ref is the only expected external mutation. The only off-repository
+holdings are the raw response and safe sidecar paths named above.
+
+**Could not verify:** No first-party Fantrax reference was found for
+`mergePlayoffPeriods`, so this change does not claim bracket or matchup-merging
+semantics. The source still reports historical 2025-26 settings, not the final
+2026-27 league; season coherence continues to refuse attaching it to 2026-27.
+The configured live Fantrax smoke could not run locally because this worktree
+has no league-id environment/config value; its exact response was instead
+captured by the coordinating main session and preserved at the paths above.
+Hosted exact-head CI and fresh independent cumulative review remain pending
+for the corrected final commit.
+
+**Next:** Freeze and push the final commit, require exact-head hosted CI and a
+fresh independent cumulative review, then open the non-draft PR. Do not merge
+or self-approve.
+
+## 2026-09-05 - Fantrax playoff marker reconciliation repair
+
+**Delivered:** Fresh independent cumulative review of frozen head
+`e3a9ebbce21df3db73d81301908b1acc5ea31819` found one real contract bug in
+inline playoff-marker reconciliation. A top-level `used=false` object could not
+agree with scoring periods that explicitly marked every period false, and
+multiple true markers in non-numeric response order could falsely disagree with
+the same top-level period membership. Marker parsing is now deferred until the
+top-level object has supplied the disambiguating contract, permits an empty
+marker membership only in that corroboration path, and sorts marked period
+numbers before equality. The legacy marker-only path remains fail-closed on an
+all-false set when the top-level object is absent. Malformed marker values still
+raise `SourceContractError`; an all-false set with `used=true` now reaches and
+fails the explicit disagreement check.
+
+**Evidence:** Four focused regressions cover disabled/all-false agreement,
+enabled/all-false disagreement, marker-only all-false ambiguity, and
+out-of-order multi-period agreement. Removing `allow_empty=True` made the
+disabled regression fail with the expected "markers but none are true" contract
+error; restoring it returned green. Removing `sorted` made the order regression
+fail with the expected false disagreement; restoring it returned green. After
+restoration, all 67 league-settings tests passed. From `backend`,
+`python -m ruff check . && python -m ruff format --check .`, `python -m mypy`,
+`python -m pytest -q`, and `python -m pytest -m adapter_contract -q` passed.
+The superseded exact-head hosted run `33975950527` was successful for SHA
+`e3a9ebbce21df3db73d81301908b1acc5ea31819`: all ten executed jobs passed and
+the separately scheduled, non-blocking live-smoke job was skipped on push.
+
+**Failed approaches and side effects:** The first focused pytest invocation
+again ran from the repository root and could not find `tests/test_league_settings.py`;
+changing to `backend` with `PYTHONPATH=src` passed. The first post-repair lint
+call correctly found Ruff `SIM102`, but its following format command replaced
+the native exit status; the nested condition was simplified and the full gate
+was rerun with `&&` so lint failure could not be masked. No environment,
+credential, ignored config, fixture, raw capture, cache, database, remote API,
+or external account state changed during this repair.
+
+**Could not verify:** The repaired final commit does not yet have its own hosted
+exact-head CI or fresh independent cumulative review. Local configured-live
+Fantrax smoke remains unavailable because this worktree has no league-id
+configuration. No new source evidence was needed or claimed, and the unknown
+`mergePlayoffPeriods` meaning remains unknown. NBA adapter and live-smoke
+behavior remain untouched.
+
+**Next:** Freeze and push the repaired commit, require hosted CI and another
+fresh independent cumulative review on that exact SHA, then open the non-draft
+PR. Do not merge or self-approve.
