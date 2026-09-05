@@ -302,7 +302,14 @@ describe('draft setup endpoint contract', () => {
 
     const duplicateLeague = structuredClone(setupResponse)
     duplicateLeague.leagues.push(structuredClone(duplicateLeague.leagues[0]!))
+    duplicateLeague.leagues[1]!.name = 'Different league'
     expect(isDraftSetupResponse(duplicateLeague)).toBe(false)
+
+    const duplicateLeagueLabel = structuredClone(setupResponse)
+    duplicateLeagueLabel.leagues.push(structuredClone(duplicateLeagueLabel.leagues[0]!))
+    duplicateLeagueLabel.leagues[1]!.league_id = 4
+    duplicateLeagueLabel.leagues[1]!.name = ' League   setup evidence '
+    expect(isDraftSetupResponse(duplicateLeagueLabel)).toBe(false)
 
     expect(isDraftSetupResponse({ leagues: null })).toBe(false)
   })

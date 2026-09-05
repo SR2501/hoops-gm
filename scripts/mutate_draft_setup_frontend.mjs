@@ -209,7 +209,12 @@ const mutations = [
   },
   {
     name: 'duplicate league guard removed',
-    old: '  return new Set(leagueIds).size === leagueIds.length',
+    old: '  if (new Set(leagueIds).size !== leagueIds.length) return false',
+    replacement: '  if (false) return false',
+  },
+  {
+    name: 'duplicate rendered league-label guard removed',
+    old: '  return new Set(leagueLabels).size === leagueLabels.length',
     replacement: '  return true',
   },
   {

@@ -35020,3 +35020,32 @@ contract fixtures rather than live league evidence. The prior browser bundle
 contains unique labels and therefore does not render this refusal. Hosted
 checks and a fresh independent review of the next frozen head remain required.
 Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup ambiguous-league correction
+
+Independent review of exact base
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` to the next frozen head
+`1922293d59194db98c385d5accb802f05273b556` found the analogous remaining
+ambiguity in the league selector: distinct league ids may share the same
+rendered `name (season)` label, making the immutable target indistinguishable.
+
+**Corrected:** The response boundary now also rejects duplicate league labels
+after applying the same rendered-whitespace normalization to name and season.
+Distinct visible labels remain valid; no league is filtered, renamed, or
+selected by order. The contract fixture proves equal rendered labels with
+different ids are refused. The first mutation run exposed a weak existing
+duplicate-id fixture because the new label guard also rejected it; changing
+that fixture to retain duplicate ids under distinct labels isolated both
+guards. The complete rerun reports **43 mutations caught, 0 survived, 0
+harness failures**.
+
+The final local Code gate remains green: ESLint, strict TypeScript,
+**472/472 tests**, and production build. OpenAPI comparison remains zero
+added, removed, or changed fields; backlog graph, secret scan, document
+terminators, script lint, and diff checks pass.
+
+**Could not verify:** No real setup response with duplicate rendered league
+labels was available, and the retained browser bundle uses distinct league
+labels, so this refusal is fixture-driven rather than live evidence. Hosted
+checks and fresh independent review of the final frozen head remain required.
+Do not merge or self-approve from this session.

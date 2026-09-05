@@ -306,7 +306,12 @@ export function isDraftSetupResponse(value: unknown): value is DraftSetupRespons
   }
 
   const leagueIds = value.leagues.map((league) => league.league_id)
-  return new Set(leagueIds).size === leagueIds.length
+  if (new Set(leagueIds).size !== leagueIds.length) return false
+  const leagueLabels = value.leagues.map(
+    (league) =>
+      `${league.name.trim().replace(/\s+/g, ' ')} (${league.season.trim().replace(/\s+/g, ' ')})`,
+  )
+  return new Set(leagueLabels).size === leagueLabels.length
 }
 
 function isDraftEventsPage(value: unknown): value is DraftEventsPage {
