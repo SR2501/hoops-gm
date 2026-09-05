@@ -34917,3 +34917,27 @@ screen, real draft, or account write was used: the frontend setup screen and
 all write behavior are deliberately out of scope. Hosted exact-head CI and a
 fresh independent cumulative review remain pending until the final commit is
 frozen. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup publication preflight
+
+The first committed head was
+`a4decc4427360b485000cf5235b89982360d95f2`. The repository append-only
+verifier reports the requested handoff as a byte-prefix extension of
+`d090c6bfec2acbd7de9da72e588ebb5328c2edeb`: 149 CR bytes in both blobs, zero
+added CR bytes, and all controls behaved. An initial invocation passed
+`docs\handoff.md`; Git blob paths require `/`, so that unreadable-path failure
+established nothing and the corrected `docs/handoff.md` invocation is the
+evidence above.
+
+The first `git push -u origin HEAD` used an ambient
+`steverones_microsoft` Git credential and GitHub refused it with 403 even
+though `gh auth status` showed active account `SR2501` with admin repository
+permission. The retry used one-shot command-local helpers,
+`git -c credential.helper= -c "credential.helper=!gh auth git-credential"
+push -u origin HEAD`, and published the branch. It did not change local or
+global Git configuration. No PR exists yet.
+
+**Could not verify:** Hosted exact-head jobs and the fresh independent
+cumulative review still require the final documentation commit. Local
+Postgres remains unavailable because Docker is not installed. Do not merge or
+self-approve from this session.
