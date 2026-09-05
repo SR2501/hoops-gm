@@ -35240,3 +35240,32 @@ requested byte-safe merge, complete post-merge gates, hosted checks, and a
 fresh independent review of the resulting exact base-to-head diff. No real
 league carried either ambiguous label shape, and no real backend emitted a
 fractional created id. Do not merge or self-approve from this session.
+
+## 2026-09-05 - Draft setup merged-main finalization
+
+**Integrated:** Merged current `origin/main` at
+`5f99f2392447c25ba70d0eb17b5c67f68f4e4d26` without rewriting either the
+merged backend contract history or the frontend commits. The only conflict was
+append-versus-append in this file. It was resolved from git's three blobs:
+current main's 2,301,906 bytes are the exact prefix, followed by this lane's
+16,335-byte suffix relative to their shared
+`22ab6c30fe1d7d79a44b65ab0643296e28ee8ac2` base. The combined file retains
+exactly the 149 historical CR bytes present on both sides and introduces none.
+`docs/backlog.md` merged automatically and still recounts **82 done, 0
+blocked, 113 pending, 195 total** with no graph defect.
+
+**Post-merge evidence:** The complete mutation harness reran after the merge:
+**45 caught, 0 survived, 0 harness failures**, with every edited source
+restored and all focused baselines green. The complete frontend Code gate
+passes on the merged tree: ESLint, strict TypeScript, **472/472 tests**, and
+production build. OpenAPI comparison reports zero added, removed, or changed
+fields. The backlog graph, secret scan over 549 tracked files, document
+terminators, mutation-script lint, and cumulative diff check all pass.
+
+**Could not verify:** Hosted checks and the fresh independent review must run
+against the final post-documentation commit, not the merge commit described
+above. The retained browser evidence predates the four fail-closed edge guards
+added during review; those guards are covered by deterministic interaction and
+contract tests rather than a second browser drive. The existing live,
+assistive-technology, cross-browser, and network-ambiguous-write limitations
+remain as recorded above. Do not merge or self-approve from this session.
