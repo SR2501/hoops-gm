@@ -1066,6 +1066,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
 
     assert {path for path, _ in draft_routes} == {
         "/api/v1/drafts",
+        "/api/v1/drafts/setup",
         "/api/v1/drafts/by-fantrax-league/feed",
         "/api/v1/drafts/{draft_id}",
         "/api/v1/drafts/{draft_id}/events",
@@ -1080,6 +1081,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     assert draft_routes == {
         ("/api/v1/drafts", "GET"),
         ("/api/v1/drafts", "POST"),
+        ("/api/v1/drafts/setup", "GET"),
         ("/api/v1/drafts/by-fantrax-league/feed", "GET"),
         ("/api/v1/drafts/{draft_id}", "GET"),
         ("/api/v1/drafts/{draft_id}/events", "GET"),

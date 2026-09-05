@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**80 done - 0 blocked - 114 pending - 194 total**
+**81 done - 0 blocked - 114 pending - 195 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2876,10 +2876,25 @@ consistency pass would break the thing that currently works. The styling says
 *correct*.
 
 
+### `draft-setup-read-contract` - Reading honest persisted draft setup evidence
+
+- [x] **done** - Completed 2026-09-05 by `backend`.
+- **Depends on:** `draft-tracker-persistence`, `league-settings-ingest`
+
+`GET /api/v1/drafts/setup` is the loopback-only prerequisite for browser
+draft creation. It lists persisted leagues in id order, validates the same
+league format facts that `POST /api/v1/drafts` freezes, and returns the
+complete stored fantasy-team cohort in deterministic display order with owner
+assignment explicit and nullable. Team order does not imply `team_slot` or
+`source_seat`; the response omits Fantrax ids and owner metadata. Incomplete
+teams, ambiguous owners, invalid formats, and malformed, stale, or
+format-contradicting current settings fail the whole read with stable 422
+errors rather than returning a partial or defaulted collection.
+
 ### `draft-setup-screen` - Creating a draft and its seats from the browser
 
 - [ ] **pending**
-- **Depends on:** `draft-tracker`, `frontend-skeleton`
+- **Depends on:** `draft-tracker`, `frontend-skeleton`, `draft-setup-read-contract`
 
 `POST /api/v1/drafts` exists and takes a league, a name, a `tool_usage`
 declaration and the full participant list, but nothing in the browser calls it.
@@ -2891,10 +2906,10 @@ task that would enlarge that surface for no benefit at the moment it matters.
 
 This is small but it is on the critical path, because the owner cannot record
 his mock auction - or the real draft on **18 October 2026** - without a draft to
-record into. Needs seat names, per-seat budget for an auction, draft order for a
-snake, and the `is_mock` / `tool_usage` declaration surfaced honestly rather than
-defaulted past, since `tool_usage` is the field that records how much help was
-used and is the one a leaguemate would care about.
+record into. Needs seat names, the league-frozen shared budget for an auction,
+draft order for a snake, and the `is_mock` / `tool_usage` declaration surfaced
+honestly rather than defaulted past, since `tool_usage` is the field that
+records how much help was used and is the one a leaguemate would care about.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 
