@@ -9,6 +9,7 @@ import io
 import json
 import urllib.error
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from email.message import Message
 from pathlib import Path
@@ -37,7 +38,7 @@ from hoops_gm.ingest.preseason_news.models import (
     ResolvedPreseasonNewsItem,
     UnresolvedPreseasonNewsItem,
 )
-from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_key
+from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_agrees
 from hoops_gm.ingest.rawstore import RawPayloadStore
 from hoops_gm.ingest.retry import RetryPolicy
 from hoops_gm.ingest.throttle import RateLimiter
@@ -116,8 +117,9 @@ class TestPreseasonNewsContract:
         with pytest.raises(SourceContractError, match="contradicts link slug"):
             parse_preseason_news(mutated, observed_at=fixture_observed_at())
 
-    def test_title_and_link_cannot_disagree_only_by_suffix(self) -> None:
-        mutated = mutate_fixture(b"stephen-curry-3014", b"stephen-curry-jr-3014")
+    def test_title_and_link_cannot_state_conflicting_suffixes(self) -> None:
+        mutated = mutate_fixture(b"Stephen Curry", b"Stephen Curry Jr.")
+        mutated = mutated.replace(b"stephen-curry-3014", b"stephen-curry-ii-3014", 1)
 
         with pytest.raises(SourceContractError, match="contradicts link slug"):
             parse_preseason_news(mutated, observed_at=fixture_observed_at())
@@ -131,9 +133,11 @@ class TestPreseasonNewsContract:
         assert feed.items[0].player_name == "P.J. Washington"
         assert feed.items[0].rotowire_player_id == "4781"
 
-    def test_name_evidence_key_retains_one_sided_suffix(self) -> None:
-        assert name_evidence_key("P.J. Washington") == name_evidence_key("pj washington")
-        assert name_evidence_key("Kenyon Martin") != name_evidence_key("Kenyon Martin Jr.")
+    def test_name_evidence_preserves_three_valued_suffix_semantics(self) -> None:
+        assert name_evidence_agrees("P.J. Washington", "pj washington")
+        assert name_evidence_agrees("Kelly Oubre", "Oubre Jr., Kelly")
+        assert name_evidence_agrees("Gary Payton", "Payton II, Gary")
+        assert not name_evidence_agrees("Kenyon Martin Jr.", "Kenyon Martin II")
 
     def test_timezone_label_must_agree_with_the_calendar(self) -> None:
         mutated = mutate_fixture(
@@ -263,7 +267,7 @@ class TestPreseasonNewsIdentity:
         assert result.resolved == ()
         assert "contradicts crosswalk name" in result.unresolved[0].reason
 
-    def test_crosswalk_name_with_one_sided_suffix_is_unresolved(self, session: Session) -> None:
+    def test_crosswalk_name_with_omitted_rotowire_suffix_resolves(self, session: Session) -> None:
         _crosswalk_link(
             session,
             external_id="3014",
@@ -271,6 +275,21 @@ class TestPreseasonNewsIdentity:
         )
 
         result = resolve_preseason_news(session, parse_fixture().items[:1])
+
+        assert len(result.resolved) == 1
+        assert result.unresolved == ()
+
+    def test_crosswalk_name_with_conflicting_stated_suffix_is_unresolved(
+        self, session: Session
+    ) -> None:
+        _crosswalk_link(
+            session,
+            external_id="3014",
+            external_name="Stephen Curry Jr.",
+        )
+        item = replace(parse_fixture().items[0], player_name="Stephen Curry II")
+
+        result = resolve_preseason_news(session, (item,))
 
         assert result.resolved == ()
         assert "contradicts crosswalk name" in result.unresolved[0].reason

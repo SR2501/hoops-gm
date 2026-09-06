@@ -8,7 +8,7 @@ import pytest
 
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
 from hoops_gm.ingest.preseason_news import PreseasonNewsClient
-from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_key
+from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_agrees
 
 pytestmark = pytest.mark.live_smoke
 NO_CACHE = timedelta(0)
@@ -33,7 +33,7 @@ def test_latest_news_is_fresh_and_joins_the_live_fantrax_identity_surface() -> N
     assert overlapping, "no current news item shares a RotoWire id with Fantrax getPlayerIds"
     for item in overlapping:
         fantrax_player = fantrax_by_rotowire[item.rotowire_player_id]
-        assert name_evidence_key(item.player_name) == name_evidence_key(fantrax_player.name), (
+        assert name_evidence_agrees(item.player_name, fantrax_player.name), (
             f"RotoWire id {item.rotowire_player_id} names {item.player_name!r} in the "
             f"feed but {fantrax_player.name!r} in Fantrax"
         )

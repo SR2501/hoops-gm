@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.preseason_news.models import PreseasonNewsFeed, PreseasonNewsItem
-from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_key
+from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_agrees
 
 SOURCE: Final = "rotowire_nba_news"
 ENDPOINT: Final = "latest_nba_news"
@@ -162,7 +162,7 @@ def _parse_item(item: ET.Element, *, index: int, observed_at: datetime) -> Prese
     if player_match is None:
         raise _contract_error(f"item {index} player link has no stable numeric id: {link!r}")
     slug_name = player_match.group("slug").replace("-", " ")
-    if name_evidence_key(slug_name) != name_evidence_key(player_name):
+    if not name_evidence_agrees(slug_name, player_name):
         raise _contract_error(
             f"item {index} title player {player_name!r} contradicts link slug {slug_name!r}"
         )

@@ -15,7 +15,7 @@ from hoops_gm.ingest.preseason_news.models import (
     ResolvedPreseasonNewsItem,
     UnresolvedPreseasonNewsItem,
 )
-from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_key
+from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_agrees
 
 
 def resolve_preseason_news(
@@ -68,7 +68,7 @@ def resolve_preseason_news(
                 )
             )
             continue
-        if name_evidence_key(link.external_name) != name_evidence_key(item.player_name):
+        if not name_evidence_agrees(link.external_name, item.player_name):
             unresolved.append(
                 UnresolvedPreseasonNewsItem(
                     item=item,

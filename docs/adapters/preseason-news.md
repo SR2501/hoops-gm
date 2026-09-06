@@ -57,6 +57,9 @@ The parser does more than validate XML:
 - The player name in the title must agree with the player-link slug, including
   generational-suffix evidence. Consecutive dotted initials are closed only for
   this comparison because URL slugs remove their punctuation (`P.J.` -> `pj`).
+  A suffix present on only one side is unknown evidence because observed
+  RotoWire pages omit real suffixes retained by Fantrax; two different stated
+  suffixes are a contradiction.
 - The stated `PST` or `PDT` suffix must agree with the
   `America/Los_Angeles` timezone rules on that calendar date. Both DST folds
   are evaluated and round-tripped through UTC, so a valid repeated fall-back
@@ -71,9 +74,11 @@ The identity join does not introduce another name matcher. The numeric
 RotoWire id joins only to a **current**
 `player_external_ids.source = 'fantrax_rotowire'` row created by the existing
 crosswalk build. The feed name is compared with that row's `external_name`,
-including generational suffixes, as an independent veto: a contradiction or
-one-sided suffix remains unresolved rather than attaching the item to whichever
-player owns the id.
+including generational suffixes, as an independent veto: base-name disagreement
+or two different stated suffixes remain unresolved rather than attaching the
+item to whichever player owns the id. A suffix present on only Fantrax is
+unknown evidence, not disagreement; committed Fantrax evidence includes
+`Oubre Jr., Kelly` and `Payton II, Gary`, while RotoWire omits those suffixes.
 
 This works because Fantrax `getPlayerIds` already publishes `rotowireId` for
 most players and the existing crosswalk records it. It does **not** establish
@@ -128,11 +133,23 @@ requires its own evidence.
 
 ## Limits
 
-The live feed exposed only the latest two items. It is a forward collector, not
-an archive, so a ten-minute poll can still miss an item if RotoWire publishes
-more than two updates inside one interval. The raw store preserves every
-successful observation but cannot reconstruct news published before collection
-started.
+### Observed window and silent-loss bound
+
+The 2026-09-06 capture exposed **2 items**:
+
+| Published (source) | Published (UTC) |
+|---|---|
+| `Sat, 05 Sep 2026 11:21:00 AM PDT` | `2026-09-05T18:21:00Z` |
+| `Thu, 03 Sep 2026 1:50:00 PM PDT` | `2026-09-03T20:50:00Z` |
+
+One capture proves an observed window size of 2; it does **not** prove that 2
+is the feed's configured cap. The poll cadence is 10 minutes, derived from the
+feed's observed `<ttl>10</ttl>` declaration. At an observed two-item window,
+that tolerates at most `2 / 10 = 0.2` items per minute between polls. If more
+than two items arrive in a ten-minute interval and the feed retains only two,
+displaced items are lost **silently and unrecoverably**. The raw store preserves
+every successful observation but cannot reconstruct displaced news or news
+published before collection started.
 
 The feed contains RotoWire summaries that cite reporting sources; it is not a
 direct firehose of every beat reporter. It can carry preseason injury,
