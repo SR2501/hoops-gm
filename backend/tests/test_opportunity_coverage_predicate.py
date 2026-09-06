@@ -266,7 +266,12 @@ def test_bound_commit_must_be_a_full_lowercase_git_object_id(malformed: object) 
 def test_evidence_citations_are_bound_to_the_exact_committed_files() -> None:
     evidence = _evidence()
 
-    assert _lf_sha256(EVIDENCE) == EXPECTED_EVIDENCE_SHA256
+    assert _lf_sha256(EVIDENCE) == EXPECTED_EVIDENCE_SHA256, (
+        f"{EVIDENCE.name} has itself changed. It is frozen v1 evidence: its digest is "
+        "pinned here, and the v2 carry note forbids retrofitting anything into v1. If a "
+        "citation below has gone stale, the remedy is to move your content - never to "
+        "re-record the evidence so it follows the move."
+    )
     for citation in evidence["evidence"]:
         assert (
             _cited_lines_sha256(
@@ -275,9 +280,26 @@ def test_evidence_citations_are_bound_to_the_exact_committed_files() -> None:
                 end_line=citation["end_line"],
             )
             == citation["sha256_lf_normalized_cited_lines"]
+        ), (
+            f"the frozen evidence cites {citation['path']} lines {citation['start_line']}-"
+            f"{citation['end_line']} by hash, and those lines no longer hash to what was "
+            "recorded. The usual cause is not an edit to the cited prose at all: it is an "
+            f"insertion ANYWHERE ABOVE line {citation['start_line']} of that file, which "
+            "shifts the cited block down so the same line numbers now address different "
+            "text. docs/backlog.md is cited this way and is the most-edited file in the "
+            "repository, so adding an item near its top trips this while leaving the "
+            "quoted evidence untouched. Put the content BELOW the cited range - the last "
+            "backlog item sits below it - or in docs/handoff.md, which is not cited at "
+            "all. Do not adjust the recorded line numbers or hashes to match: the "
+            "evidence is frozen, and this assertion is the only thing standing between a "
+            "shifted citation and a Model gate quoting prose it no longer points at."
         )
     for census in evidence["direct_censuses"].values():
-        assert _lf_sha256(REPO_ROOT / census["path"]) == census["sha256_lf_normalized"]
+        assert _lf_sha256(REPO_ROOT / census["path"]) == census["sha256_lf_normalized"], (
+            f"the direct census {census['path']} has changed since it was frozen. These "
+            "are whole-file digests, so any edit anywhere in the file trips this, and the "
+            "same rule applies: move the content, do not re-record the census."
+        )
 
 
 def test_evidence_digests_are_independent_of_checkout_line_endings(tmp_path: Path) -> None:
