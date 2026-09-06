@@ -35796,3 +35796,81 @@ Also fixed a stale "3x cheaper" in the results file (correct figure 2.8x).
   repository. Searched all `.md` outside `docs/governance/` for the five model
   names; the only hit is the pointer added to `architect.md`, so this file has no
   rival.
+
+## 2026-09-06 — architect — main went red on the first merge of the night, and how a green check lied
+
+**Now true:** `main` is green again on `Backend — lint, type-check, tests`, confirmed
+by a completed CI job rather than locally. Eight lanes ran overnight; `#168` merged,
+`main` broke, and the breakage failed four other lanes' pull requests before it was
+caught.
+
+**What happened.** `#168` merged while strict mypy was failing. Three errors, all in
+its own `backend/tests/test_cli_help.py`: a missing return annotation on `_forbid`,
+and two accesses to `cli.uvicorn`, which `--no-implicit-reexport` rejects because
+`hoops_gm.__main__` imports `uvicorn` without re-exporting it. I found it not from
+CI but by running `python -m mypy` on `main` after noticing `#169` and `#170` failing
+on a file neither had touched.
+
+**The fix changes nothing either test asserts.** `monkeypatch` now targets the
+`uvicorn` module directly instead of reaching it through `cli.uvicorn`. I checked
+rather than assumed that these are the same object — `cli.uvicorn is uvicorn`
+evaluates `True`, because `import uvicorn` binds one module instance and `__main__`
+resolves `.run` at call time. Mutation-checked per the Code gate: green, moved
+`parse_args()` after `get_settings()`, both tests went red with `AssertionError` at
+the `_forbid` raiser — the failure the docstring names — reverted, green.
+
+**The mechanism is the finding, not the three errors.** GitHub runs pull-request
+checks against `refs/pull/N/merge`, your head merged into `main` *as it stood then*,
+not against your head. So a check can be green on a merge commit that no longer
+exists and red on a merge you never made. Both happened within an hour. Measured
+across the open set:
+
+```
+#165 clean   #166 file absent   #167 file absent
+#169 STILL RED (cli.uvicorn)    #170 clean   #171 clean
+```
+
+Only `#169` still carried it, frozen into a merge ref computed after `#168` landed
+and before the fix. **Re-running CI does not refresh a stale merge ref** — it
+reproduces the same failure against the same merge commit, which reads exactly like
+a real defect in your own work. This is the most plausible explanation for how `#168`
+got in, and it is now a Code-gate bullet in `gates.md` with the strict-currency check
+*and* the reason strict currency never converges: judge by whether a behavioural
+commit landed since, not by SHA equality.
+
+**The first controlled model comparison this project has taken.** Two `code-review`
+sub-agents on the identical `#166` diff with identical prompts, differing only by
+model. Both independently found the same material bug — Python's `==` conflates
+scalar types, so `True == 1` and `False == 0` make a wire-type change invisible to a
+contract gate built to catch exactly that. `gpt-5.6-sol` was broader (both call
+sites, plus `1 == 1.0`); `gpt-6-astra` was 1.7× faster and reproduced its finding by
+execution rather than argument. I sized it myself: **16 int and 1 bool field in the
+fixture, 8 live today** because their value is exactly `0` or `1`, including
+`periods[0].is_playoff` and `counts[0].games`. Recorded in `model-selection.md`. The
+conclusion is about process, not ranking: **stop paying for dual review by default**,
+because one reviewer of either model would have caught what mattered.
+
+**A committed governance file was wrong and is corrected.**
+`OPEN-adr-index-consistency-candidate.md` recorded the displayed-number-vs-filename
+gap as common to all five trial arms and recommended reading A4. Only A3 (`b818cd9`)
+closes it, via `index-row-number-mismatch`; A4 has the defect. Found because an
+archived arm mentioned it in passing when asked what it held. All five arms are now
+tagged `trial/adr-index-*` and verified by script byte-size (7683, 9576, 16560, 5708,
+6567) before their worktrees were removed.
+
+- **Gates:** Code. `main` CI green on `Backend — lint, type-check, tests`; mypy clean
+  across 250 files locally, ruff clean across 253. Documentation changes elsewhere.
+  No Adapter, Model or Automation gate applies to my own commits.
+- **Could not verify:** the Postgres suite on `main` had not finished when I wrote
+  this, so the fix is proven against SQLite and mypy, not Postgres. I also could not
+  attribute AIU per review agent — sub-agent usage rolls up under the parent
+  `session_id` and concurrent same-model agents cannot be separated, so cost is
+  recorded as unknown rather than estimated. And I have not verified that `#168`'s
+  merge actually read a stale merge ref; that is the most plausible mechanism, not an
+  established one, and only the merging lane can confirm it. I asked.
+- **Four times tonight a shape misled me and only reading the thing disproved it**: a
+  `seed_demo.py` docstring that delegates to the function that changed; a `print` that
+  is safe because `json.dumps` defaults to `ensure_ascii=True`; an integer predicate
+  line-wrapped past my grep; and a scorecards endpoint that returned `1` because I
+  counted the response envelope rather than its array — it serves 596. Each would have
+  cost a lane a wasted round.
