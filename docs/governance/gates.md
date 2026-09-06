@@ -514,11 +514,20 @@ failure it produces looks like a real bug in your own change.
 
 - **Verify by content, not by path.** `module.__file__` tells you what the loader
   resolved, which is necessary and not sufficient - it cannot distinguish a correct
-  path from a correct path serving stale or partially-installed bytes. The decisive
-  check is a symbol that exists on exactly one branch:
+  path from a correct path serving stale or partially-installed bytes. Assert the
+  code you are running, not its address.
+
+  **Do not reuse the probe below; derive a fresh one.** On 2026-09-02
   `hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` returned `True` while
-  mis-pointed and `False` from `main`. Assert the code you are running, not its
-  address.
+  mis-pointed and `False` from `main`. Both halves of that have since expired:
+  two sibling worktrees descended from the same work and *both* carried the
+  symbol, and then #171 merged (`b96f4782`) and put it on `main` as well, so it
+  now returns `True` everywhere. **A content probe has a shelf life measured in
+  merges.** It must discriminate the trees that are candidates *today*, and
+  merging is what silently retires one. Cheaper and stable: compare
+  `git rev-parse HEAD:<path>` in each candidate tree - blob ids are content
+  addresses that cannot go stale, and if two candidates share a blob then no
+  content probe over that file can separate them, which is itself the answer.
 - **The blast radius is evidence, not only tests.** `capture_schedule_grid_contract.py`
   and `capture_openapi.py` both import the package. Regenerating either from the main
   checkout while mis-pointed would have recorded another branch's tree *as* `main`'s
@@ -569,12 +578,34 @@ failure it produces looks like a real bug in your own change.
 - **The consequence reached a live session, and the correction was worse than the
   error.** Warning the session regenerating #171's manifest, I offered
   `hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` as the content probe, from
-  this file. It cannot discriminate here: the symbol is present on *both* candidate
-  trees, since both descend from the same #171 work. The probe would have returned
-  `True` and told a session running foreign bytes that it was fine. **A content
-  check is only decisive against the candidates that are actually in play**, and
-  the ones in play are whichever worktrees exist today, not the two the original
-  incident happened to involve.
+  this file. It cannot discriminate here: the symbol was present on *both*
+  candidate trees, since both descend from the same #171 work, and hours later
+  #171 merged and put it on `main` too. The probe would have returned `True` and
+  told a session running foreign bytes that it was fine. **A content check is only
+  decisive against the candidates that are actually in play**, and the ones in play
+  are whichever worktrees exist today, not the two the original incident happened
+  to involve.
+- **The #171 hazard was real and did not land, and the difference is measurable.**
+  The worry was that the cohort-fingerprint manifest, regenerated from
+  `sr2501-finish-pr-171-manifest` while imports resolved to the sibling
+  `sr2501-bookish-barnacle`, would fingerprint the wrong `parsers.py` and commit
+  it as the reference. The two trees genuinely differed - blobs `a644fdc8` and
+  `e79ad2aa`, 54,596 against 54,129 bytes - so the counterfactual is sharp rather
+  than academic: import-based resolution would have recorded
+  `49e4ec50bb5229d6dc196bd7545f846b416ca98f1550b89dceddaf81079b9302`. The merged
+  manifest records `79cd1b9332a181fb633583403d47fd8897a8a6e573fc42a440d5823ddf85d8a7`,
+  which is its own tree's file and is now `main`'s. **The tooling resolves by path,
+  not by import.** Stated as evidence, not as reassurance from the session that
+  did the work.
+- **A hash comparison is only meaningful if both sides normalise alike, and on
+  Windows the default tool does not.** Checking the above, `Get-FileHash` on the
+  working copy returned `f2b85835...` against the manifest's `79cd1b93...` and
+  looked exactly like the defect being hunted. `parsers.py` is stored LF and
+  checked out CRLF, 55,883 bytes on disk against 54,596 in the object store; the
+  manifest hashes LF-normalised content, which is the right choice because it
+  makes the fingerprint platform-stable. The mismatch was the measurement, not the
+  artefact - the same shape as `gameEt`: a well-formed value answering a question
+  adjacent to the one asked.
 
 
 ### Ahead-of-origin is not a measure of unmerged work

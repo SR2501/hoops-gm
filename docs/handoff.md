@@ -37969,3 +37969,65 @@ as its own bullet rather than quietly overwritten.
   the one that bit me. `pip`'s editable install is unlikely to be the only
   artefact on this machine where a record and a runtime effect can drift apart,
   and I have no inventory of the others.
+
+## 2026-09-06 - architect - #171 merged, and it answered two questions I had left open
+
+`b96f4782` landed PR #171 on `main` while I was pushing the import-guard
+correction. It closes two "could not verify" items from the entry above, one
+with evidence and one by expiring the thing itself.
+
+**The #171 manifest was not harmed, and the counterfactual is sharp.** I had
+flagged that the cohort-fingerprint manifest, regenerated from
+`sr2501-finish-pr-171-manifest` while this machine's imports resolved to the
+sibling `sr2501-bookish-barnacle`, might fingerprint the wrong `parsers.py` and
+commit it as the reference every later comparison is made against. The two trees
+really did differ - blobs `a644fdc8` and `e79ad2aa`, 54,596 against 54,129 bytes
+- so this is decidable rather than a matter of trust. Had the tooling resolved
+through the hijacked import it would have recorded
+`49e4ec50bb5229d6dc196bd7545f846b416ca98f1550b89dceddaf81079b9302`. The merged
+manifest records
+`79cd1b9332a181fb633583403d47fd8897a8a6e573fc42a440d5823ddf85d8a7`, which is its
+own worktree's file and is now `main`'s. **The tooling resolves by path.** The
+hazard was real; it did not land.
+
+**I nearly filed that as a defect on a measurement artefact.** `Get-FileHash` on
+the working copy returned `f2b85835...` against the manifest's `79cd1b93...`,
+which looks precisely like the failure being hunted. `parsers.py` is stored LF
+and checked out CRLF - 55,883 bytes on disk, 54,596 in the object store - and the
+manifest hashes LF-normalised content, which is the correct choice because it
+makes the fingerprint platform-stable. **A hash comparison is only meaningful if
+both sides normalise alike**, and the Windows default does not. Same shape as
+`gameEt`: a well-formed value that answers a question adjacent to the one asked.
+Recording it because the near-miss was one command wide, and a false defect filed
+against another session's merged work is expensive to withdraw.
+
+**The merge also expired a probe `gates.md` recommends by name.**
+`hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` was documented as `True`
+while mis-pointed and `False` from `main`. #171 put the symbol on `main`, so it
+now returns `True` everywhere and discriminates nothing. It had already lost half
+its power hours earlier, when both live candidate worktrees turned out to carry
+it. **A content probe has a shelf life measured in merges**, and merging is the
+event that silently retires one - there is no failing test anywhere, just a
+procedure that quietly stops answering. Replaced in `gates.md` with comparing
+`git rev-parse HEAD:<path>` across the candidate trees: blob ids are content
+addresses that cannot go stale, and if two candidates share a blob then no
+content probe over that file can separate them, which is itself the answer.
+
+`main` is now `7a0f6f39` plus this. Three todos that were blocked on #171 are
+released.
+
+**Could not verify.**
+
+- **That path-resolution holds for the *other* importing generators, not just the
+  manifest.** `gates.md` names `capture_schedule_grid_contract.py` and
+  `capture_openapi.py` as carrying the same blast radius. I proved the claim for
+  the artefact that was in flight during the hijack and generalised no further;
+  the other two were not regenerated in that window, so there is no counterfactual
+  to test them against.
+- **Whether anything else in the repository quotes a symbol as a branch
+  discriminator.** I fixed the one instance I had just used and the one I had
+  written. I did not sweep for others, and this class leaves no failing test when
+  it expires.
+- **CI on this head.** The corrected guard compares `recorded / "src" == actual`,
+  which is untested on Linux, and it now sits on top of a merge it never ran
+  against. Green locally is not the answer to either.
