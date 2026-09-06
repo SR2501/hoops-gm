@@ -35302,3 +35302,36 @@ empty 500 response, but it does not kill a real Vite proxy connection after a
 backend commit; reproducing that timing safely would require a purpose-built
 faulting server. Hosted checks and another fresh exact-head review remain
 required. Do not merge or self-approve from this session.
+
+---
+
+## 2026-09-05 — backend — ADR index consistency check
+
+**Changed:** Built `scripts/check_adr_index.py`, a stdlib-only bidirectional
+check over `docs/decisions/README.md`'s authoritative `## Index` table, with
+regression coverage in `backend/tests/test_adr_index.py`. It fails when an ADR
+file has no row, an index row names a missing or non-ADR target, target case
+does not match the repository path, rows or index sections are duplicated, the
+table shape becomes unreadable, or either side of the comparison is empty. The
+real-tree test is paired with mutations and a subprocess execution so a parser
+that silently stops matching cannot report success. Marked
+`adr-index-consistency-test` done and recounted the backlog header.
+
+**Now true:** Every `ADR-NNN-*.md` file currently has exactly one README index
+target, and every ADR row resolves to an exact, case-sensitive file path.
+`PLAIN-ENGLISH.md` remains deliberately out of scope: it already identifies
+itself as a frozen ADR-001-through-ADR-009 walkthrough and points readers to
+the individual ADRs and README index as authoritative. The command's own
+success output names that boundary rather than presenting an unqualified clean
+bill of health.
+
+**Could not verify:** The checker does not compare an index row's title, status,
+or summary with the linked ADR body; validate ADR section structure; require
+contiguous numbering (ADR-016 is intentionally reserved); or inspect links
+outside README's `## Index` table. It establishes path/index consistency, not
+semantic agreement. No GitHub-hosted CI run was available from this uncommitted
+working tree; the Code gate was exercised locally only.
+
+**Next:** No follow-on is required for this item. Future ADR authors should add
+the file and README row together; the backend suite will now reject either
+one-sided change.
