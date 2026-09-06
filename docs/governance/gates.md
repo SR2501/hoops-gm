@@ -893,3 +893,119 @@ repository is public, so pushing them preserves the evidence and destroys the
 blind permanently. That tension is real and the resolution is owner-only, which
 is precisely why it must be surfaced as a decision rather than settled by whoever
 notices it first.
+
+
+### A count can be true and describe a different population than the one it implies
+
+The secret scanner prints `No secrets found in 586 tracked files`. It did not
+examine 586 files. `N` is the length of `tracked_files()` - the enumeration - and
+is fixed before allowlists, suffix skips, non-file entries and decode failures
+remove candidates from the read set. Three tracked gzip fixtures -
+`nba_gleague_transactions.json.gz`, `nba_player_movement.json.gz` and
+`rotowire_nba_news.xml.gz` - count toward 586; `.gz` is not in `SKIP_SUFFIXES`;
+`read_text("utf-8")` raises `UnicodeDecodeError`; the handler continues silently.
+**A real secret in any of them is counted and never read**, and those files are
+recorded captures from external APIs, which is precisely where a credential would
+arrive if one ever did.
+
+The number is not wrong. The sentence around it is. Nothing in the output
+distinguishes *enumerated* from *examined*, so the reassurance scales with the
+repository while the coverage does not, and the gap widens every time a binary
+fixture is added.
+
+**Rule: a headline count must name the population it counts, and a scan must
+report skips as a separate number rather than folding them into the total.**
+`586 enumerated, 3 unreadable, 583 examined` is the honest form and costs one
+line. Filed as `secret-scan-counts-what-it-did-not-read`, which records the
+verified counts. This is the sixth member of the vacuity family and the first
+where the predicate is not satisfiable by absence - it is satisfiable by
+*silence*.
+
+### A red test is not evidence unless the red is attributable
+
+Mutation-testing the secret-scan fixture isolation meant pointing the test back
+at the committed fixture and confirming it fails. It failed twice for the wrong
+reason: first at `mkdir(..., exist_ok=False)` with `FileExistsError`, then, once
+that was relaxed, at same-file `shutil.copyfile` with `SameFileError`. Both reds
+look exactly like a passing mutation check. Neither one exercised the
+checkout-safety boundary the test exists to enforce.
+
+The fix was ordering: assert `not fixture.is_relative_to(REPO_ROOT)` *before* any
+filesystem operation, so the mutation trips that assertion rather than an
+incidental error further down. Only then is the red attributable.
+
+**Rule: when mutation-testing, read the failure, not the exit code, and record
+which assertion fired.** A mutation that dies during setup has tested your setup.
+
+### A cited line range is not stable under edits it does not contain
+
+The opportunity-coverage evaluator hashes cited line ranges after LF
+normalisation, which makes a citation portable across CRLF checkouts and immune
+to appends *beyond* the range. It is not immune to insertion *before* it:
+inserting one line above a cited passage leaves the passage byte-identical and
+changes which bytes the fixed numeric range selects, so the digest fails.
+
+**Stability was justified for exactly one file and one reason** -
+`docs/backlog.md` is append-only and the cited passage precedes the append point.
+That argument does not generalise. A citation into any file that can be edited
+above the cited lines will break for reasons unrelated to its content.
+
+A sharper limit sits underneath it: normalisation rewrites only CRLF and lone CR,
+while `bytes.splitlines()` also splits on vertical tab and form feed. A cited
+file containing either is indexed differently by the helper than by an editor
+counting newlines, and nothing prohibits such a file.
+
+**Rule: cite by content where content is stable, and by line range only where the
+file's own contract forbids edits above the citation - and name that contract in
+the citation.**
+
+### Validating the shape of provenance is not validating the provenance
+
+The same evaluator requires five 64-hex digests and two 40-hex commit
+identifiers, lowercase, correctly typed, arithmetically reconciled. A report
+satisfying every one of those constraints can still be fabricated: the hashes
+need match no artifact, the commits need not exist, the freeze commit need not be
+an ancestor, and the two reconstruction implementations need never have run. The
+evaluator opens no file, recomputes no hash and queries no ref.
+
+That is a defensible boundary for a *predicate evaluator*. It has to be stated
+where the guarantee is read, because "provenance validated" and "provenance
+checked against the repository" are the same words to a tired reader at 3am.
+
+**Rule: a validator that checks form must say so in its own output.** This is the
+house rule about self-describing fields - `gameEt` claiming a `Z` it does not
+have - turned around and applied to artifacts we produce ourselves.
+
+### A denominator reconstructed from the numerator flatters itself
+
+Rejected during the coverage preregistration, and worth keeping precisely because
+it is the attractive wrong answer. Roster membership is the missing denominator;
+box scores and appearance rows are present, and reconstructing membership from
+appearances is one query away. It yields a coverage report with a reassuringly
+small `unknown` share - because every player it can see played, and every player
+it cannot see has been defined out of the population rather than counted as
+unknown.
+
+**The unknown share is the exact quantity the preregistration exists to
+constrain.** Deriving the denominator from the observed events makes that number
+a function of observation rather than of truth. The result is not merely
+optimistic; it cannot come out badly, which is what disqualifies it.
+
+**Rule: a denominator must come from a source that does not depend on the outcome
+being measured.** Where no such source exists, the honest report is `null`, not a
+small number. That is why the evidence-gap artifact carries
+`proceed_opportunity_coverage: null` and not `false`.
+
+### The command that reports a merge can fail after the merge succeeded
+
+`gh pr merge 174 --squash --delete-branch` returned a local error - `main` was
+checked out in another worktree, so post-merge local cleanup could not run -
+*after* the API merge had already completed. The natural response, retrying,
+would have operated on an already-merged PR. The correct response is to read
+remote state before touching anything.
+
+**Rule: after any failed write against a remote, query the remote's state before
+retrying.** The failure mode is a two-phase command that succeeds remotely and
+fails locally, where the error text describes only the half that failed. The same
+call requested remote-branch deletion: the flag was passed, the deletion was
+never observed, and those are different facts.

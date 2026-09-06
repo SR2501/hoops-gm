@@ -37028,3 +37028,38 @@ the ten-branch figure above is only the unambiguous subset. Two sessions
 and I have left their branches undeleted rather than assume. CI on `978df142` was
 still running past twenty minutes when this was written, so `main`'s green is
 local-only at time of writing.
+
+
+## 2026-09-06 - architect - four lane debriefs harvested before any archiving
+
+**What I did.** Asked four merged lanes what they held that the repository does
+not, and recorded the answers in `docs/governance/gates.md` (74,510 -> 80,891
+bytes, six new entries). Two further findings they reported were already written
+up - the `10_000 ms` Vitest timeout as chosen-rather-than-derived, and a timeout
+bounding only what has already started - which is the first time this debrief step
+has confirmed an existing entry rather than added one.
+
+**The six.** A count can be true and describe a different population than the one
+it implies: the secret scanner's `582 tracked files` is the *enumeration*, fixed
+before decode failures silently remove candidates, so a secret inside the tracked
+`.gz` fixture is counted and never read. A red test is not evidence unless the
+red is attributable - two mutation attempts died on `FileExistsError` and
+`SameFileError` and both looked like passing checks. A cited line range is not
+stable under insertion *above* it, and was justified for `docs/backlog.md` alone
+because that file is append-only. Validating the shape of provenance is not
+validating provenance: five well-formed hex digests referring to nothing pass.
+A denominator reconstructed from the numerator flatters itself, and cannot come
+out badly, which is what disqualifies it. A two-phase remote command can succeed
+remotely and fail locally, so read remote state before retrying a failed write.
+
+**Environment traps to add to the running list.** On Windows, `origin\main..HEAD`
+is invalid - refs use `/` even where filesystem paths use `\`. `gh pr merge
+--delete-branch` passing is not evidence the remote branch was deleted; the flag
+was passed, the deletion was not observed.
+
+**Could not verify.** Every one of these six is reported by the lane that made
+the change, not re-derived by me from the diff. I re-derived one - that
+`_lf_sha256` normalises bytes rather than decoded text - and left the other five
+attributed. The enumerated-versus-read gap in the secret scanner is the one I
+would check first, because it is the only one that describes a live gate on
+`main` still printing a reassuring number today.
