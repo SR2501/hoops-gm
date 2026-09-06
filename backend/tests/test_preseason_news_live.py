@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
-from hoops_gm.ingest.preseason_news import PreseasonNewsClient
+from hoops_gm.ingest.preseason_news import PreseasonNewsClient, assess_news_freshness
 from hoops_gm.ingest.preseason_news.name_evidence import name_evidence_agrees
 
 pytestmark = pytest.mark.live_smoke
@@ -23,10 +23,8 @@ def test_latest_news_is_fresh_and_joins_the_live_fantrax_identity_surface() -> N
     }
 
     assert snapshot.feed.items, "RotoWire returned no NBA news items"
-    newest = snapshot.feed.items[0]
-    assert datetime.now(UTC) - newest.published_at <= timedelta(days=14), (
-        f"newest NBA news item is stale: {newest.published_at.isoformat()}"
-    )
+    freshness = assess_news_freshness(snapshot)
+    assert freshness.is_fresh, freshness.diagnostic
     overlapping = [
         item for item in snapshot.feed.items if item.rotowire_player_id in fantrax_by_rotowire
     ]

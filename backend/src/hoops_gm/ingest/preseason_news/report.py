@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from hoops_gm.ingest.preseason_news.freshness import NewsFreshness
 from hoops_gm.ingest.preseason_news.models import (
     PreseasonNewsItem,
     PreseasonNewsResolution,
@@ -13,7 +14,7 @@ from hoops_gm.ingest.preseason_news.models import (
 )
 from hoops_gm.ingest.preseason_news.parser import RSS_URL, SOURCE
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 
 
 def write_preseason_news_report(
@@ -21,6 +22,7 @@ def write_preseason_news_report(
     *,
     snapshot: PreseasonNewsSnapshot,
     resolution: PreseasonNewsResolution,
+    freshness: NewsFreshness,
 ) -> None:
     """Atomically publish resolved items and explicit identity refusals."""
     payload = {
@@ -30,6 +32,14 @@ def write_preseason_news_report(
         "source_observed_at": snapshot.observed_at.isoformat(),
         "source_payload_sha256": snapshot.source_payload_sha256,
         "feed_ttl_minutes": snapshot.feed.ttl_minutes,
+        "freshness": {
+            "status": "fresh" if freshness.is_fresh else "stale",
+            "assessed_at": freshness.assessed_at.isoformat(),
+            "age_seconds": freshness.age.total_seconds(),
+            "max_age_seconds": freshness.max_age.total_seconds(),
+            "newest_published_at": snapshot.feed.items[0].published_at.isoformat(),
+            "diagnostic": freshness.diagnostic,
+        },
         "item_count": len(snapshot.feed.items),
         "resolved_count": len(resolution.resolved),
         "unresolved_count": len(resolution.unresolved),

@@ -16,7 +16,7 @@ is down or returns garbage.
 | NBA `ScheduleLeagueV2` via `nba_api` | [nba-schedule.md](nba-schedule.md) | Working, verified live |
 | NBA official injury report PDF | [nba-injury-report.md](nba-injury-report.md) | Working, verified live |
 | NBA and G League official transaction archives | [nba-official-transactions.md](nba-official-transactions.md) | Working; evidence input, not a complete roster denominator |
-| RotoWire public NBA news RSS | [preseason-news.md](preseason-news.md) | Working, verified live; latest two items only |
+| RotoWire public NBA news RSS | [preseason-news.md](preseason-news.md) | Partial source, verified live; not sufficient alone for draft day |
 | Fantrax private `/fxpa/req` via `fantraxapi` | [fantrax-private.md](fantrax-private.md) | **Unverified** — no credentials yet |
 | Basketball Monster projection CSV | [basketball-monster-projections.md](basketball-monster-projections.md) | Working, manual download (no network) |
 | Published auction values (seed AAV) | [published-auction-values.md](published-auction-values.md) | Working, manual download (no network) |

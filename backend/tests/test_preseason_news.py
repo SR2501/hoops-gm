@@ -26,6 +26,7 @@ from hoops_gm.ingest.preseason_news import (
     RSS_URL,
     SOURCE,
     PreseasonNewsClient,
+    assess_news_freshness,
     parse_preseason_news,
     resolve_preseason_news,
     write_preseason_news_report,
@@ -88,7 +89,16 @@ class TestPreseasonNewsContract:
             ("nba532524", "3014", "Stephen Curry"),
             ("nba532515", "3849", "Ben Simmons"),
         ]
-        assert feed.items[0].published_at == datetime(2026, 9, 5, 18, 21, tzinfo=UTC)
+        assert [(item.published_at_raw, item.published_at) for item in feed.items] == [
+            (
+                "Sat, 05 Sep 2026 11:21:00 AM PDT",
+                datetime(2026, 9, 5, 18, 21, tzinfo=UTC),
+            ),
+            (
+                "Fri, 04 Sep 2026 7:15:00 AM PDT",
+                datetime(2026, 9, 4, 14, 15, tzinfo=UTC),
+            ),
+        ]
         assert feed.items[0].published_at > feed.items[1].published_at
 
     def test_description_is_preserved_without_becoming_a_status_code(self) -> None:
@@ -337,14 +347,73 @@ class TestPreseasonNewsIdentity:
             report_path,
             snapshot=snapshot,
             resolution=resolution,
+            freshness=assess_news_freshness(
+                snapshot,
+                assessed_at=fixture_observed_at(),
+            ),
         )
 
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["source_payload_sha256"] == FIXTURE_SHA256
         assert report["resolved_count"] == 1
         assert report["unresolved_count"] == 1
+        assert report["freshness"]["status"] == "fresh"
+        assert report["freshness"]["assessed_at"] == fixture_observed_at().isoformat()
+        assert report["freshness"]["diagnostic"] is None
         assert report["items"][0]["identity_source"] == "fantrax_rotowire"
         assert report["unresolved"][0]["rotowire_player_id"] == "3849"
+
+    def test_stale_report_preserves_the_freshness_diagnostic(
+        self, session: Session, tmp_path: Path
+    ) -> None:
+        _crosswalk_link(
+            session,
+            external_id="3014",
+            external_name="Stephen Curry",
+        )
+        feed = parse_fixture()
+        snapshot = PreseasonNewsSnapshot(
+            feed=feed,
+            observed_at=feed.items[0].published_at + timedelta(days=15),
+            source_payload_sha256=FIXTURE_SHA256,
+        )
+        resolution = resolve_preseason_news(session, feed.items[:1])
+        report_path = tmp_path / "stale.json"
+
+        write_preseason_news_report(
+            report_path,
+            snapshot=snapshot,
+            resolution=resolution,
+            freshness=assess_news_freshness(
+                snapshot,
+                assessed_at=snapshot.observed_at,
+            ),
+        )
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["freshness"]["status"] == "stale"
+        assert report["freshness"]["age_seconds"] == 15 * 24 * 60 * 60
+        assert report["freshness"]["diagnostic"].startswith("newest item nba532524")
+
+    def test_cached_snapshot_crossing_the_threshold_is_stale(self) -> None:
+        feed = parse_fixture()
+        max_age = timedelta(hours=1)
+        captured_at = feed.items[0].published_at + max_age - timedelta(minutes=1)
+        snapshot = PreseasonNewsSnapshot(
+            feed=feed,
+            observed_at=captured_at,
+            source_payload_sha256=FIXTURE_SHA256,
+        )
+
+        freshness = assess_news_freshness(
+            snapshot,
+            max_age=max_age,
+            assessed_at=captured_at + timedelta(minutes=2),
+        )
+
+        assert not freshness.is_fresh
+        assert freshness.age == max_age + timedelta(minutes=1)
+        assert freshness.assessed_at == captured_at + timedelta(minutes=2)
 
 
 class FakeResponse:
@@ -552,18 +621,34 @@ class FakeDatabase:
         self.disposed = True
 
 
-@pytest.mark.parametrize(("has_unresolved", "expected_exit"), [(False, 0), (True, 2)])
-def test_cli_exit_reflects_identity_resolution(
+@pytest.mark.parametrize(
+    ("has_unresolved", "is_stale", "max_news_age_hours", "expected_exit"),
+    [
+        (False, False, None, 0),
+        (True, False, None, 2),
+        (False, True, None, 3),
+        (False, False, 1, 3),
+    ],
+)
+def test_cli_exit_reflects_identity_and_freshness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     has_unresolved: bool,
+    is_stale: bool,
+    max_news_age_hours: int | None,
     expected_exit: int,
 ) -> None:
     feed = parse_fixture()
     item = feed.items[0]
+    if max_news_age_hours == 1:
+        source_observed_at = item.published_at + timedelta(minutes=59)
+        assessed_at = source_observed_at + timedelta(minutes=2)
+    else:
+        source_observed_at = fixture_observed_at()
+        assessed_at = item.published_at + timedelta(days=15) if is_stale else fixture_observed_at()
     snapshot = PreseasonNewsSnapshot(
         feed=feed,
-        observed_at=fixture_observed_at(),
+        observed_at=source_observed_at,
         source_payload_sha256=FIXTURE_SHA256,
     )
     resolution = PreseasonNewsResolution(
@@ -585,7 +670,6 @@ def test_cli_exit_reflects_identity_resolution(
         ),
     )
     database = FakeDatabase()
-    written: list[Path] = []
 
     class FakeDatabaseFactory:
         @staticmethod
@@ -600,15 +684,6 @@ def test_cli_exit_reflects_identity_resolution(
         def latest(self) -> PreseasonNewsSnapshot:
             return snapshot
 
-    def fake_write_report(
-        path: Path,
-        *,
-        snapshot: PreseasonNewsSnapshot,
-        resolution: PreseasonNewsResolution,
-    ) -> None:
-        del snapshot, resolution
-        written.append(path)
-
     monkeypatch.setattr(
         preseason_news_cli,
         "get_settings",
@@ -622,11 +697,19 @@ def test_cli_exit_reflects_identity_resolution(
         "resolve_preseason_news",
         lambda _session, _items: resolution,
     )
-    monkeypatch.setattr(preseason_news_cli, "write_preseason_news_report", fake_write_report)
     output = tmp_path / "news.json"
+    argv = ["--output", str(output)]
+    if max_news_age_hours is not None:
+        argv.extend(["--max-news-age-hours", str(max_news_age_hours)])
 
-    exit_code = preseason_news_cli.main(["--output", str(output)])
+    exit_code = preseason_news_cli.main(argv, now=lambda: assessed_at)
 
     assert exit_code == expected_exit
     assert database.disposed
-    assert written == [output]
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["source_observed_at"] == source_observed_at.isoformat()
+    assert report["freshness"]["assessed_at"] == assessed_at.isoformat()
+    assert report["freshness"]["status"] == ("stale" if expected_exit == 3 else "fresh")
+    if max_news_age_hours == 1:
+        assert source_observed_at != assessed_at
+        assert report["freshness"]["age_seconds"] == 61 * 60
