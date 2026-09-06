@@ -5573,6 +5573,8 @@ the honesty repairs, and R40 - that do not gate observing the feed. A zero-depen
 item is not evidence that nobody has done the work, so the reason is written here
 rather than left to be inferred from the graph.
 
+**The starting count is zero, measured rather than assumed.** Neither `data/raw` nor `data/reports` exists on the owner's machine, so no observation has been banked and no September news has been retained anywhere reachable. The live fetch the risk register cites on 2026-09-06 therefore ran somewhere that did not persist, or was cleaned up; either way nothing survives it. That makes the decay concrete: this is not "we have some history and want more", it is zero, and every day before the run starts is a day that cannot be recovered.
+
 **This is an instrument with an end date, not a poller.** It does not make draft-day
 burst volume survivable; the 0.2 items/minute ceiling is arithmetic and stands
 whatever this run finds. Its only job is to replace a single measurement with a

@@ -38778,3 +38778,28 @@ skip; that is one observation and I did not look for a second. Whether a comment
 convention would be honoured by an agent that posts the header and reviews nothing - it
 would record that a review was claimed, which is more than today records, and less than
 it appears to record.
+
+
+## 2026-09-06 - architect (delivery) - closing one of my own "could not verify" items with a measured zero
+
+I filed `news-feed-observation-run` earlier today disclosing that I had not checked
+whether `data/raw` already held banked observations, and that the answer changes how
+much of the run is already done. **Checked, and re-checked before committing this:
+neither `data/raw` nor `data/reports` exists on this machine, under the repository
+root or under `backend/`.** Nothing is banked. The starting count is zero, not an
+unknown quantity.
+
+That matters in two directions. It makes the decay argument concrete - the item is
+not "we have some history and want more", it is zero, so every day before the run
+starts is unrecoverable rather than merely suboptimal. And it means the independent
+live fetch the risk register cites on 2026-09-06 ran somewhere that did not persist,
+or was cleaned up afterwards; **the observation that R40's ceiling rests on is
+itself no longer on disk here.** I have not chased where it went, because the
+conclusion it supports is arithmetic and does not depend on the bytes surviving.
+
+Recorded in the backlog item as well as here, because the person who picks it up
+needs the starting count before they size the run.
+
+**Could not verify.** Where the coordinator's live fetch actually wrote - a
+worktree, a different root, or a since-cleaned path. Whether any other machine holds
+banked observations; I checked this one.
