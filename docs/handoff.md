@@ -36484,3 +36484,62 @@ refusals (`ingest/backfill.py`, `injury_report/backfill.py`) are as exact as I
 stated them — I read those directly and quoted line numbers, so I believe they
 hold, but I have not re-derived them since making the same class of mistake twice.
 Anyone relying on R69 should re-check those two citations against the files.
+
+## 2026-09-06 — architect — a worktree sweep found unmerged work, not scratch
+
+Cleaning up after the overnight fan-out nearly destroyed working code. Recording
+the mechanism, because the sweep looked entirely routine right up to the point it
+did not.
+
+**What the check was.** Before removing any worktree I checked each for dirty
+state. All ten reported `dirty=0`, which is the answer that invites deletion. That
+check is insufficient and the insufficiency is the lesson: **a clean working tree
+says nothing about whether its commits exist anywhere else.** The second check —
+`git rev-list --count origin/<branch>..<branch>` per branch — found
+`sr2501-secret-scan-console-safety` **ten commits ahead of origin**, on a branch
+whose PR (#169) had already merged at 09:20. The lane kept working after its merge
+and never pushed.
+
+**A first-pass count would have dismissed it.** Only three of those ten were
+absent from `main`; the other seven had reached `main` through other PRs. The
+three carried real content: 3 files, +77/-9.
+
+**What was nearly lost**, and it is not filler:
+
+* `ingest/projections/import_csv.py` gains `_safe_stderr()`, reconfiguring stderr
+  with `errors="backslashreplace"` — the Windows cp1252 console fix, applied to a
+  production CLI rather than to a script.
+* `tests/test_secret_scan.py` gains a **positive control against vacuous
+  enumeration**: `assert tracked, "the scanner enumerated no files; a clean result
+  would be vacuous"` plus an assertion that a known tracked fixture is actually
+  among the enumerated files. This is a **third instance of the vacuity family**
+  documented tonight — after `check_append_only` comparing a file to itself once
+  pushed, and an empty slate satisfying `enforce_expected_game_coverage` — and
+  unlike those two it arrived with the fix already written.
+* The same file gains fixture isolation so the test stops mutating the live
+  checkout, with a load-bearing assertion that the copy is outside the repository.
+
+**Preserved, not merged.** `git push origin sr2501-secret-scan-console-safety`
+was **rejected as non-fast-forward** — the branch had diverged from its merged
+remote. Force-pushing a merged branch is not a call I will make unilaterally, so
+the work went to a new ref instead, which destroys nothing:
+`origin/preserved/secret-scan-vacuity-followup` at `ee872019`, verified matching
+local. It needs gates and review before it merges; it is preserved, not blessed.
+
+**The trial branch checked out cleanly.** `sr2501-adr-index-consistency-test` has
+no remote branch at all, but its head `db07b1e7` is contained in
+`trial/adr-index-a5-sonnet-5`, which is pushed. Preserved by tag rather than by
+branch, which is why pushing those tags earlier mattered.
+
+**I did not remove any worktree.** Archiving a session is documented to remove its
+worktree, yet these persist — so their sessions are still registered and merely
+unreachable, and deleting the directories by hand risks corrupting session state
+the app owns. The benefit was tidiness; the risk was real. Left for the owner to
+archive through the app, which does it properly.
+
+**Could not verify.** Whether the preserved follow-up passes gates — I have not
+run them against `ee872019`, only confirmed the content exists and is non-trivial.
+Whether the other eight worktrees hide anything similar: I checked
+ahead-of-origin per branch and only this one was non-zero, so I believe not, but
+that check would miss work committed to a *detached HEAD* in any of them, which I
+did not look for.
