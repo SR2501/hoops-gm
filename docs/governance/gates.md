@@ -697,3 +697,55 @@ regex's output as a property of the corpus without opening a single one of the
 twenty documents it described. `scripts/check_adr_index.py` is still unshipped
 and five working implementations sit in trial tags; it would have caught the
 format split, the numbering gap, and a hand-edited index row on the same run.
+
+
+### Two thresholds shipped in one night, both chosen, neither derived
+
+**Recorded 2026-09-06 from two lane debriefs. Both lanes volunteered it; neither
+was caught by a gate, because no gate looks.**
+
+- `preseason-news-ingest` ships a **336-hour** freshness bound. Its author:
+  *"chosen, not derived"* - it preserves an existing 14-day judgement so the
+  production command and the live smoke do not disagree. It is a stalled-source
+  alarm, not a claim that 13-day-old news is decision-current.
+- `vitest-explicit-timeout` ships a **10,000 ms** per-test timeout. Its author:
+  *"chosen, not derived... should not be described as empirically calibrated."*
+
+Both are defensible, both are documented, and both are honest **because the
+authors said so unprompted**. That is the problem. A number reaches production
+through the Code gate with no obligation to declare its provenance, so the only
+thing standing between a placeholder and a load-bearing constant is whether its
+author happens to mention it in prose nobody is required to read.
+
+**Why this is not pedantry.** A chosen threshold and a derived one are
+indistinguishable in the diff, in the tests, and in the config file. They differ
+only in what happens when the world moves: the derived one degrades predictably,
+the chosen one is wrong in a direction nobody characterised. `10_000 ms` picked
+against a quiet machine is wrong the first time CI is busy. `336` hours near an
+auction admits a latest item that is operationally useless while exiting zero.
+
+**The rule.** A constant that gates a decision, a refusal, or a report carries a
+one-line provenance note at its definition: **derived** (and from what) or
+**chosen** (and what evidence would derive it). This is deliberately not a new
+gate - the Model gate already demands calibration for numbers a decision rests
+on, and these sit just outside it. **If a third one lands, make it a gate**, and
+note that the reason to hesitate is that a provenance comment nobody enforces is
+itself a chosen threshold on how much process is worth it.
+
+### A timeout only bounds what has already started
+
+**Recorded 2026-09-06.** Vitest's `testTimeout` starts counting when Vitest
+starts a test. An infinite loop in **module import, test collection, or worker
+startup** happens before that timer exists and hangs the process indefinitely -
+the per-test timeout cannot fire because no test is running.
+
+What actually catches it is the enclosing CI job's `timeout-minutes`, which is
+why PR #175's ceiling on all 11 jobs and PR #174's per-test bound are **not
+redundant**. They cover disjoint failure regions: the job timeout is the only
+backstop for pre-execution hangs, and the test timeout is the only thing that
+localises a hang to a named test. Neither substitutes for the other, and a
+reviewer who treats the second as covered by the first will remove the wrong one.
+
+**The general shape:** every timeout has a *start condition*, and failures before
+that condition are invisible to it. When adding one, state what must already
+have happened for it to be able to fire.

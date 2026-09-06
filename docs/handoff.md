@@ -36823,3 +36823,51 @@ their worktrees for detached HEADs, and one lane explicitly could not certify
 its current state because I had forbidden it from touching git. That is a
 deliberate trade - the alternative is letting a lane run git while I archive it -
 but it means "nothing unreachable" is their claim, not my measurement.
+
+
+## 2026-09-06 - Fifth debrief, and a pattern across two of them
+
+**Agent:** architect (coordinator)
+
+Debriefed and archived the last merged lane. Five debriefs today, five lanes that
+had something the repository did not, after each was told that "nothing" is the
+answer that has been wrong every time. It is still five for five.
+
+**The pattern worth more than any single finding.** Two lanes independently
+shipped a threshold and independently volunteered that it was *chosen, not
+derived* - 336 hours for news freshness, 10,000 ms for a per-test timeout.
+Neither was caught by anything; both were disclosed because the authors were
+asked what they could not verify. Recorded in `gates.md` as *Two thresholds
+shipped in one night*. The proposed remedy is a provenance line at the
+definition rather than a new gate, on the grounds that the Model gate already
+covers numbers a decision rests on and these sit just outside it. **If a third
+lands, it should become a gate** - and the honest note against my own proposal
+is that an unenforced comment is itself a chosen threshold on how much process
+is worth it.
+
+**A composition finding that prevents a future mistake.** PR #174's per-test
+timeout and PR #175's CI job ceiling look redundant and are not. A hang during
+module import, collection or worker startup happens *before* Vitest starts a
+test, so `testTimeout` cannot fire; only the job ceiling catches it. Conversely
+only the test timeout localises a hang to a named test. A reviewer treating one
+as covered by the other will delete the wrong one.
+
+**Confirmed by request, not assertion.** Backend `:8000` returns 200 and the
+reliability store serves **596** scorecards - and the route is
+`/api/v1/reliability/scorecards`, not the `/api/reliability/scorecards` I had
+been carrying in my head, which 404s. I had repeated the 596 figure several
+times today without re-fetching it; it happened to be right. Frontend answers on
+`:5174`; `:5173` is a stale IPv6-only listener that refuses `127.0.0.1`, now
+confirmed by a second lane and still wrong in the standup addendum.
+
+**Small durable traps from this debrief.** `git ... origin\main..HEAD` is
+invalid on Windows: refs require `/` even where filesystem paths use `\`. And
+`gh pr merge --delete-branch` can report a local error *after* the API merge
+succeeded, because it then tries to switch a worktree whose branch is checked
+out elsewhere - the lane verified the merge but **not** the remote branch
+deletion, and said so.
+
+**Could not verify.** The lane's five rebased commits (head `434e3ed9`) are
+redundant content, not ancestors of `origin/main`, and remain reachable only
+from its local branch until the worktree is cleaned up. I archived on its
+statement rather than inspecting the worktree myself.
