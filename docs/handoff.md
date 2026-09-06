@@ -36937,3 +36937,94 @@ independently re-derive `quant`'s "exactly one permitted leaf" count - I verifie
 only that the branch cannot have moved the manifest, which is the weaker claim
 that happens to be the one my worry needed. Whether the drift is one leaf or more
 still rests on `quant`.
+
+
+## 2026-09-06 - architect - auditing what exists only on this machine
+
+Started as routine "which sessions are safe to archive" and turned into the most
+consequential finding of the day. Recording the method as well as the result,
+because the method is reusable and the first two versions of it were wrong.
+
+**41 local branches carry commits not on `origin`.** That number is alarming and
+almost entirely misleading, which is why the first classification I wrote should
+not be trusted and is worth describing so nobody rebuilds it.
+
+**Attempt one: does any touched file's blob differ from `main`?** It reported 39
+of 41 as holding unique content. It is wrong, and I knew it was wrong because I
+had already hand-verified one case: `pr170` at `a322f704`, which I had proved
+fully redundant an hour earlier by comparing trees file by file. The classifier
+put it in the unique pile. `docs/handoff.md` and `docs/backlog.md` are
+append-only and `main` appends constantly, so **every branch older than an hour
+differs on them while holding nothing of its own.** Excluding those two files
+moved `pr170` to the correct pile - the calibration case then passed, which is
+the only reason to believe the rest.
+
+Note what saved this: not care, but **having one case with an independently known
+answer.** A classifier with no such case would have returned 39, and 39 would
+have driven a large and pointless preservation effort.
+
+**Attempt two still conflates *unique* with *superseded*.** `pr169`'s test file
+differs from `main` because `main` has a **newer** version - review feedback
+landed after that local checkout. Differing is not the same as being at risk.
+
+**Attempt three is the one that decides anything: which branches hold files
+`main` does not have at all?** Ten, clustering into four bodies of work - five
+frontend evidence components (`AvailabilityAssumptionPanel.tsx`,
+`EvidenceInventory.tsx`, `SeasonNote.tsx`, `reliabilityModel.ts` and its test),
+the five `check_adr_index.py` trial arms, one bridge test, and the one below.
+
+**The finding: a shipped model's row-level evidence exists on one unpushed
+branch.** `docs/models/injury-status-conversion-preregistration.md` is committed
+in `main` and cites
+`backend/tests/model_evidence/injury_status_conversion_v1_rows.json`. That file
+is not in `main`. It is on `sr2501-injury-status-conversion` at `3285e647`:
+594,951 bytes, 1,934 records, behind a model whose module, evidence JSON, card
+and backtest are all merged. **Nothing fails.** The backtest reads
+`injury_status_conversion_v1.json`, which is present, so the suite is green and
+the Model gate is satisfied while the held-out rows sit one `git worktree prune`
+from gone.
+
+**The document already discloses this**, plainly and well - it says the rows
+"were never pushed" and that "no reader with only `origin` could have found it".
+That is the honest-limitation habit working. The defect is that **disclosure was
+treated as preservation**: a note saying something is unreachable does not make it
+reachable, it only makes the loss legible afterwards. Recorded in `gates.md`.
+
+**Do not fix it by reflex, and I have not.** The rows unblind the held-out split
+and this repository is public, so pushing preserves the evidence and destroys the
+blind permanently. That is an owner decision with a real tradeoff, surfaced rather
+than settled.
+
+**Why nothing caught it:** no check resolves the paths a model card cites. Filed
+as `model-card-citation-resolution`, sibling to `adr-index-consistency-test`, one
+directory over. The scan that found it is about twenty lines: 13 cards, 39 path
+citations, 2 unresolved.
+
+**A claim of mine, disproved by running it.** I had asserted the five unshipped
+`check_adr_index.py` arms "would have caught" today's two `Status:` spellings and
+the ADR-016 numbering gap. I ran the most complete arm against a faithful copy of
+`main`: exit 0, twenty files and twenty rows. **None of the five compares the
+Status column to each ADR's declared status, and none enforces contiguous
+numbering.** The `c62` arm passes on a `main` that skips ADR-016 because a file
+that does not exist needs no row - the two-way check is satisfied by its absence,
+the vacuity shape again. I had cited the tool's title rather than its behaviour.
+
+**Hypothesis I raised and killed in the same hour:** that `model_backtest` might
+be deselected by default, making the Model gate partly vacuous. It is not. Only
+`live_smoke` is excluded by `addopts`; backtests run in the default suite and
+again in a dedicated job at `ci.yml:552`.
+
+**Verified rather than accepted:** PR #170's lane reported its work landed. Its
+branch `a322f704` is not an ancestor of `main`, which is expected for a squash and
+is not the same as checked, so I diffed the trees - `test_error_code_observability.py`
+and `coordinator-register.md` are byte-identical in `main` and the argv-contract
+item is present at `docs/backlog.md:4950`. Nothing was dropped.
+
+**Could not verify.** Whether the 35 branches that merely *differ* from `main`
+hold anything worth keeping - that needs per-branch judgement I have not done, and
+the ten-branch figure above is only the unambiguous subset. Two sessions
+(`5a4fc9b8`, `aacf8d79`) have not returned a usable debrief; their replies read as
+`NULL` in the session store, so what they hold beyond the repository is unmeasured
+and I have left their branches undeleted rather than assume. CI on `978df142` was
+still running past twenty minutes when this was written, so `main`'s green is
+local-only at time of writing.

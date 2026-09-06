@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 124 pending - 215 total**
+**91 done - 0 blocked - 125 pending - 216 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1559,6 +1559,51 @@ adopt an arm believing it covers them. I asserted in a session note that this
 work "would have caught" today's two `Status:` spellings and the ADR-016 gap;
 running it disproved all of that, which is the difference between citing a tool's
 title and citing its behaviour.
+
+Gate: Code gate.
+
+### `model-card-citation-resolution` - Failing when a model card cites a file that is not in the repository
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+Sibling to `adr-index-consistency-test`, one directory over and currently
+unguarded. A model card names its evidence by path; nothing resolves those paths,
+so a card can cite a file that was never committed and render identically to one
+that was.
+
+**Found on 2026-09-06 by a twenty-line scan**, not by a reader: 13 cards, 39 path
+citations, 2 unresolved.
+
+1. `injury-status-conversion-preregistration.md` cites
+   `backend/tests/model_evidence/injury_status_conversion_v1_rows.json`, which is
+   **not in `main`**. It sits on one unpushed local branch,
+   `sr2501-injury-status-conversion` at `3285e647` - 594,951 bytes, 1,934 records
+   backing a **shipped** model whose module, evidence, card and backtest are all
+   merged. The suite stays green because the backtest reads
+   `injury_status_conversion_v1.json`, which is present.
+2. `availability-model-preregistration-v1-PROPOSED.md` cites
+   `docs/models/availability-model.md`, which does not exist. Plausibly correct -
+   that model is blocked behind the opportunity-coverage veto and its card is
+   unwritten - but a citation to an unwritten file and a citation to a deleted one
+   are indistinguishable to a reader, which is the point.
+
+**Scope it as resolution, not correctness**, exactly as the ADR sibling is scoped:
+assert every cited path exists, and say plainly in the output that this is *not* a
+claim the citation is apt. A card can cite the right file and describe it wrongly;
+that needs a human.
+
+**Decide two things as part of the item.** Whether a citation may point at a path
+that is deliberately absent - the availability card is the live case, and the
+honest answer is probably an explicit allowlist entry naming why, so that "not
+written yet" is distinguishable from "lost". And whether to scan
+`docs/decisions/` and `docs/adapters/` with the same code, since the defect is a
+property of citation-by-path rather than of model cards.
+
+Do **not** bundle the preservation decision into this item. Whether to push the
+rows file is owner-only and has a real tradeoff - it unblinds the held-out split
+in a public repository - and this item must not be blocked behind it. The check
+should fail loudly on today's `main` and that failure is the correct outcome.
 
 Gate: Code gate.
 

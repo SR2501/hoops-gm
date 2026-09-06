@@ -851,3 +851,45 @@ controls - it prints `NEG truncated base: True, and VACUOUS / 200 bytes vs base
 because containment logic worked. **A tool that labels its own weak checks is
 doing the thing this whole file exists to encourage**; the fix is to keep that
 label visible, not to quietly make the control pass.
+
+
+### Disclosing that evidence is unreachable is not preserving it
+
+**Recorded 2026-09-06, found by resolving every file path cited in
+`docs/models/*.md` rather than reading the cards. 13 cards, 39 path citations,
+2 unresolved.**
+
+`docs/models/injury-status-conversion-preregistration.md` is committed in `main`
+and cites `backend/tests/model_evidence/injury_status_conversion_v1_rows.json`.
+**That file is not in `main`.** It exists on one unpushed local branch,
+`sr2501-injury-status-conversion` at `3285e647`, at 594,951 bytes and 1,934
+records carrying status, participation outcome, game date, lead time and
+exclusion reason for a **shipped** model whose module, evidence JSON, model card
+and backtest are all in `main`.
+
+**The document already says so, and says it well** - it discloses that the rows
+"were never pushed" and that "no reader with only `origin` could have found it".
+That is the honest-limitation habit working exactly as intended, and the author
+deserves the credit. **The defect is not concealment. It is that disclosure and
+preservation were treated as the same act.** A written note that something is
+unreachable does not make it reachable; it makes the *loss* legible after the
+fact, which is worth much less than the note appears to be worth when you read it.
+
+**Concretely: one pruned worktree destroys the row-level evidence behind a model
+that is already making decisions, and the surviving artifact is a paragraph
+describing what used to be checkable.** Nothing in the repository would fail. The
+backtest reads `injury_status_conversion_v1.json`, which is present, so the suite
+stays green and the model gate stays satisfied while its held-out rows cease to
+exist.
+
+**Why nothing caught it.** No check resolves the paths a model card cites, so a
+card can name a file that was never committed and render identically to one that
+was - the same defect class the ADR index item exists to close for
+`docs/decisions/`, unaddressed one directory over. The 39-citation scan above is
+about twenty lines and found this on its first run.
+
+**Do not fix this by reflex.** The rows unblind the held-out split, and this
+repository is public, so pushing them preserves the evidence and destroys the
+blind permanently. That tension is real and the resolution is owner-only, which
+is precisely why it must be surfaced as a decision rather than settled by whoever
+notices it first.
