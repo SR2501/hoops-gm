@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**83 done - 0 blocked - 117 pending - 200 total**
+**83 done - 0 blocked - 118 pending - 201 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5045,3 +5045,34 @@ explicitly that the loss is accepted and state its bound. Whichever is chosen, t
 adapter must **detect** displacement rather than absorb it: a monotonic item-id or
 publication-time gap check that fails loudly beats a silently short feed. Adapter
 gate.
+
+### `ci-job-timeout-ceiling` - Bound CI job runtime so a hung job cannot burn six hours
+
+- [ ] **pending**
+- **Depends on:** none
+
+No job in `.github/workflows/ci.yml` sets `timeout-minutes`. The only timeout in
+the repository is `copilot-setup-steps.yml:23`, at 15 minutes. Every CI job
+therefore inherits GitHub's default ceiling of **360 minutes**.
+
+**This became load-bearing when the concurrency rule changed, and the change was
+mine.** `ci.yml:41` now reads `cancel-in-progress: ${{ github.ref !=
+'refs/heads/main' }}`, so runs on `main` are no longer cancelled by a later push.
+That is correct - a result on a superseded head is not a result, and cancelling
+main runs was destroying the only signal that main is green. But the cancellation
+was also, accidentally, the mechanism that cleared a hung main job: the next push
+killed it. Nothing clears one now.
+
+**Measured, not assumed.** The Postgres job on run `34017556556` (main, commit
+`a0b78d8`) ran 06:50:53Z to 07:32:36Z - **41.7 minutes**, and it passed. Six
+recent PR runs of the same job completed in 18.4, 22.7, 23.0, 23.1, 23.5 and 24.6
+minutes. So the observed main-branch duration is roughly 1.7x the slowest PR run
+and more than 2x the fastest, on a job that no longer has anything to stop it.
+
+**Acceptance.** Set an explicit `timeout-minutes` on every job in `ci.yml`, chosen
+from the measured distribution with real margin rather than from a round number -
+the Postgres job's ceiling must sit above 41.7 minutes, not above 25. Then
+establish whether the main/PR duration gap is contention, cache behaviour, or a
+suite that grew when four PRs merged; a job that has quietly doubled in cost is a
+different problem from one that is merely unbounded, and the timeout must not be
+set so loosely that it hides the second. Code gate.
