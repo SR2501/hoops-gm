@@ -1,3 +1,10 @@
+/**
+ * This specimen pins the fields and scalar types emitted by one real
+ * `ScheduleGridResponse` instance. It cannot detect a model widening whose
+ * chosen specimen value is unchanged (for example `str` becoming `str | None`),
+ * a newly allowed enum member absent from the specimen, or a route/middleware
+ * layer reshaping the model after serialization.
+ */
 import { describe, expect, it } from 'vitest'
 import { isScheduleGrid } from '../api/endpoints'
 import type { ScheduleGrid } from '../api/types'

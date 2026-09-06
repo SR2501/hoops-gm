@@ -98,6 +98,23 @@ def _serialized(document: object) -> str:
     return f"{json.dumps(document, ensure_ascii=False, indent=2)}\n"
 
 
+def _strict_equal(recorded: object, actual: object) -> bool:
+    """Compare JSON values without Python's bool/int/float coercion."""
+
+    if type(recorded) is not type(actual):
+        return False
+    if isinstance(recorded, dict) and isinstance(actual, dict):
+        return recorded.keys() == actual.keys() and all(
+            _strict_equal(recorded[key], actual[key]) for key in recorded
+        )
+    if isinstance(recorded, list) and isinstance(actual, list):
+        return len(recorded) == len(actual) and all(
+            _strict_equal(recorded_item, actual_item)
+            for recorded_item, actual_item in zip(recorded, actual, strict=True)
+        )
+    return recorded == actual
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -112,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, json.JSONDecodeError) as exc:
             print(f"could not read {CONTRACT}: {exc}", file=sys.stderr)
             return 2
-        if recorded != actual:
+        if not _strict_equal(recorded, actual):
             print(
                 "schedule-grid contract drifted; inspect the response-model change, then run "
                 "python scripts/capture_schedule_grid_contract.py --write",
