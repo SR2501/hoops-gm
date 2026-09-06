@@ -1522,6 +1522,44 @@ found because a merge conflict happened to land on adjacent lines of that table.
 touch the same table in the same window. Two of the three index defects found
 that day surfaced by accident.
 
+**Five implementations of this item already exist, none of them pushed
+(measured 2026-09-06).** Local branches only, one commit ahead of `main` each,
+`scripts/check_adr_index.py` absent from `main`:
+
+| branch | head | script | test |
+|---|---|---|---|
+| `sr2501-adr-index-consistency` | `0f38b2ea` | 5,708 b | - |
+| `sr2501-adr-index-consistency-test` | `db07b1e7` | 6,567 b | 12,044 b |
+| `sr2501-adr-index-consistency-test-330` | `c76ab201` | 9,576 b | - |
+| `sr2501-adr-index-consistency-test-97c` | `72ade0b5` | 7,683 b | - |
+| `sr2501-adr-index-consistency-test-c62` | `b818cd99` | 16,560 b | 15,278 b |
+
+They are trial arms, which is why there are five. The item stays `pending`
+because none is on `origin`: **this work exists on one machine and a pruned
+worktree ends it.** Preserving it costs one push per branch; that is an owner
+call, not something to do silently.
+
+**What the `c62` arm verifiably does**, run against a faithful copy of `main`'s
+`docs/decisions/` rather than inferred from its name: exit 0, `20 ADR file(s),
+20 index row(s)`, both directions above resolved. It also derives the repository
+root from `__file__` rather than the working directory, which is the correct
+choice and the exact inverse of the cascade-loader defect in ADR-019 that
+resolved `data/reports` relative to cwd.
+
+**What no arm does - checked across all five, not assumed.** None compares the
+index's `Status` column against the status declared inside each ADR, and none
+enforces contiguous numbering. `c62` passes on a `main` whose ADR numbering skips
+016, because a file that does not exist needs no row, so the two-way check is
+satisfied by its absence - the vacuity shape again. `c62` says so itself in its
+output, calling its result a *narrow claim*, which is the behaviour to keep.
+
+So this item as written is fully implemented and this note does not widen it.
+**Status-column drift and numbering gaps are a separate item if wanted** - do not
+adopt an arm believing it covers them. I asserted in a session note that this
+work "would have caught" today's two `Status:` spellings and the ADR-016 gap;
+running it disproved all of that, which is the difference between citing a tool's
+title and citing its behaviour.
+
 Gate: Code gate.
 
 ### `auction-budget-manager` - Building the auction budget manager
