@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 120 pending - 204 total**
+**84 done - 0 blocked - 123 pending - 207 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5077,6 +5077,19 @@ suite that grew when four PRs merged; a job that has quietly doubled in cost is 
 different problem from one that is merely unbounded, and the timeout must not be
 set so loosely that it hides the second. Code gate.
 
+**Answered 2026-09-06, and the premise was wrong.** The `Full suite against
+Postgres` step, measured across six runs: main 40.6 / 22.7 / 21.6 minutes, pull
+request 22.5 / 21.5 / 19.2. Two of three main runs sit inside the pull-request
+band, so **there is no systematic main-vs-PR gap** - only one outlier,
+`34017556556`. Of the three hypotheses above, cache behaviour is excluded by the
+outlier's step breakdown (0.5 min initialising containers, 0.4 min installing,
+under 0.1 min on every other step, 40.6 min inside the suite itself), and "the
+suite grew when four PRs merged" is refuted outright - the two later main runs
+ran a strictly larger suite and were faster. Contention survives by elimination
+rather than by evidence. The ceiling stays at 90 because a run that doubles for
+reasons nobody can name is exactly what a median-derived ceiling would convert
+into a red main.
+
 ### `schedule-contract-live-response` - Capture the schedule-grid specimen from a live response, not the model
 
 - [ ] **pending**
@@ -5154,3 +5167,102 @@ refuse to write if the result would not be a byte-prefix extension. Tests: one C
 target, one LF target, one empty file, and a control proving a hand-written CRLF append
 to the LF file still fails `check_append_only.py`. Document it where the append-only
 rule is stated, so the rule and its tool sit together. Code gate.
+### `ci-main-signal-lost-in-queue` - Main commits are landing with no CI record at all
+
+- [ ] **pending**
+- **Depends on:** none
+
+Three `push`-to-`main` runs on 2026-09-06 concluded `cancelled`: `34021736746`,
+`34021638032`, `34020804382`. Each reports `jobs=0` and zero jobs carrying a
+`startedAt`. **They were cancelled while pending in the concurrency queue,
+having never started a single job.**
+
+This is not a bug in `ci.yml:41`; it is that rule working exactly as written.
+`cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}` evaluates false on
+main, so a new main run queues instead of cancelling the running one - and
+GitHub holds at most one run pending per concurrency group, cancelling the older
+pending run when a third arrives.
+
+**The change did not stop main's signal being destroyed; it relocated the
+destruction.** Before, a superseded main run was cancelled part-way and left
+partial results. Now it never starts and leaves none. Three commits reached main
+tonight with no CI record of their own. The tip is still verified by whichever
+run does execute, which is why this stayed invisible - but per-commit
+attribution is gone, and a bisect over tonight's main history cannot use CI.
+
+This also compounds `ci-job-timeout-ceiling`: a hung job does not merely burn one
+runner, it blocks the queue, so every later main push pends behind it and is
+cancelled by the next.
+
+**Acceptance.** Choose deliberately between (a) accept per-commit loss and state
+plainly that only the tip is verified, (b) drop the concurrency group for `push`
+to main so every commit gets its own run, paying the duplicate compute, or (c)
+keep queueing and add a post-merge or scheduled re-verification of the tip so a
+gap cannot persist unnoticed. Whichever is chosen, assert it in
+`backend/tests/test_ci_workflow.py` - this behaviour was believed to be the
+opposite of what it is, and nothing detected that. Code gate.
+
+### `append-only-guard-is-not-enforced` - The append-only contract is enforced by nobody
+
+- [ ] **pending**
+- **Depends on:** none
+
+`scripts/check_append_only.py` protects `docs/handoff.md` - 2.36 MB of
+accumulated handoff - by requiring the base blob be a byte-prefix of HEAD, so no
+earlier entry can be rewritten or deleted. **It is wired into nothing.** A
+repository-wide search for `check_append_only` returns exactly two hits: its own
+usage docstring at line 38, and a prose mention in
+`.github/skills/standup-hoops-gm/SKILL.md:237`. No workflow invokes it, no test
+invokes it, no hook invokes it.
+
+So the guard runs only when an agent happens to remember it. It caught a real
+violation on 2026-09-06 solely because one was run by hand; had nobody thought
+to, the violation would have merged silently. This is the failure the CI
+workflow tests were written for, quoted from their own module docstring:
+something "written down, believed, and never executed".
+
+Two further gaps found alongside it. `DEFAULT_PATHS` at line 47 lists only
+`docs/handoff.md`, so `docs/backlog.md` and `docs/governance/risks.md` are
+unguarded. And the check uses `merge-base(origin/main, HEAD)` as its reference,
+which means that **after a push it compares HEAD against itself and passes
+vacuously** - R59 again, this time inside the guard.
+
+**Acceptance.** Add a `ci.yml` job that runs it on pull requests with an explicit
+base ref rather than a merge-base that collapses after push, covering every file
+whose contract is genuinely append-only. Prove it with a mutation: delete a line
+from the middle of `docs/handoff.md` in a scratch commit and show the job red.
+Decide separately whether `docs/backlog.md` belongs in scope at all - it is
+edited in place whenever a status marker flips, so byte-prefix containment can
+never hold for it and listing it would only produce a permanent false failure.
+Code gate.
+### `risks-register-integrity-check` - Nothing validates the risk register
+
+- [ ] **pending**
+- **Depends on:** none
+
+`docs/governance/risks.md` is the single place failure modes are allowed to live
+- `docs/governance/gates.md:148` says so explicitly, and forbids restating them
+elsewhere on the grounds that "a lesson restated in two files drifts in one of
+them". A register with that much authority is checked by nothing.
+
+**Measured 2026-09-06:** the file holds 68 rows numbered `R1`-`R66` with no gaps,
+which means two numbers are used twice. `R44` and `R45` each name two unrelated
+risks with different owners, allocated by different sessions that could not see
+each other. So eight existing citations of those numbers are ambiguous, and seven
+of them are in `docs/handoff.md`, which is append-only and cannot be corrected.
+The collision is now noted at the top of the register instead.
+
+A repository-wide search for a validator - `scripts`, `backend/tests`,
+`.github/workflows` - returns nothing referencing `risks.md`. Compare
+`scripts/backlog_graph.py`, which checks the backlog for exactly this class of
+defect and is wired into its own CI job.
+
+**Acceptance.** A checker, run in CI, that fails on: a duplicate ID, a gap in the
+sequence, a row whose cell count does not match the header, and an ID cited
+elsewhere in `docs/` that does not exist in the register. Prove each with a
+mutation. Do **not** renumber the existing collisions to make it pass - encode
+them as two known exceptions with a comment saying why, because the citations
+that would break are in a file nobody is allowed to rewrite. Verify the table
+renders by posting it to `/markdown`, not by counting pipes: `R59` records two
+sessions hand-counting a malformed row and reaching different wrong answers.
+Code gate.
