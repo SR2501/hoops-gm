@@ -12,7 +12,7 @@ written down, believed, and never executed. These tests execute it.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -547,3 +547,107 @@ def test_the_flag_reader_fails_on_a_flag_that_is_not_there() -> None:
 
     with pytest.raises(AssertionError):
         _flag_value("pytest --junitxml=junit.xml", "--vitest")
+
+
+def test_every_job_declares_a_timeout(jobs: dict[str, Any]) -> None:
+    """A hung job otherwise holds a runner for GitHub's six-hour default.
+
+    ``cancel-in-progress`` is deliberately false on the default branch, because
+    a superseded main run is still the metrics baseline producer. That is the
+    right call and it has a consequence: on main nothing at all reclaims a stuck
+    job, so the ceiling below is the only recovery.
+
+    The limits are generous on purpose. They exist to break a hang, not to
+    police duration -- a limit that fires on an ordinary slow run is one the
+    next person raises until it never fires at all.
+    """
+    assert len(jobs) >= 11, (
+        f"only {len(jobs)} jobs parsed; a partial or empty mapping would let "
+        "every assertion below pass without observing anything"
+    )
+
+    missing = sorted(name for name, job in jobs.items() if "timeout-minutes" not in job)
+    assert missing == [], f"jobs inheriting the 360-minute default: {missing}"
+
+    for name, job in jobs.items():
+        limit = job["timeout-minutes"]
+        assert type(limit) is int, f"{name}: timeout-minutes is {limit!r}, not an int"
+        assert 0 < limit < 360, f"{name}: {limit} does not improve on the default"
+
+
+# Longest run observed for each job: (minutes, runs the job actually ran in).
+# Measured 2026-09-06 over the 300 most recent CI runs (2,861 completed,
+# non-skipped job rows), not a 25-run window. The first attempt at this table
+# used 25 runs and was wrong twice: it read live-smoke as 0.0 minutes, and it
+# put backend at 14 when backend has been observed at 74.2. The sample size is
+# stored beside each figure because a duration measured on a population the job
+# never ran in is the failure this table exists to prevent, and the count is the
+# only thing that makes it visible -- live-smoke's 8 is small because it runs on
+# `schedule` alone, and that is the point, not an oversight.
+MEASURED_LONGEST_MINUTES: Final[dict[str, tuple[int, int]]] = {
+    "backend": (75, 282),
+    "postgres": (61, 277),
+    "live-smoke": (57, 8),
+    "adapter-gate": (12, 287),
+    "frontend": (8, 287),
+    "migrations": (2, 286),
+    "model-gate": (1, 286),
+    "backlog-graph": (1, 287),
+    "secrets": (1, 288),
+    "userscript": (1, 287),
+    "doc-terminators": (1, 286),
+}
+
+
+@pytest.mark.parametrize("job_name", sorted(MEASURED_LONGEST_MINUTES))
+def test_each_ceiling_clears_that_job_s_own_slowest_measured_run(
+    jobs: dict[str, Any], job_name: str
+) -> None:
+    """A ceiling is only safe against the population it was measured on.
+
+    These runners are wildly heavy-tailed and the ceilings have to respect that
+    rather than the median. backend runs a median 8.4 minutes and has taken
+    74.2; postgres runs 20.4 and has taken 60.3; frontend runs 0.9 and has taken
+    7.9. An eight-fold spread on identical work is contention, and a ceiling set
+    off typical behaviour would fire on a healthy run several times a month.
+
+    live-smoke is why this is parametrised rather than written for one job.
+    Sampling 25 recent runs showed it at 0.0 minutes, because it is skipped on
+    every event except ``schedule`` and none of those 25 was scheduled. Its real
+    duration on the path that matters -- upstreams down, failing loudly with the
+    full list -- is 55.8 to 56.2 minutes across runs 33966362917, 33636177197,
+    33517331501 and 33417109345.
+    """
+    observed, _ = MEASURED_LONGEST_MINUTES[job_name]
+    limit = jobs[job_name]["timeout-minutes"]
+    assert limit > observed * 1.5, (
+        f"{job_name} is capped at {limit} minutes but has been observed taking "
+        f"{observed}; a ceiling that fires on a healthy run is one the next "
+        f"person raises until it never fires at all"
+    )
+
+
+@pytest.mark.parametrize("job_name", sorted(MEASURED_LONGEST_MINUTES))
+def test_every_measurement_observed_the_job_actually_running(job_name: str) -> None:
+    """Zero is what an unobserved job looks like, and it passes everything.
+
+    Without this, ``"live-smoke": 0`` satisfies the ceiling test for every
+    conceivable limit, because ``limit > 0 * 1.5`` is true of any positive
+    ceiling. The table would then certify a job whose duration nobody has ever
+    seen, which is precisely the mistake that produced it.
+    """
+    observed, runs = MEASURED_LONGEST_MINUTES[job_name]
+    assert type(observed) is int and observed > 0, (
+        f"{job_name} is recorded at {observed!r} minutes; a zero or non-integer "
+        "measurement clears every ceiling and proves nothing"
+    )
+    assert type(runs) is int and runs > 0, (
+        f"{job_name} records {runs!r} runs behind its measurement; a figure "
+        "drawn from no observed run is a guess wearing a number"
+    )
+
+
+def test_the_measured_table_covers_every_job(jobs: dict[str, Any]) -> None:
+    """Otherwise a new job gets a ceiling nobody checked against anything."""
+    unmeasured = sorted(set(jobs) - set(MEASURED_LONGEST_MINUTES))
+    assert unmeasured == [], f"jobs with a ceiling but no measured duration behind it: {unmeasured}"
