@@ -412,6 +412,25 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python scripts/check_doc_terminators.py
 
+  adr-index:
+    name: Code gate — the ADR index matches the decision log directory
+    runs-on: ubuntu-latest
+    # Stdlib-only, like check_no_secrets.py, check_doc_terminators.py and
+    # backlog_graph.py, so it cannot rot when a package moves.
+    #
+    # `docs/decisions/README.md` was found missing rows for ADR-013 and
+    # ADR-014 on 2026-08-21 - added by hand, by different lanes, on different
+    # days, because nothing had ever compared the table to the directory.
+    # Fails on an ADR file with no index row (invisible to a reader scanning
+    # the table) and on an index row whose relative link resolves to nothing
+    # (invisible until the link is actually clicked).
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python scripts/check_adr_index.py
+
   # --- Adapter gate (Phase 2 onwards) ---------------------------------------
   #
   # Contract tests run offline against committed fixtures and block a merge.

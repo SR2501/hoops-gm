@@ -94,7 +94,7 @@ def test_the_code_gate_runs_on_push_and_pull_request(triggers: dict[str, Any]) -
 
 @pytest.mark.parametrize(
     "job_name",
-    ["backend", "frontend", "migrations", "secrets", "postgres", "backlog-graph"],
+    ["backend", "frontend", "migrations", "secrets", "postgres", "backlog-graph", "adr-index"],
 )
 def test_code_gate_jobs_are_not_conditional(jobs: dict[str, Any], job_name: str) -> None:
     """A gate with an ``if`` is a gate someone can arrange not to run."""
@@ -203,6 +203,7 @@ def _commands(step: dict[str, Any]) -> list[str]:
 _SCRIPTS_RUFF_COMMANDS = ["ruff check scripts", "ruff format --check scripts"]
 _SCRIPTS_ESLINT_COMMANDS = ["../frontend/node_modules/.bin/eslint ."]
 _DOC_TERMINATOR_COMMANDS = ["python scripts/check_doc_terminators.py"]
+_ADR_INDEX_COMMANDS = ["python scripts/check_adr_index.py"]
 
 
 def _assert_step_is_live(step: dict[str, Any], what: str) -> None:
@@ -325,6 +326,38 @@ def test_the_append_only_docs_are_checked_for_a_trailing_newline(jobs: dict[str,
     )
     for job_name, step in found:
         _assert_step_is_live(step, f"the doc-terminator step in `{job_name}`")
+        job = jobs[job_name]
+        assert "if" not in job, (
+            f"job `{job_name}` is conditional, so its steps can be arranged not "
+            f"to run without anyone editing them"
+        )
+        assert not job.get("continue-on-error"), f"job `{job_name}` is allowed to fail"
+
+
+def test_the_adr_index_is_checked_against_the_decisions_directory(
+    jobs: dict[str, Any],
+) -> None:
+    """Same shape as the doc-terminator test above, for the same reason.
+
+    `docs/decisions/README.md` was missing rows for ADR-013 and ADR-014 for a
+    stretch on 2026-08-21, added by hand later rather than by anything that
+    compared the table to the directory. A job named for the check is not the
+    check; this asserts the owning job actually runs it and cannot be
+    arranged not to.
+    """
+    found = [
+        (job_name, step)
+        for job_name, job in jobs.items()
+        for step in job.get("steps", [])
+        if _commands(step) == _ADR_INDEX_COMMANDS
+    ]
+
+    assert found, (
+        f"no job runs exactly {_ADR_INDEX_COMMANDS}; the ADR index can then "
+        "silently drift from docs/decisions/ again"
+    )
+    for job_name, step in found:
+        _assert_step_is_live(step, f"the ADR index step in `{job_name}`")
         job = jobs[job_name]
         assert "if" not in job, (
             f"job `{job_name}` is conditional, so its steps can be arranged not "
