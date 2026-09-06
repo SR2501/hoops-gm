@@ -27,6 +27,7 @@ fixture whose every game sits comfortably inside the window.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from datetime import UTC, date, datetime
@@ -684,13 +685,57 @@ class TestTheCommittedManifestStillDescribesThisCode:
             f"{stale}. This is not a refusal to edit those files. Per ADR-019, "
             "regenerate the manifest in the same commit - one offline command, no "
             "network, driven 2026-08-27 - and attach scripts/manifest_leaf_diff.py "
-            "output. If the only moved leaves are under operator.source_fingerprints "
-            "and operator.commands, no cohort number moved and the edit stands; any "
-            "other moved leaf stops for quant, pre-unblind. Note what a green here "
+            "output. Compare DIFFERENTIALLY, not against the committed manifest: "
+            "ADR-019's amendment of 2026-09-06 (Proposed) requires regenerating "
+            "twice from the same store - once with your edit, once with it "
+            "reverted - and confining the difference BETWEEN THOSE TWO to "
+            "operator.source_fingerprints and operator.commands. Drift shared by "
+            "both regenerations is environment drift: it is not yours to answer "
+            "for and is escalated on its own terms, not attached to whichever PR "
+            "regenerated next. Only a leaf that moves UNDER YOUR EDIT stops for "
+            "quant, pre-unblind. Two traps that otherwise fake a movement you did "
+            "not cause: hold the --out path fixed across both runs, because "
+            "operator.commands echoes it; and regenerate from the data root, "
+            "never from backend/, which empties operational_artifacts and "
+            "re-nulls trusted_entry_cascade. Note what a green here "
             "does NOT say: it compares the manifest against the tree that produced "
             "it, so it is green for whoever ran it. It attests that the bytes agree, "
             "never that the run was authorised."
         )
+
+    def test_the_fingerprint_failure_message_instructs_the_current_rule(self) -> None:
+        """The instruction a lane reads at the moment of failure must not be superseded.
+
+        ADR-019's amendment of 2026-09-06 made the comparison differential. The
+        message above went on stating the absolute rule - measure the regeneration
+        against the committed manifest, stop for quant on any other moved leaf - and
+        on 2026-09-06 a lane obeyed it, discarded a correct regeneration, and
+        reported a gap that did not exist. Nothing caught that, because prose inside
+        an assert is not executed until it fails, so a superseded instruction can sit
+        in a green suite indefinitely.
+
+        Pinned here so the message cannot drift from the ADR silently. If the
+        amendment is withdrawn - the ADR names an immutable per-cohort store as the
+        condition that would flip it - this test fails, and the message must be
+        revisited in the same commit rather than left instructing the wrong thing.
+        """
+        source = inspect.getsource(
+            self.test_every_recorded_source_fingerprint_matches_the_file_today
+        )
+        assert "any other moved leaf stops for quant" not in source, (
+            "the failure message has reverted to ADR-019's superseded ABSOLUTE rule, "
+            "which measures an edit against the committed manifest and so charges it "
+            "for environment drift it did not cause"
+        )
+        for required, why in (
+            ("DIFFERENTIALLY", "the comparison mode must be named, not implied"),
+            ("BETWEEN THOSE TWO", "the baseline is the no-edit control regeneration"),
+            ("UNDER YOUR EDIT", "what stops for quant must be scoped to the edit"),
+            ("data root", "regenerating from backend/ silently re-nulls the cascade"),
+        ):
+            assert required in source, (
+                f"the fingerprint failure message no longer says {required!r}: {why}"
+            )
 
     def test_a_superseded_manifest_is_registered_with_a_reason_and_keeps_its_fingerprints(
         self,
