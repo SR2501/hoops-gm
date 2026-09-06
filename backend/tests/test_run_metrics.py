@@ -44,6 +44,12 @@ def metrics() -> ModuleType:
     return module
 
 
+@pytest.fixture
+def resolved_frontend_timeout(metrics: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit reports do not require frontend npm dependencies in backend CI."""
+    monkeypatch.setattr(metrics, "read_vitest_timeout", lambda: 10_000.0)
+
+
 # --- captured shapes ---------------------------------------------------------
 
 
@@ -352,7 +358,10 @@ def test_collect_then_report_round_trips(
 
 
 def test_the_climb_that_motivated_this_is_visible_as_one_number(
-    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    resolved_frontend_timeout: None,
 ) -> None:
     """The actual failure: 1,094 ms -> 4,298 ms, invisible one run at a time."""
     baseline = tmp_path / "baseline.json"
@@ -518,7 +527,11 @@ def test_backend_report_does_not_claim_the_frontend_vitest_timeout(
 
 @pytest.mark.parametrize("multiplier", [1.1, 2.0, 10.0, 100.0, 1000.0])
 def test_no_magnitude_of_growth_makes_the_report_fail(
-    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], multiplier: float
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    multiplier: float,
+    resolved_frontend_timeout: None,
 ) -> None:
     """The binding constraint of this unit, asserted behaviourally.
 
