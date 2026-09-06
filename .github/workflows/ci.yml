@@ -23,9 +23,22 @@ on:
   schedule:
     - cron: '0 9 * * *'
 
+# Cancelling in-progress runs is right for a branch you are iterating on and
+# wrong for the branch you ship from. Measured on 2026-09-06: the Postgres job
+# takes 18-20 minutes, merges arrived faster than that, and it was cancelled on
+# six consecutive main runs (c4982a3, 2cbc901, b8f09a1, 89916e5, 1760df8, and
+# the one in flight) without completing once.
+#
+# State the size of that gap rather than just its existence. Postgres is still
+# proven per pull request, where the job runs to completion against the merge
+# ref, so this is not "Postgres is unverified". What was missing is post-merge
+# verification of main itself - and the thing that only shows up there is a
+# regression arising from the *interaction* of two changes merged close
+# together, each green alone. That is precisely the failure a busy merge day
+# produces, so the cancellation was hiding the case it was most needed for.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
