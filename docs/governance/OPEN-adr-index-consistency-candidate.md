@@ -12,16 +12,30 @@ The 2026-09-05 model trial had five arms build the same backlog item. All five
 passed the local Code gate. **Winning a trial is not a gate**, so none was merged;
 each is preserved at a named commit so the work is not lost:
 
-| Arm | Model | Branch | Commit |
-|---|---|---|---|
-| A1 | `gpt-5.6-sol-fast` | `sr2501-adr-index-consistency-test-97c` | `72ade0b` |
-| A2 | `gpt-5.6-sol-fast` | `sr2501-adr-index-consistency-test-330` | `c76ab20` |
-| A3 | `claude-opus-4.8` | `sr2501-adr-index-consistency-test-c62` | `b818cd9` |
-| A4 | `gpt-5.6-sol` | `sr2501-adr-index-consistency` | `0f38b2e` |
-| A5 | `claude-sonnet-5` | `sr2501-adr-index-consistency-test` | `db07b1e` |
+| Arm | Model | Branch | Commit | Tag | `check_adr_index.py` |
+|---|---|---|---|---|---|
+| A1 | `gpt-5.6-sol-fast` | `sr2501-adr-index-consistency-test-97c` | `72ade0b` | `trial/adr-index-a1-sol-fast` | 7,683 B |
+| A2 | `gpt-5.6-sol-fast` | `sr2501-adr-index-consistency-test-330` | `c76ab20` | `trial/adr-index-a2-sol-fast-dup` | 9,576 B |
+| A3 | `claude-opus-4.8` | `sr2501-adr-index-consistency-test-c62` | `b818cd9` | `trial/adr-index-a3-opus-4.8` | **16,560 B** |
+| A4 | `gpt-5.6-sol` | `sr2501-adr-index-consistency` | `0f38b2e` | `trial/adr-index-a4-sol` | 5,708 B |
+| A5 | `claude-sonnet-5` | `sr2501-adr-index-consistency-test` | `db07b1e` | `trial/adr-index-a5-sonnet-5` | 6,567 B |
 
-**A4 is the suggested starting point** — cheapest arm, 8/8 on judgment, tidiest
-submission. That is a reason to read it first, not a reason to merge it.
+**Every arm is tagged**, because the branches are local-only and the worktrees are
+being removed. The tags are **not pushed** — the trial branches predate current
+secret-scan coverage, so they are preserved locally and deliberately not
+published. Recover any arm with `git show trial/adr-index-a3-opus-4.8:scripts/check_adr_index.py`.
+
+**Do not read the branch suffixes as arm identifiers.** `-c62`, `-330` and `-97c`
+record *rename collisions* — each arm asked for the same kebab-case branch name
+and the later ones were suffixed — so the un-suffixed branch is simply whoever
+asked first, not a canonical arm. Map by commit.
+
+**A3 is the suggested starting point.** An earlier version of this file said A4,
+on the grounds that it was the cheapest arm with the tidiest submission. That
+reasoning still holds and is still not a reason to merge it: A4 carries gap 1
+below and A3 does not. Read A3 first, and treat its 16.5 KB against A4's 5.7 KB
+as the price of the extra coverage — decide whether you want it, rather than
+assuming smaller is better.
 
 ## What the arms converged on, unprompted
 
