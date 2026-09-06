@@ -87,3 +87,66 @@ validated reconstruction contract supplying complete opening membership, dated
 starts and ends including contract expiration, and assignment/recall — clearing
 `PROCEED_COMMON` before the rehearsal boundary. Nothing currently ingested
 supplies it.
+
+## Amendments
+
+### 2026-09-06 - all four censuses have landed, and point 4 names a number that cannot be computed
+
+**Status:** Proposed. Written by `architect`, the author of the body above.
+
+**The decision does not change.** Two claims under it do.
+
+**The Context is out of date, and in the project's favour.** It states that
+`PROCEED_COMMON` requires four direct seasonal censuses and that "2023-24 and
+2024-25 currently hold **zero** protocol-eligible observations". All four have
+since landed. `docs/adapters/participation-ledger-2022-23-coverage.json` carries a
+`protocol_support` block naming `required_direct_census_seasons` as 2022-23,
+2023-24, 2024-25 and 2025-26, assigning them the roles
+`historical_marcel_support_only`, `development`, `selection` and `held_out`, and
+reporting **170,856 direct rows** in
+`participation-ledger-direct-2022-26.db` at revision `0016`. Game coverage is
+1230/1230 for the first three seasons and 1227/1230 for 2025-26, the three
+unobserved games all falling on 2025-11-19.
+
+**So `PROCEED_COMMON` has exactly one unmet conjunct, not two.** The remaining
+one is `unknown_share <= 0.05`, which is not failing but uncomputable, for the
+reason the body already gives. That is now tracked as `roster-interval-source`,
+which states the five properties a source must supply and blesses a negative
+result as closing it. This narrows what the owner is deciding: not whether to
+rescue a two-part gap, but whether to acquire one input.
+
+**Point 4 is buildable, and the body does not say why.** The veto is on the
+*denominator* - which games a player could have played. Point 4's numerator -
+games observed played - is directly observed and needs no roster intervals at
+all. That asymmetry is the whole reason a durability panel survives a veto that
+stops valuation. Measured from the store above for 2025-26: 582 players hold at
+least one played game, median 51 and mean 45.7, with 175 players at 65 or more
+and 265 at 55 or more. A twelve-team league drafting thirteen slots needs about
+156 names, so the panel is populated across the entire draftable pool rather than
+only its top.
+
+**Point 4 cannot be built exactly as written.** It requires "observed games played
+with its **unknown share** published", but the unknown share the accepted protocol
+defines is the quantity this same ADR says is not calculable. As drafted, point 4
+asks the screen to publish a number the Context says does not exist. Two readings
+build different screens, so the ambiguity is load-bearing rather than cosmetic.
+
+**Resolution: publish the denominator, not an unknown share.** The panel names on
+screen the population it divided by - games the player's team played while that
+player held any participation row that season - which is descriptive, checkable,
+and needs no roster intervals. It must be labelled so it cannot be read as the
+protocol's `unknown_share`, which remains uncomputed. Reusing that name for a
+weaker quantity is precisely the `gameEt` failure this project keeps paying for:
+a well-formed value that lies about what it is.
+
+**What the number cannot see, and this must appear beside it.** Games played
+conflates durability with rotation status and roster tenure. An injured starter, a
+healthy scratch, a late signing and a two-way player on assignment are
+indistinguishable in it. That conflation is exactly what the denominator would
+resolve, and exactly why this panel stays descriptive, is never sorted as though
+it were value, and is never fused into a price (ADR-018, ADR-002).
+
+**What I did not do.** I counted played rows per player. I did not compute an
+at-risk denominator, an unknown count, or any unknown share, and nothing here is
+an input to the frozen preregistration at
+`docs/models/participation-opportunity-coverage-preregistration.md`.
