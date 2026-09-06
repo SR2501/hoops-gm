@@ -48,6 +48,21 @@ moved leaves are under `operator.source_fingerprints` and `operator.commands`,
 no cohort number moved and the edit stands. **Any other moved leaf stops for
 `quant`, pre-unblind.**
 
+> **Read the 2026-09-06 amendment below before acting on this item.** The
+> comparison stated here is *absolute*: it measures a regeneration against the
+> committed manifest, and so charges an edit for environment drift it did not
+> cause. The amendment makes it **differential**. On 2026-09-06 a lane entered at
+> this paragraph, stopped where it says to stop, discarded a correct
+> regeneration, and reported a gap that did not exist.
+>
+> ADR-013's amendment of 2026-08-21 states the better practice — an ADR asserts
+> the present contract, so it is corrected in place rather than left contradicted
+> by a block below, because a reader entering at the earlier block builds the
+> wrong thing. This pointer is deliberately weaker than that. Both this ADR and
+> the amendment are `Proposed`, so rewriting item 3 would present an unaccepted
+> change as the decision. **When the owner accepts the amendment, correct item 3
+> in place and delete this note.**
+
 **4. Regeneration is offline and takes one command.** Driven on 2026-08-27
 against the unmodified tree: exit 0, no network, **1664 leaves, 0 added, 0
 removed, 1 changed**, and the one change is `operator.commands[8]` echoing the
