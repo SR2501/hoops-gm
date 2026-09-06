@@ -38900,3 +38900,115 @@ the moment that symbol merges.
 - **That `gates.md` is the right home for all six findings.** They are traps in
   the environment rather than in a gate, and `architect` owns that file's
   curation; if any belongs elsewhere, move it.
+
+
+## 2026-09-06 - architect - the review the merge rule requires, the fact that it cannot be recorded, and my own breach of the rule I invoked
+
+I reviewed #178 because the autonomous-merge rule needs gates green **and** an
+independent review, and it had none. Two blocking findings, and I verified both by
+running them rather than relaying them.
+
+First: `gates.md` prescribed re-reading with `newline=""` to stop `\r` being stripped.
+That would have killed conflict detection tree-wide, because `is_conflict_marker`
+compares the separator with **exact equality**, so a retained `\r` makes
+`"=======\r" != "======="`. The three `startswith` markers survive; the separator does
+not. The lane then found a third comparison of the same shape that I had missed, in the
+same file. Second: an entry described a test file's docstring, and the docstring
+literally opens by disowning the version being described.
+
+**The rule cannot be satisfied in the way it appears to be.** Every agent session pushes
+as the same account, so GitHub refuses the review outright - *"Can not request changes on
+your own pull request"*. #166, #168, #171 and #175 each record **zero** reviews. A merge
+with no review and a merge after a review that found two blocking defects are the same
+artefact in this repository's record. Branch protection cannot fix it; the approval would
+come from the same account. Filed as `independent-review-unrecordable`. The lane sharpened
+it and I adopted the sharper form: the gap is not only that a review cannot be *recorded*,
+it is that nothing forces a reviewer to have *executed* anything. So the done-condition is
+now a property of the artefact - a review carries at least one re-derivable quantity and
+the command behind it - which degrades gracefully, because a review with no such quantity
+is visibly one.
+
+**What I did wrong.** I pushed to `main` twice while that review was open, forcing three
+rebases on the lane and turning its PR `CONFLICTING`. The rule against moving a tree under
+a running review is in the skill file I had already invoked. The avoidable part is narrow
+and worth naming precisely: the conflict surface was only `docs/handoff.md`, and one
+`git diff --name-only` against the open PR would have shown it before the first push. I
+froze `main` afterwards and handed the lane the byte arithmetic to reconstruct against;
+it hit the predicted count on all three attempts.
+
+**I also corrected a false claim of my own, which I had already relayed.** I asserted that
+pushes to `main` get CodeQL and no backend suite, and that CI had missed a citation break
+I found locally. Measuring six consecutive commits: `90ab3d83` ran **14 checks with the
+backend suite failing**. CI caught it. I had found it locally, reverted, then read the
+remote and mistook the post-revert state for the whole history. The real defect is
+different and worse: coverage is **erratic**, because superseded commits get cancelled -
+`8139df6d` carries **zero** check runs of any kind. The tip is reliably measured; the path
+to it is not, which is what breaks `git bisect` against a gate.
+
+**Closing a "could not verify" from my last entry.** I asked whether other failure messages
+citing amended ADRs had gone stale the way ADR-019's did. Audited: ten amended ADRs, and of
+roughly sixty message contexts examined, **no other stale message**. The references in the
+high-amendment ADRs are overwhelmingly comments and docstrings describing provenance, not
+prose instructing an operator. The one message that does state a rule is now pinned by a
+test that reads its own source with `inspect.getsource()`. A negative result, and cheap.
+
+**One observation that is larger than any of the above.** The lane established that the
+inline-conflict-marker hazard is at least the **third independent rediscovery** in this
+repository, and that the handoff entries recording the first two are themselves the lines
+that contain the marker strings. A 2.5 MB append-only log does not function as a hazard
+store, because nobody reads it before hitting the hazard. #178 moving traps into
+`gates.md` is the right structural response and I have not treated it as merely tidy. If a
+fourth rediscovery happens, that is the trigger to say the log has outlived that particular
+job.
+
+**Could not verify.** Whether `8139df6d`'s zero check runs are a race or a systematic skip;
+still one observation, and I did not look for a second. Whether the audit's exclusion of
+about 255 provenance mentions hid a message that instructs - I accepted its boundary rather
+than re-deriving it. Its denominator (315 mentions, 94 files) also differs from the lane's
+(317, 89) because the roots differ; I did not reconcile them, and neither number is load
+bearing.
+
+
+## 2026-09-06 - architect - a game's date is fixed by whichever importer inserted it first, so the check that would catch a bad one cannot fire
+
+Chasing the third check `boxscore-date-plausibility-bound` still owes - cross-check
+`game_date` against the schedule endpoint's own date for the same `game_id` - I found the
+check cannot discriminate as the schema stands, and found a larger thing behind it.
+
+`import_games` sets `game_date` **only when it inserts**. The assignment is inside the
+`if game is None` branch; the `else` branch refreshes scores and conditionally `tipoff_utc`,
+never the date. All three call sites route through it - two box-score paths in `backfill.py`,
+one of which is a deliberate re-import that exists solely to attach a corrected `tipoff_utc`,
+and the schedule path. So whichever importer first sees an `nba_game_id` fixes that game's
+date permanently, and the other derivation is computed and discarded.
+
+That makes the proposed cross-check circular in the schedule-first order:
+`_persist_schedule_cohort` passes `record.game` to `import_games` and then writes
+`team_schedule.game_date` from that same `record.game.game_date`. One value from one parse
+in two columns. A check whose two possible answers are the same value has not been run.
+
+**Measured against the retained cohort store, read-only.** `team_schedule` holds **0 rows**
+against `nba_games`' **1230**, so the schedule importer has never run there and every row is
+box-score-inserted. The derivation is live and load-bearing: **941 of the 1227 games with a
+tip-off - 77% - have `date(tipoff_utc)` different from the stored `game_date`**, exactly what
+a correct local-date derivation produces for a game tipping after 7pm Eastern. `0022500002`
+is stored `2025-10-21` and tips `2025-10-22 02:00 UTC`, and the split discriminates:
+grouped by tip-off hour, **all 941 fall in UTC hours 00-04 and all 286 agreements in 17-23,
+with no hour holding both**. An inconsistently applied conversion would straddle an hour. Under
+a naive UTC parse those 941 dates each move a day, and `player_participation` joins on that date.
+
+**The narrowing that keeps this honest.** This is not a claim that the schedule path derives
+dates wrongly. It appears not to - `schedule.py` states the `gameDateTimeEst` `Z`-suffix
+problem explicitly and parses Eastern wall clock separately. The defect is that whichever
+derivation runs second is dropped without comparison. **What is lost is not the date; it is
+the detector.** Filed as `game-date-write-once`, with a dependency edge added from
+`boxscore-date-plausibility-bound`, because its remaining check is not writable as a valid
+discriminant until the retention question is decided. That edge is an in-place edit to an
+existing line for the usual reason: nothing above line 3623 of the backlog may change the
+file's line count.
+
+**Could not verify.** Which importer runs first in the intended production order - and the
+objection does not need it, since the complaint is that nothing pins or records that
+ordering. Whether the schedule parser's date agrees with the box-score parser's on real
+data; that cannot be measured here, because the check has no rows on one side in this store,
+which is itself worth knowing before someone sizes the work.

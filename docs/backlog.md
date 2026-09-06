@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 130 pending - 221 total**
+**91 done - 0 blocked - 131 pending - 222 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -192,7 +192,7 @@ disagreeing with them is a finding it should report rather than adjudicate.
 ### `boxscore-date-plausibility-bound` - Bounding box-score game dates against an independent source
 
 - [ ] **pending**
-- **Depends on:** `nba-stats-ingest`, `participation-ledger`
+- **Depends on:** `nba-stats-ingest`, `participation-ledger`, `game-date-write-once`
 
 Assert every derived `game_date` against something the box-score payload does not supply
 itself. `gameEt` carries a `Z` suffix and is **not** UTC — it is Eastern time wearing a UTC
@@ -6094,3 +6094,55 @@ command that produced it. That degrades gracefully, because a review containing 
 re-derivable quantity is visibly a review containing no re-derivable quantity, and no
 check has to be built to notice. It does not solve attribution - GitHub still shows one
 author - but attribution was never the part that mattered; **evidence was.**
+### `game-date-write-once` - A game's date is fixed by whichever importer inserted it first
+
+- [ ] **pending**
+- **Depends on:** `nba-stats-ingest`
+
+`import_games` in `ingest/importers.py` sets `game_date` **only when it inserts**. The
+assignment sits inside the `if game is None` branch; the `else` branch that follows refreshes
+scores and conditionally `tipoff_utc`, and never the date. Whichever importer first sees an
+`nba_game_id` therefore fixes that game's date permanently. All three call sites route through
+it - `ingest/backfill.py` twice on the box-score paths, one of those a deliberate re-import that
+exists only to attach a corrected `tipoff_utc`, and `_persist_schedule_cohort` once.
+
+**Consequence 1 - the derivation that exists because a field lies is discarded.** The box-score
+parser computes its date through `_local_game_date` in `ingest/nba/parsers.py`, a function that
+exists precisely because `gameEt` carries a `Z` and is not UTC. That value reaches `import_games`
+inside an `NbaGameRecord`. For any game whose row the schedule importer already created, it is
+computed and thrown away, so the house rule it enforces is not enforced on that path.
+
+**Consequence 2 - the cross-check this item's sibling still owes would not discriminate.**
+`boxscore-date-plausibility-bound` states its third check as comparing the box-score date against
+the schedule endpoint's own date for the same `game_id`. But `_persist_schedule_cohort` passes
+`record.game` to `import_games` and then writes `team_schedule.game_date` from that same
+`record.game.game_date`. Both columns hold one value from one parse, so for a schedule-created row
+that comparison cannot fail. Whether it discriminates at all is decided by which importer inserted
+the row - ingest order - and not by whether the data is right. A check whose two possible answers
+are the same value has not been run.
+
+**Measured, in the retained cohort store, read-only.** `team_schedule` holds **0 rows** against
+`nba_games`' **1230**, so `_persist_schedule_cohort` has never run there and every game row was
+inserted by the box-score path. The derivation is therefore live in that store, and it is
+load-bearing: **941 of the 1227 games carrying a tip-off - 77% - have `date(tipoff_utc)` different
+from the stored `game_date`**, and the split is a clean function of the UTC clock
+rather than an ad-hoc or half-applied rule: grouped by tip-off hour, **every one of the 941
+falls in UTC hours 00-04 and every one of the 286 agreements in 17-23, with no hour holding
+both**. A conversion applied inconsistently would put at least one hour on both sides. Sample: `0022500002` is stored as `2025-10-21` and tips at
+`2025-10-22 02:00 UTC`. Under a naive UTC parse those 941 dates all move by a day, and
+`player_participation` joins on that date.
+
+**The honest narrowing.** This is not a claim that the schedule path derives dates wrongly - it
+looks like it does not, since `schedule.py` states the `gameDateTimeEst` `Z`-suffix problem
+explicitly and parses Eastern wall clock separately. The defect is that whichever derivation runs
+second is discarded without comparison, so the two independent derivations are never checked
+against each other. What is lost is not the date; it is the detector.
+
+**Done when** the two dates are retained separately rather than one silently winning, and the
+comparison is written against the retained pair so its outcome does not depend on ingest order.
+Whether that is a second column, a recorded disagreement, or making the update branch write the
+date is a schema decision and is deliberately not settled here. Note that the check cannot be
+exercised in the current store at all until schedule rows exist on one side of it.
+
+**What I did not check.** Which importer runs first in the intended production order - and the
+objection does not need it, because the complaint is that nothing pins or records that ordering.
