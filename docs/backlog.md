@@ -5159,6 +5159,19 @@ wrong is to leave it wrong and stop the next one, not to repair it.
 The 269 pre-existing CRLF lines in `handoff.md` show prior authors hit this too. Every
 author is being asked to remember a per-file fact that the machine can read directly.
 
+**Confirmed empirically 2026-09-06.** The A3 trial arm reported that **three of five
+arms corrupted this file** performing the append that `AGENTS.md` mandates, and that
+it consciously skipped the house rule because not appending was safer than appending.
+It was right, which is the uncomfortable part: **the rule as written makes the file
+less safe than ignoring it.** Measured on the current bytes - 2,379,269 bytes, 35,895
+LF-only endings, 312 CRLF - a naive text-mode rewrite converts every LF ending, adds
+**36,207 bytes**, and does not preserve the prefix. It is not an append; it is a
+36,000-line whole-file diff that nobody reads. `check_append_only.py` would reject it
+on containment, but that script is wired into no workflow, no test and no hook, so the
+detection never runs. Until the helper exists, `AGENTS.md` should state the procedure
+on the same line as the rule: `read_bytes()`, append LF-encoded, `write_bytes()`, then
+assert the prefix is byte-identical and the CRLF count is unchanged.
+
 **Acceptance.** A helper - `scripts/append_doc.py` or equivalent - that takes a target
 path and body text, detects the target's dominant line ending from its own bytes, and
 appends via `read_bytes()`/`write_bytes()` with that ending. It must refuse a file with
