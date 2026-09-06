@@ -5,6 +5,11 @@ from hoops_gm.ingest.preseason_news.client import (
     DEFAULT_MIN_INTERVAL_SECONDS,
     PreseasonNewsClient,
 )
+from hoops_gm.ingest.preseason_news.freshness import (
+    MAX_NEWS_AGE,
+    NewsFreshness,
+    assess_news_freshness,
+)
 from hoops_gm.ingest.preseason_news.models import (
     PreseasonNewsFeed,
     PreseasonNewsItem,
@@ -28,8 +33,10 @@ __all__ = [
     "DEFAULT_MIN_INTERVAL_SECONDS",
     "ENDPOINT",
     "MAX_BODY_BYTES",
+    "MAX_NEWS_AGE",
     "RSS_URL",
     "SOURCE",
+    "NewsFreshness",
     "PreseasonNewsClient",
     "PreseasonNewsFeed",
     "PreseasonNewsItem",
@@ -37,6 +44,7 @@ __all__ = [
     "PreseasonNewsSnapshot",
     "ResolvedPreseasonNewsItem",
     "UnresolvedPreseasonNewsItem",
+    "assess_news_freshness",
     "parse_preseason_news",
     "resolve_preseason_news",
     "write_preseason_news_report",

@@ -1,12 +1,13 @@
 # Adapter - preseason NBA player news
 
-**Status:** working and verified live 2026-09-06. This is raw availability
-evidence for the period before the NBA's per-game injury report exists. It does
-not infer an injury status or change a valuation.
+**Status:** partial source, working and verified live 2026-09-06. This is raw
+availability evidence for the period before the NBA's per-game injury report
+exists. It does not infer an injury status or change a valuation, and its
+measured coverage is not sufficient for it to serve as the sole draft-day feed.
 
 Risk R40 makes this adapter load-bearing for the 18 October 2026 auction: the
-official NBA injury report does not exist in the preseason, so this feed is the
-only implemented availability-news substitute on draft day.
+official NBA injury report does not exist in the preseason. This adapter adds
+one partial signal but does not, by itself, mitigate R40.
 
 Code: `backend/src/hoops_gm/ingest/preseason_news/`
 
@@ -106,11 +107,17 @@ cd backend
 python -m hoops_gm.ingest.preseason_news
 ```
 
-The command writes `data/reports/preseason_news.json` atomically and returns a
-non-zero exit code when any feed item is unresolved. The report contains the
-source observation time and raw-body SHA-256, each resolved local `player_id`,
-and every unresolved item with its refusal reason. Raw response bytes are kept
-under `data/raw/rotowire_nba_news/`.
+The command writes `data/reports/preseason_news.json` atomically. It exits 2
+when any feed item is unresolved and exits 3 when the newest item is more than
+14 days old by default. Operators can set a stricter positive threshold with
+`--max-news-age-hours`; the report records the applied limit. The stale report
+is still written and contains its age, limit, assessment time, and diagnostic,
+so a structurally valid but stalled or cached feed cannot appear healthy. Age is
+measured when the command assesses the snapshot, not when the payload was first
+captured. The report separately contains the source observation time and
+raw-body SHA-256, each resolved local `player_id`, and every unresolved item
+with its refusal reason. Raw response bytes are kept under
+`data/raw/rotowire_nba_news/`.
 
 The report preserves the source headline and description. It deliberately has
 no normalized `status`, probability, rank, or valuation field. "Concern",
@@ -123,7 +130,8 @@ requires its own evidence.
 ## Throttling, retry, cache, and failure
 
 - **Throttle:** one request every two seconds in-process.
-- **Cache:** ten minutes, matching the feed's stated `<ttl>10</ttl>`.
+- **Cache:** ten minutes, matching the feed's stated `<ttl>10</ttl>`. This is a
+  cache lifetime, not a poll schedule.
 - **Retry:** three attempts with exponential backoff only for transport
   failures and HTTP 408, 425, 429, or 5xx.
 - **Refusal:** other 4xx responses raise non-retryable `SourceRejected`.
@@ -160,13 +168,20 @@ between them, or the id space is shared across sports. **This document does not
 claim to know which**, and no evidence here distinguishes them.
 
 One capture proves an observed window size of 2; it does **not** prove that 2
-is the feed's configured cap. The poll cadence is 10 minutes, derived from the
-feed's observed `<ttl>10</ttl>` declaration. At an observed two-item window,
-that tolerates at most `2 / 10 = 0.2` items per minute between polls. If more
-than two items arrive in a ten-minute interval and the feed retains only two,
-displaced items are lost **silently and unrecoverably**. The raw store preserves
-every successful observation but cannot reconstruct displaced news or news
-published before collection started.
+is the feed's configured cap. The code contains **no scheduler or poller**; one
+CLI invocation performs one fetch, subject to the ten-minute cache lifetime.
+If an external scheduler invoked it every ten minutes and the feed retained
+only two items, the observable ceiling would be `2 / 10 = 0.2` items per minute,
+or 12 per hour. Items displaced between invocations would be lost **silently
+and unrecoverably**. The raw store preserves every successful observation but
+cannot reconstruct displaced news or news published before collection started.
+
+The two carried GUIDs are `nba532524` and `nba532515`, whose numeric portions
+differ by 9. That is an observed ordering gap, not proof that eight NBA items
+were omitted: this work did not verify whether the identifier sequence is
+NBA-specific or shared across sports. The cause is unexplained. Combined with
+the two-item response, it means the feed must be treated as a partial source
+rather than a complete or sole draft-day availability feed.
 
 The feed contains RotoWire summaries that cite reporting sources; it is not a
 direct firehose of every beat reporter. It can carry preseason injury,
