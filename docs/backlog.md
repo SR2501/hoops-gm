@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 126 pending - 217 total**
+**91 done - 0 blocked - 127 pending - 218 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5705,3 +5705,76 @@ works, this may correctly never be built.
 **Done when:** a cohort regeneration is byte-reproducible from a pinned snapshot
 id on a machine that did not produce it. Gate: Code + Adapter.
 - *Referred by `quant`, ruling action 3, with the caution added here.*
+
+### `draft-day-shortlist` - The thing the owner actually asked to have working on draft day
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`, `projection-blending`, `scoring-profiles`
+
+**Owner requirement, 2026-09-06, in his words:** *"What I want working on draft
+day is live suggestions on my pick that fit my current strategy. With health
+weight or load management weight somehow visible. Then I only have to do last
+second research on 3-5 options instead of overweighting one category by sorting
+in a hurry."* He also accepts BBM per-game projections as the baseline, wants
+free feeds and **manually pasted** observations ingestible, and calls the
+paired healthy-versus-adjusted display *"not attached to that visual
+specifically"* - so the two-number display is one candidate presentation, not
+the requirement.
+
+**Why this is not a duplicate of `draft-recommender`, which already exists.**
+`draft-recommender` is marked DEPRIORITISED and is described almost entirely in
+snake terms - value over replacement against pick slot, ADP value and reach,
+positional scarcity, tier cliffs - on the correct grounds that snake stopped
+being a draft-day deliverable when the league confirmed auction on 2026-08-17.
+**The deprioritisation appears to have carried the auction live-pick case away
+with it.** The neighbouring items do not cover it either: `draft-day-synthesis`
+is one reproducible batch run on the morning of 18 October, not a suggestion at
+a pick, and `live-draft-availability` recomputes values when news breaks and
+depends on that synthesis. So the owner's headline requirement is currently
+covered by **no active item** - a sequencing gap rather than a missing idea.
+**Fold this into `draft-recommender` instead if that item is revived and
+reframed for auction**; two items describing one draft-day surface is worse than
+one.
+
+**Measured 2026-09-06, not assumed: no code ranks players by value.** Every
+ordering in the draft path sorts by `sequence` or `team_slot` -
+`draftBoardModel.ts:201,244` and `draft/service.py:176,187,239,263,282`.
+`_ranks` in `reliability_backtest.py:874` is a statistical rank used for
+correlation. `source_board_profile` authorises board-derived events; it is not a
+ranked board. The draft screens today are a **log and seat view**.
+
+**What does exist and can be composed:** projection blending with manual
+overrides and per-category source weights (`projections/blending.py`), league
+scoring profiles (`scoring/profiles.py`), live auction draft state
+(`/api/v1/drafts/*`), a category view (`/draft/:id/categories`), and 596
+reliability scorecards already rendering availability evidence on `/reliability`.
+
+**The architectural constraint that matters for the deadline.** This must not
+hard-depend on a calibrated `p(play)`. `availability-model` is blocked behind
+the opportunity-coverage veto and may still be blocked on draft day; an item
+that cannot render until that clears converts a blocked model into a missed
+deadline. The owner asked for health to be *"somehow visible"*, not for a
+calibrated probability, and the shipped reliability evidence already satisfies
+"visible" without fusing a new number. **Build the surface so the health column
+is a slot**: filled by reliability evidence today, and by `p(play)` later
+without reshaping the surface.
+
+**Gate boundary, stated so it is not argued later.** The shortlist *surface* -
+joining existing numbers, filtering to the owner's roster, budget and category
+needs, and displaying them - is **Code**. Any **new fused number** it introduces
+that a draft decision rests on, including any single ranking score that combines
+production with availability, is **Model** and needs calibration, held-out
+evidence, a model card and a statement of blind spots. Displaying two existing
+numbers side by side is Code; multiplying them together is Model. Do not let the
+second arrive disguised as the first.
+
+**Done when:** at a live pick, with a draft in progress, the surface returns 3-5
+candidates; each carries its projected per-game contribution in the league's
+own categories, the owner's remaining budget and roster need are reflected in
+the filter, and a health or load indicator is present for every candidate with
+its provenance visible. A recorded-fixture test drives the whole path with no
+network. The refusal path is explicit: when an input is missing or stale it says
+so rather than silently ranking on partial data. Gate: Code, plus Model for any
+fused score.
+- *Filed by `architect` after the owner's 2026-09-06 clarification, from a
+  measurement of the draft path rather than from the backlog's own summary.*
