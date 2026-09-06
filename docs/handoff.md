@@ -36037,3 +36037,57 @@ keeping: serialisation detects type drift only as an accident of how `json.dumps
 renders `true` versus `1`, so it would silently stop working for any type pair that
 renders identically. The lane's version states the invariant directly. Both follow-ups
 below come from its own disclosure rather than from review.
+## 2026-09-06 - architect - CI has no ceiling, no append-only guard, and a register with duplicate IDs
+
+**Changed:** Added `timeout-minutes` to all eleven jobs in `.github/workflows/ci.yml`
+(PR #175) with `MEASURED_LONGEST_MINUTES` in `backend/tests/test_ci_workflow.py`
+asserting every ceiling clears that job's own slowest observed run by 1.5x, plus a
+guard that fails when a job has a ceiling with no measured duration behind it.
+Extended R59 with three vacuity instances found tonight and added R66 for checks
+that bind the checkout environment. Filed `ci-main-signal-lost-in-queue`,
+`append-only-guard-is-not-enforced` and `risks-register-integrity-check`.
+
+**Now true:** A hung CI job is reclaimed rather than holding a runner for GitHub's
+360-minute default. That mattered more than the backlog item claimed: three
+`push`-to-`main` runs tonight (`34021736746`, `34021638032`, `34020804382`)
+concluded `cancelled` with `jobs=0` and no job carrying a `startedAt`, meaning they
+were cancelled while pending in the concurrency queue without ever starting. Main
+pushes serialise behind a ~25-minute run, so a single hang blocks the queue and
+every later main push is cancelled by the next one.
+
+**The item's second half is answered and its premise was wrong.** It asked whether
+the main-vs-PR Postgres gap was contention, cache behaviour, or a suite that grew
+when four PRs merged. Measured across six runs the step took 40.6 / 22.7 / 21.6
+minutes on main and 22.5 / 21.5 / 19.2 on pull requests. Two of three main runs sit
+inside the PR band, so there is no systematic gap - one outlier. "The suite grew"
+is refuted outright: the later main runs ran a strictly larger suite and were
+faster.
+
+**Two findings I did not go looking for.** `scripts/check_append_only.py` protects
+2.36 MB of append-only handoff by requiring the base blob be a byte-prefix of HEAD,
+and is wired into nothing - a repository-wide search returns two hits, its own
+docstring and a prose mention in a skill file. It caught a real violation tonight
+only because someone ran it by hand. Separately the risk register holds 68 rows
+numbered R1-R66 with no gaps, so `R44` and `R45` each name two unrelated risks
+allocated by different sessions. Recorded at the top of the register rather than
+renumbered, because seven of the eight citations are in this file, which is
+append-only and cannot be corrected afterwards.
+
+**A correction to my own R66, by its own lesson.** I wrote that `docs/backlog.md`
+is "100% CRLF". That describes this checkout, not the repository. `core.autocrlf`
+is `true` and `.gitattributes` has one unrelated entry, so `git cat-file -p
+HEAD:docs/backlog.md` holds zero CRLF, as does `risks.md`. This file is the only
+one with committed CRLF (312 against 35,727 LF), which is why it is the one the
+append-only check complains about. A claim about a file's bytes must be measured
+with `git cat-file`, never by reading the working tree.
+
+**Could not verify:** Whether 90 minutes is enough for a Postgres run under
+conditions worse than any observed; the sample is 25 completed runs plus four
+scheduled ones. Whether the ten non-live-smoke entries in
+`MEASURED_LONGEST_MINUTES` are drawn from the right population - live-smoke
+measured 0.0 minutes across 25 runs because it is skipped on every event except
+`schedule`, and I only caught it because an independent review checked scheduled
+runs specifically. The same sampling error may sit under a job whose slow path I
+have not seen. Whether `R44`/`R45` citations in this file refer to the upstream or
+the model pair; I did not read all seven. And the cause of the single 40.6-minute
+Postgres outlier - contention survives by elimination, not by evidence.
