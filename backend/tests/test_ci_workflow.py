@@ -575,19 +575,52 @@ def test_every_job_declares_a_timeout(jobs: dict[str, Any]) -> None:
         assert 0 < limit < 360, f"{name}: {limit} does not improve on the default"
 
 
-def test_the_postgres_ceiling_clears_its_own_slowest_measured_run(
-    jobs: dict[str, Any],
-) -> None:
-    """The one limit with a real chance of firing on a healthy run.
+# Longest run observed for each job, in minutes. Measured 2026-09-06 across 25
+# completed runs, plus four scheduled runs for live-smoke. A ceiling is only
+# meaningful against the distribution it is supposed to sit above.
+MEASURED_LONGEST_MINUTES = {
+    "postgres": 45,
+    "backend": 14,
+    "live-smoke": 57,
+    "adapter-gate": 3,
+    "frontend": 2,
+    "migrations": 1,
+    "model-gate": 1,
+    "secrets": 1,
+    "userscript": 1,
+    "backlog-graph": 1,
+    "doc-terminators": 1,
+}
 
-    The Postgres job measured 18.4-24.6 minutes across six pull-request runs and
-    41.7 minutes on main (run 34017556556) -- the same suite, roughly 1.7x
-    slower, and that gap is unexplained. A ceiling set from the pull-request
-    numbers alone would turn an unexplained slowdown into a red main.
+
+@pytest.mark.parametrize("job_name", sorted(MEASURED_LONGEST_MINUTES))
+def test_each_ceiling_clears_that_job_s_own_slowest_measured_run(
+    jobs: dict[str, Any], job_name: str
+) -> None:
+    """A ceiling is only safe against the population it was measured on.
+
+    live-smoke is why this is parametrised rather than written for Postgres
+    alone. Sampling 25 recent runs showed it taking 0.0 minutes, because it is
+    skipped on every event except ``schedule`` and none of those 25 was a
+    scheduled run. Its real duration on the path that matters -- upstreams down,
+    failing loudly with a full list of what broke -- is 55.8 to 56.2 minutes
+    across runs 33966362917, 33636177197, 33517331501 and 33417109345. A ceiling
+    read off the wrong population would have truncated the diagnostic run and
+    replaced 19 named upstream failures with a bare timeout.
+
+    Postgres is the other one worth naming: 45 minutes at its worst against 18.4
+    at its best, on the same suite, for reasons nobody has explained.
     """
-    slowest_observed = 42
-    limit = jobs["postgres"]["timeout-minutes"]
-    assert limit > slowest_observed * 1.5, (
-        f"postgres is capped at {limit} minutes but has been observed taking "
-        f"{slowest_observed}; leave headroom for the unexplained main-vs-PR gap"
+    observed = MEASURED_LONGEST_MINUTES[job_name]
+    limit = jobs[job_name]["timeout-minutes"]
+    assert limit > observed * 1.5, (
+        f"{job_name} is capped at {limit} minutes but has been observed taking "
+        f"{observed}; a ceiling that fires on a healthy run is one the next "
+        f"person raises until it never fires at all"
     )
+
+
+def test_the_measured_table_covers_every_job(jobs: dict[str, Any]) -> None:
+    """Otherwise a new job gets a ceiling nobody checked against anything."""
+    unmeasured = sorted(set(jobs) - set(MEASURED_LONGEST_MINUTES))
+    assert unmeasured == [], f"jobs with a ceiling but no measured duration behind it: {unmeasured}"
