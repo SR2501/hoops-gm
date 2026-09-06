@@ -749,3 +749,33 @@ reviewer who treats the second as covered by the first will remove the wrong one
 **The general shape:** every timeout has a *start condition*, and failures before
 that condition are invisible to it. When adding one, state what must already
 have happened for it to be able to fire.
+
+
+### "Docs-only" means safe, except where the doc is the gate
+
+**Recorded 2026-09-06, from applying the stale-merge-ref check above to PR #171
+and then nearly waving the result through.**
+
+The check fired correctly: #171's `refs/pull/171/merge` had parents `61f3dd72`
+and `65f5d5dc`, while `origin/main` had moved to `de5762b7`. Five commits of
+drift, so any CI verdict on that ref describes an integration that no longer
+exists, and the branch must be rebased before merge so the ref recomputes.
+
+The tempting next step is to measure the drift and dismiss it. I did measure it:
+**seven files changed, all under `docs/`, zero executable or test files.** By the
+usual reading that makes the stale ref harmless - no code moved, so no test
+outcome can change, so re-running would produce the same green.
+
+**That reading is wrong here, and the reason generalises.** One of those seven
+files is `docs/decisions/ADR-019-cohort-fingerprint-boundary.md` - *the document
+that defines the gate blocking #171*. Main's drift changed the rule the pull
+request is being judged against, while changing nothing the test suite executes.
+The CI result would indeed be identical; the **merge decision** would not.
+
+**So separate the two questions instead of collapsing them.** *Would re-running
+change the checks?* is answered by whether executable files moved. *Would
+re-deriving change whether I may merge?* is answered by whether any governing
+document moved. In a project whose gates live in Markdown, a docs-only diff is
+exactly the diff most likely to change the second answer while leaving the first
+untouched - and a reviewer who has learned to skim past `docs/` will see a green
+tick and a harmless diff and merge against a rule that changed underneath them.
