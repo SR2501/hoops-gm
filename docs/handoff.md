@@ -37668,3 +37668,90 @@ model math.
   actual player ordering. Treat it as a hypothesis with a clear sign, not a
   quantity.
 - **How much of the owner's roster was autopicked.** Only that some of it was.
+
+## 2026-09-06 - architect - recovering a quant handoff entry that lived only in a stash
+
+Sweeping scratch state during worktree cleanup, I found two stashes in the shared
+repository, both left on `sr2501-schedule-context-planning`. **A stash belongs to
+the repository and to no branch**: nothing pushes it, no branch carries it, and a
+fresh clone would not have it. It is the one place work can sit where neither
+`git log` nor a PR review will ever surface it, which is why the sweep step
+exists and why "check for scratch state" cannot mean "check for untracked files".
+
+**stash@{0} is fully superseded, checked rather than assumed.** Its code
+registered `OffNightSlate` and `OpponentContext` in `db/models/__init__.py` and
+added a portability test. Main has the import, the `__all__` entries and a test
+that asserts *substantially more* than the stashed one - check constraints and
+indexes the stash never mentioned. Its handoff entry, *2026-08-18 - quant -
+Implemented schedule-context schema after schedule-ingest merge*, is on main.
+
+**stash@{1} held 39 lines carried by nothing.** Its handoff entry,
+*2026-08-17 - quant - Schedule context design*, never landed on main. The model
+card it describes, `docs/models/schedule-context.md`, **is** on main - so the
+design survived and only the reasoning about it was stranded. That is the worse
+half to lose: a schema can be read off the code, but why a 15-game trailing
+window with season-to-date shrinkage was chosen cannot.
+
+It is reproduced verbatim below, extracted from git rather than retyped. I did
+not write it, and I have not verified its claims - several were overtaken when
+the schema landed the following day, and its own "Could not verify" section
+records what was open at the time. Its `##` heading is demoted inside a fence
+because tests parse this file's headings and an out-of-order August heading
+appended in September could change what they read; the bytes are otherwise
+unaltered.
+
+**The stashes are left in place.** Dropping them is destructive, gains nothing,
+and this entry is the thing that was missing. They can be dropped by whoever is
+confident enough to run `git stash drop` twice; that is not a decision worth
+making on someone else's behalf while a recovery is one command away.
+
+```text
+## 2026-08-17 — quant — Schedule context design
+
+**Changed:** Reassigned `schedule-context` to the Phase 4 quant model boundary
+per the schedule-intelligence contract. Added the reviewable proposal in
+`docs/models/schedule-context.md` for `opponent_context` (one row per
+`team_schedule` fixture and model version) and `off_night_slates` (one row per
+NBA date and model version). The proposal specifies leakage-safe 15-game
+trailing windows with season-to-date shrinkage, category defence as
+volume-preserving structured data, a calibrated 15-point blowout target,
+garbage-time starter-minute suppression, and an explicit `<=5 games` or
+20th-percentile off-night rule whose thresholds are persisted.
+
+**Now true:** The modelling boundary is explicit: schedule context supplies
+auditable environment features and may condition availability, but it does not
+blend per-game production with expected games or silently manufacture `p(play)`.
+The existing `nba_api` adapter and `nba_games`, `player_game_logs`,
+`player_season_stats`, `nba_teams`, and future `team_schedule` rows are the
+identified inputs; no new adapter work is proposed. The model card states the
+held-out rolling backtest, reliability calibration, baseline comparisons, and
+known blind spots required by the Model gate.
+
+**Could not verify:** `team_schedule` is not yet populated by the concurrent
+`schedule-ingest` work, so the proposed grain, denormalized audit keys, and
+off-night threshold cannot be exercised against real season fixtures. This
+branch also does not contain the owner-accepted `ADR-009-schedule-intelligence-contract.md`
+referenced by the task, so the assignment is recorded from the request and the
+existing decisions README rather than independently verified from that file.
+No migration or computation code was written, and no backtest or calibration
+result exists yet.
+
+**Next:** `data-engineer` should finish `schedule-ingest` and populate
+`team_schedule` without adopting the proposed context tables prematurely.
+`quant` should then implement the computation against observed grain, persist
+feature snapshots and versions, and run the Model-gate held-out calibration
+before any availability or streaming consumer treats these values as
+trustworthy.
+```
+
+**Could not verify.**
+
+- **Whether these two are the only stashes anywhere.** `git stash list` is
+  per-repository, and I ran it in this checkout and in one worktree; both report
+  the same shared list, which is expected but is not a proof that another clone
+  on this machine holds none.
+- **Whether the recovered entry's claims were ever true.** I recovered it; I did
+  not audit it. It should be read as a dated record, not as current state.
+- **Whether anything else was lost the same way in August.** The stash was found
+  because I was looking at worktrees for a different reason. Nothing routinely
+  looks here, and this entry does not change that.
