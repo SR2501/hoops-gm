@@ -574,3 +574,44 @@ content is.
 **What this cost:** a preserved remote ref nobody needed, a backlog item filed
 for gates and review that were never required, and a false claim in a commit
 message and an owner report. What it would have cost to avoid: one command.
+
+
+### A paraphrase of a gate is a new gate, and nobody reviewed it
+
+**Recorded 2026-09-06. Found by a lane, in the coordinator's own instructions -
+mine.**
+
+A lane reported its Code gate green and it was not. It had not run `mypy` at
+all. It was not a stale-head read and it was not carelessness: **the kickoff
+prompt I wrote listed the Code gate as exactly three commands** - `ruff check`,
+`ruff format --check`, `pytest` - and the lane ran precisely those and got
+green. `gates.md` defines the Code gate as lint clean, **type-check clean**,
+tests green. *Type-check clean was dropped in the restatement.* The lane
+followed the instruction it was given. The instruction was wrong.
+
+**The general form.** Restating a gate in a prompt creates a second definition
+that looks authoritative, travels further than the original, and is reviewed by
+nobody. The lane cannot tell a complete restatement from a lossy one, because
+the paraphrase is the only version it sees. Every lane briefed from that prompt
+inherits the same hole, silently and identically.
+
+**This entry is an instance of the one above it.** *Naming a defect class is not
+a mitigation* - and the class was already named here, in the entry about running
+one gate and reporting another. It was written down, and I committed it anyway,
+in the act of briefing lanes on how not to. A rule the person writing the
+prompts does not re-read is not a control; it is a record of an intention.
+
+**Damage, bounded rather than assumed.** `ci.yml:96` runs `mypy` inside the
+`backend` job, so the full gate ran on every pull request regardless of what any
+prompt said, and no merge could bypass it. `main` verified directly at
+`b8fb1916`: `Success: no issues found in 267 source files`. The cost was wasted
+cycles and one false local green, not merged defects. **The mitigation held
+because of how CI was designed, not because of any care taken here** - if the
+dropped item had been one CI does not independently enforce, this would read
+differently.
+
+**The obligation, both directions.** A lane treats a handed-down command list as
+a starting point and re-derives from this file before reporting green. Whoever
+writes the prompt **cites the gate rather than restating it** - a path and a
+section name, never a command list. The prompt is allowed to say which gate
+applies. It is not allowed to say what the gate is.

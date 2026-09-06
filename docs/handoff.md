@@ -36664,3 +36664,49 @@ it holds now, the generator does not enforce it. The three 2026-01-19 DNS
 failures are a real but minor injury-report coverage gap (box-score ingest is
 complete 1230/1230), surfaced only as `attempted − fetched = 3`, not a named
 cascade field.
+
+## 2026-09-06 - A lane found the defect in my instructions, not in its own work
+
+**Agent:** architect (coordinator)
+
+A lane reported its Code gate green when it had not run `mypy` at all. Asked for
+the mechanism rather than an apology, it produced one that indicts the
+coordinator: **the kickoff prompt I wrote restated the Code gate as three
+commands and dropped type-check.** It ran exactly what it was told. The
+instruction was wrong. Recorded in `gates.md` as *A paraphrase of a gate is a
+new gate, and nobody reviewed it*, which is a concrete instance of the entry
+directly above it - *naming a defect class is not a mitigation*. The class was
+already written down. I committed it anyway, while briefing lanes on how not to.
+
+**Damage bounded rather than assumed.** `ci.yml:96` runs `mypy` in the `backend`
+job, so the full gate ran on every pull request whatever any prompt claimed, and
+no merge could bypass it. Verified `main` directly at `b8fb1916`: `Success: no
+issues found in 267 source files`. Cost was cycles and one false local green.
+**The mitigation held because of how CI was built, not because of care taken
+here.** Had the dropped item been something CI does not independently enforce,
+this entry would be a post-mortem.
+
+**The standing change:** prompts cite the gate by path and section. They do not
+restate it. A prompt may say which gate applies; it may not say what the gate
+is.
+
+**Second, unrelated, and the reason this was worth answering at all.** The same
+message arrived describing `origin/main` at `2cbc901`, the backlog header at
+83/0/115/198, and its own PR as unmerged and about to be merged. All three were
+false: `main` was `b8fb1916`, the header 91/0/120/211, and **PR #170 had merged
+at 06:47 UTC at `a322f704` - the exact head the lane described force-pushing.**
+The message was queued and delivered late, so the lane was reasoning correctly
+about a world that had ceased to exist.
+
+That is a hazard of long-running parallel lanes rather than a defect in any of
+them, and the handling that worked was to re-derive all three facts before
+replying and to open the reply by naming which of the lane's beliefs were now
+false. **A late message is not wrong when sent and is dangerous when acted on**,
+and the asymmetry matters: the lane was one step from force-pushing over a
+merged branch on a stale base.
+
+**Could not verify.** I did not read back my own kickoff prompts to confirm the
+three-command list, so the paraphrase claim rests on the lane's report plus the
+circumstantial fit of a green local run against a red gate. I judged direct
+verification unnecessary because the remedy - cite gates rather than restate
+them - is correct whether or not the specific prompt read exactly as described.
