@@ -12,7 +12,7 @@ written down, believed, and never executed. These tests execute it.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -575,21 +575,27 @@ def test_every_job_declares_a_timeout(jobs: dict[str, Any]) -> None:
         assert 0 < limit < 360, f"{name}: {limit} does not improve on the default"
 
 
-# Longest run observed for each job, in minutes. Measured 2026-09-06 across 25
-# completed runs, plus four scheduled runs for live-smoke. A ceiling is only
-# meaningful against the distribution it is supposed to sit above.
-MEASURED_LONGEST_MINUTES = {
-    "postgres": 45,
-    "backend": 14,
-    "live-smoke": 57,
-    "adapter-gate": 3,
-    "frontend": 2,
-    "migrations": 1,
-    "model-gate": 1,
-    "secrets": 1,
-    "userscript": 1,
-    "backlog-graph": 1,
-    "doc-terminators": 1,
+# Longest run observed for each job: (minutes, runs the job actually ran in).
+# Measured 2026-09-06 over the 300 most recent CI runs (2,861 completed,
+# non-skipped job rows), not a 25-run window. The first attempt at this table
+# used 25 runs and was wrong twice: it read live-smoke as 0.0 minutes, and it
+# put backend at 14 when backend has been observed at 74.2. The sample size is
+# stored beside each figure because a duration measured on a population the job
+# never ran in is the failure this table exists to prevent, and the count is the
+# only thing that makes it visible -- live-smoke's 8 is small because it runs on
+# `schedule` alone, and that is the point, not an oversight.
+MEASURED_LONGEST_MINUTES: Final[dict[str, tuple[int, int]]] = {
+    "backend": (75, 282),
+    "postgres": (61, 277),
+    "live-smoke": (57, 8),
+    "adapter-gate": (12, 287),
+    "frontend": (8, 287),
+    "migrations": (2, 286),
+    "model-gate": (1, 286),
+    "backlog-graph": (1, 287),
+    "secrets": (1, 288),
+    "userscript": (1, 287),
+    "doc-terminators": (1, 286),
 }
 
 
@@ -599,24 +605,45 @@ def test_each_ceiling_clears_that_job_s_own_slowest_measured_run(
 ) -> None:
     """A ceiling is only safe against the population it was measured on.
 
-    live-smoke is why this is parametrised rather than written for Postgres
-    alone. Sampling 25 recent runs showed it taking 0.0 minutes, because it is
-    skipped on every event except ``schedule`` and none of those 25 was a
-    scheduled run. Its real duration on the path that matters -- upstreams down,
-    failing loudly with a full list of what broke -- is 55.8 to 56.2 minutes
-    across runs 33966362917, 33636177197, 33517331501 and 33417109345. A ceiling
-    read off the wrong population would have truncated the diagnostic run and
-    replaced 19 named upstream failures with a bare timeout.
+    These runners are wildly heavy-tailed and the ceilings have to respect that
+    rather than the median. backend runs a median 8.4 minutes and has taken
+    74.2; postgres runs 20.4 and has taken 60.3; frontend runs 0.9 and has taken
+    7.9. An eight-fold spread on identical work is contention, and a ceiling set
+    off typical behaviour would fire on a healthy run several times a month.
 
-    Postgres is the other one worth naming: 45 minutes at its worst against 18.4
-    at its best, on the same suite, for reasons nobody has explained.
+    live-smoke is why this is parametrised rather than written for one job.
+    Sampling 25 recent runs showed it at 0.0 minutes, because it is skipped on
+    every event except ``schedule`` and none of those 25 was scheduled. Its real
+    duration on the path that matters -- upstreams down, failing loudly with the
+    full list -- is 55.8 to 56.2 minutes across runs 33966362917, 33636177197,
+    33517331501 and 33417109345.
     """
-    observed = MEASURED_LONGEST_MINUTES[job_name]
+    observed, _ = MEASURED_LONGEST_MINUTES[job_name]
     limit = jobs[job_name]["timeout-minutes"]
     assert limit > observed * 1.5, (
         f"{job_name} is capped at {limit} minutes but has been observed taking "
         f"{observed}; a ceiling that fires on a healthy run is one the next "
         f"person raises until it never fires at all"
+    )
+
+
+@pytest.mark.parametrize("job_name", sorted(MEASURED_LONGEST_MINUTES))
+def test_every_measurement_observed_the_job_actually_running(job_name: str) -> None:
+    """Zero is what an unobserved job looks like, and it passes everything.
+
+    Without this, ``"live-smoke": 0`` satisfies the ceiling test for every
+    conceivable limit, because ``limit > 0 * 1.5`` is true of any positive
+    ceiling. The table would then certify a job whose duration nobody has ever
+    seen, which is precisely the mistake that produced it.
+    """
+    observed, runs = MEASURED_LONGEST_MINUTES[job_name]
+    assert type(observed) is int and observed > 0, (
+        f"{job_name} is recorded at {observed!r} minutes; a zero or non-integer "
+        "measurement clears every ceiling and proves nothing"
+    )
+    assert type(runs) is int and runs > 0, (
+        f"{job_name} records {runs!r} runs behind its measurement; a figure "
+        "drawn from no observed run is a guess wearing a number"
     )
 
 
