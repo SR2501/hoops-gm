@@ -147,10 +147,17 @@ requires its own evidence.
 
 The capture at `2026-09-06T05:16:04.639291Z` exposed **2 items**:
 
-| Published (source) | Published (UTC) |
-|---|---|
-| `Sat, 05 Sep 2026 11:21:00 AM PDT` | `2026-09-05T18:21:00Z` |
-| `Thu, 03 Sep 2026 1:50:00 PM PDT` | `2026-09-03T20:50:00Z` |
+| Published (source) | Published (UTC) | `guid` |
+|---|---|---|
+| `Sat, 05 Sep 2026 11:21:00 AM PDT` | `2026-09-05T18:21:00Z` | `nba532524` |
+| `Fri, 04 Sep 2026 7:15:00 AM PDT` | `2026-09-04T14:15:00Z` | `nba532515` |
+
+Both rows are read directly from the committed fixture
+`backend/tests/fixtures/rotowire_nba_news.xml.gz`; the `guid` column exists so a
+reader can check each row against those bytes rather than trusting this table. The
+two guids are nine apart, which is an unexplained gap: either the feed omits items
+between them, or the id space is shared across sports. **This document does not
+claim to know which**, and no evidence here distinguishes them.
 
 One capture proves an observed window size of 2; it does **not** prove that 2
 is the feed's configured cap. The poll cadence is 10 minutes, derived from the
