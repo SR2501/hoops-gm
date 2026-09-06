@@ -546,9 +546,25 @@ Verifying the schedule grid on merged main I queried d.get("scoring_periods") an
 
 ## `c39` - Defect: python -m hoops_gm --help ignores argv and starts the server
 
-**Status:** pending
+**Status:** done — fixed in `5318354` (PR #168, merged as `ec13a1c`)
 
-Running `python -m hoops_gm --help` does not print help - it starts uvicorn and attempts to bind 127.0.0.1:8000, failing with WinError 10048 when a server is already running. __main__.py:11 main() takes no argv and never consults sys.argv. This is the SAME defect class I fixed in scripts/resolve_doc_conflicts.py earlier today, where --help performed a full resolution: a program that ignores its arguments will do its real work when asked to describe itself. Two independent instances in one repository on one day suggests it is worth a convention rather than two fixes. Low severity, trivial fix, but --help is the first thing an operator types.
+`__main__.py`'s `main()` now builds an `argparse.ArgumentParser` and calls
+`parse_args()` before `get_settings()`, `configure_logging()`, or
+`uvicorn.run()` — the exact call site named above (`__main__.py:11`, then
+`main()` calling `get_settings()` unconditionally). `-h`/`--help` now exits
+via argparse's built-in handling before any of those run.
+`backend/tests/test_cli_help.py` proves it: monkeypatches all three to raise
+if called, drives `--help`, and asserts none fire; a second test proves the
+parser is actually reached, not just built and discarded (a bogus flag exits
+2 rather than falling through to server startup). Both tests verified red
+against the pre-fix `main()`.
+
+The convention this defect's own note called for — every CLI entry point
+parsing arguments before any side effect, enforced by a test enumerating
+entry points — is **not** done here; it is a separate, larger item than this
+one fix. See `docs/governance/OPEN-cli-entry-point-contract.md`, which
+already records both this instance and the independent console-safety
+instance from the same night.
 
 ## `c40` - Defect: demo databases carry no alembic stamp and cannot be upgraded
 
