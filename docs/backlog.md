@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**83 done - 0 blocked - 112 pending - 195 total**
+**83 done - 0 blocked - 114 pending - 197 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4896,3 +4896,53 @@ establish ownership.
 **Acceptance:** `no_reading` and `refused` are distinct visible states rather
 than empty boards; the exact-content undo blind spot and football-snake-only
 evidence are visible; the existing event-backed `DraftSeats` board is unchanged.
+
+### `cli-console-safety-sweep` - Guarding the remaining eleven console writers
+
+- [ ] **pending**
+- **Depends on:** `console-safety-for-runtime-names`
+
+`console-safety-for-runtime-names` fixed one module. Measured on 2026-09-06,
+**12 modules under `backend/src` write to `sys.stderr` and 11 still carry no
+guard.** The highest exposure is `ingest/injury_report/backfill.py` with **9**
+stderr writes over injury-report data that is almost entirely player names -
+strictly more exposed than the module the original item named. Then
+`ingest/auction_values/import_csv.py` (5), the five `dev/seed_*.py` entry points,
+`ingest/schedule_import.py` (6), `ingest/injury_report/cohort_evidence.py` (2),
+`ingest/injury_report/merge_stores.py` (2), `ingest/backfill.py` (1) and
+`dev/publish_reliability_evidence.py` (2).
+
+Match the established treatment: `errors="backslashreplace"` rather than
+`replace`, so a name survives escaped-but-invertible instead of collapsing to
+`?`. `backend/tests/test_projection_import_cli.py` pins that distinction with
+`assert "?" not in rendered` and is the pattern to copy. Note that stdout is
+already safe where output is `json.dumps`: it defaults to `ensure_ascii=True`.
+
+The existing `backend/tests/test_console_encoding.py` cannot catch any of this - it
+walks **string literals**, so a name arriving from a vendor file at runtime is
+invisible to it. See `docs/governance/OPEN-cli-entry-point-contract.md`.
+
+**Acceptance:** a test that **enumerates** stderr-writing modules rather than
+listing them by hand, so module twelve cannot be added unguarded; each is
+exercised with a runtime-supplied diacritic name against a real cp1252 stream.
+
+### `secret-scan-working-tree-coverage` - Making a clean secret scan mean something before staging
+
+- [ ] **pending**
+- **Depends on:** `secret-scan-fixture-isolation`
+
+`scripts/check_no_secrets.py` draws its candidates solely from `git ls-files`,
+so an untracked file is never read. A green run before `git add` is therefore
+unrelated to the safety of the work being committed, while reading exactly like
+a pass. Observed twice on 2026-09-06: the same tree reported "No secrets found
+in 559 tracked files" and then 560 once a single new file was staged - the only
+signal that the first run had not examined it.
+
+This is the shape of failure the project keeps finding: a check that is
+well-formed, exits zero, and answers a different question than the reader
+believes. It is worse than no check, because it is quoted as evidence.
+
+**Acceptance:** the scanner either reads untracked, non-ignored working-tree
+files or refuses to report a clean result while they exist; and it asserts on
+the count and domain of what it scanned, so "scanned nothing" can never render
+as "found nothing".
