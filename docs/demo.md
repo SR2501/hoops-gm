@@ -107,13 +107,30 @@ The seed prints its own proof, grouped by screen:
 }
 ```
 
-Against the committed fixtures the database holds **30 teams, 10 imported games
-(12 published, 2 pending), 21 scoring periods, 20 team-games, 60 projection rows
-and 2 mock drafts** for the 2026-27 portal context. The Reliability context is a
-separate, deliberately tiny **2025-26 synthetic cohort: 2 named synthetic
-players, 3 final games, 4 played-game box-score rows and no invented non-play
-observations**. The
-System tab reports backend/database readiness from that same process.
+Against the committed fixtures, these are the sanity bounds for the values the
+screens publish. They are deliberately wider than one fixture recording: a
+normal schedule refresh should not require mechanically rewriting this page,
+while a missing cohort, duplicated season, or order-of-magnitude error should
+fail the gate in `backend/tests/test_seed_demo.py`.
+
+| published measure | minimum | maximum |
+|---|---:|---:|
+| `teams` | 28 | 32 |
+| `imported_games` | 8 | 16 |
+| `published_games` | 10 | 20 |
+| `pending_games` | 0 | 8 |
+| `scoring_periods` | 18 | 30 |
+| `team_games` | 16 | 32 |
+| `projection_rows` | 50 | 70 |
+| `mock_drafts` | 2 | 2 |
+| `reliability_players` | 2 | 2 |
+| `reliability_final_games` | 3 | 3 |
+| `reliability_box_scores` | 4 | 4 |
+| `reliability_non_play_rows` | 0 | 0 |
+
+The Reliability context is a separate, deliberately tiny 2025-26 synthetic
+cohort. The System tab reports backend/database readiness from that same
+process.
 
 The composed auction selects seven canonical players from that exact synthetic
 projection import, through the production nomination/sale/void writers. The
