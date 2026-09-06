@@ -13,13 +13,15 @@ being reached at all is a failure, not just an assertion mismatch.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 
 import pytest
+import uvicorn
 
 from hoops_gm import __main__ as cli
 
 
-def _forbid(name: str):
+def _forbid(name: str) -> Callable[..., None]:
     def _raise(*args: object, **kwargs: object) -> None:
         raise AssertionError(f"{name} must not be called by --help")
 
@@ -32,7 +34,7 @@ def test_help_exits_zero_and_prints_usage_without_side_effects(
 ) -> None:
     monkeypatch.setattr(cli, "get_settings", _forbid("get_settings"))
     monkeypatch.setattr(cli, "configure_logging", _forbid("configure_logging"))
-    monkeypatch.setattr(cli.uvicorn, "run", _forbid("uvicorn.run"))
+    monkeypatch.setattr(uvicorn, "run", _forbid("uvicorn.run"))
     monkeypatch.setattr(sys, "argv", ["python -m hoops_gm", "--help"])
 
     with pytest.raises(SystemExit) as excinfo:
@@ -57,7 +59,7 @@ def test_help_argument_parsing_actually_runs(monkeypatch: pytest.MonkeyPatch) ->
     """
     monkeypatch.setattr(cli, "get_settings", _forbid("get_settings"))
     monkeypatch.setattr(cli, "configure_logging", _forbid("configure_logging"))
-    monkeypatch.setattr(cli.uvicorn, "run", _forbid("uvicorn.run"))
+    monkeypatch.setattr(uvicorn, "run", _forbid("uvicorn.run"))
     monkeypatch.setattr(sys, "argv", ["python -m hoops_gm", "--not-a-real-flag"])
 
     with pytest.raises(SystemExit) as excinfo:
