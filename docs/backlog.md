@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**82 done - 0 blocked - 113 pending - 195 total**
+**83 done - 0 blocked - 112 pending - 195 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4789,7 +4789,7 @@ common in homebrew tools. TO ranks in reverse.
 
 ### `draft-page-invalid-id-request` - Stopping the draft board requesting `/drafts/NaN`
 
-- [ ] **pending**
+- [x] **done** - **Marker corrected 2026-09-05 by `architect`; the code landed 2026-08-28 in PR #120 at `174dd5193374be57b92f399fbaf3f3b60517061d` and the marker was never flipped.** Verified in the tree rather than from the commit message: `DraftPage.tsx:95` refuses on `!Number.isInteger(draftId) || draftId <= 0` **before** `DraftBoardLoader` mounts, so the hook cannot fire, and `DraftPage.polling.test.tsx:179` asserts the request list is empty for `/draft/not-a-number` where it previously held two `/drafts/NaN` entries. The same test file pins the two properties the split could have broken. **Do not re-report this code as missing** - the 2026-09-05 coordinator handoff names this marker specifically, and the paragraph below is the pre-fix description kept for the record.
 - **Depends on:** `draft-tracker-screen`
 
 `DraftPage.tsx` calls `useAsync` before the `isValidId` guard renders, so

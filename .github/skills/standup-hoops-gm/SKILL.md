@@ -22,6 +22,7 @@ here rather than working around it.
 | Risk register | `docs/governance/risks.md` |
 | Who owns what | `docs/governance/ownership.md` |
 | What only the owner may decide | `docs/governance/owner-decisions.md` |
+| Which model to run a lane on | `docs/governance/model-selection.md` |
 | Decisions, with amendments | `docs/decisions/` |
 | Task list with dependencies | `docs/backlog.md` |
 | Append-only work log | `docs/handoff.md` |
@@ -45,6 +46,13 @@ Gates are cumulative where work spans types.
 `architect`, `data-engineer`, `quant`, `backend`, `frontend`, `bridge`,
 `safety`. Definitions in `.github/agents/`. One child session per PR-sized unit,
 owned by the matching agent, with exact-head reviews from a *different* agent.
+
+**Choosing the model for each lane** is `docs/governance/model-selection.md`.
+Read it there rather than from memory — it is a standing file that gets updated,
+and the two dated `model-*-2026-09-05-*.md` files beside it are frozen evidence,
+one of which is confounded. The short version is that the default is unchanged
+and the lanes differ on speed, cost and one judgment item — **not** on whether
+the work came out right, where five models were indistinguishable.
 
 ## The hard deadline
 

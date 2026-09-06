@@ -35302,3 +35302,497 @@ empty 500 response, but it does not kill a real Vite proxy connection after a
 backend commit; reproducing that timing safely would require a purpose-built
 faulting server. Hosted checks and another fresh exact-head review remain
 required. Do not merge or self-approve from this session.
+
+## 2026-09-05 - architect - Landing a brief that lived only on a branch
+
+**Out of chronological order on purpose, and this note is why.** The entry
+immediately below is dated 2026-08-27 and is appended here on 2026-09-05. It has
+sat unmerged on `origin/sr2501-coordinator-handoff` at `f985a5e` for nine days:
+114 lines, `docs/handoff.md` only, never on `main`.
+
+A handoff brief that exists only on an unmerged branch is precisely the failure
+this file exists to prevent, and it was the artefact enforcing the rule that
+broke it - the same shape as the coordinator register having lived in a session
+table. Appending it late, out of order, with the disorder labelled, is better
+than either rewriting history or leaving it stranded.
+
+**Landed by byte containment, not by merge.** Merge-base
+`0a89f37a0c67562256cec3bc5db453e032a7486e`; its `docs/handoff.md` blob is
+1,885,352 bytes and is an exact byte prefix of both the branch blob (1,891,333)
+and of `main`'s current file (2,321,919), checked rather than assumed. The
+5,981-byte suffix appended below is the branch's bytes exactly, carrying 0 CR
+and 0 NUL of its own; this file's 149 inherited CR bytes and single NUL are
+untouched, as is its final LF.
+
+**What in it is now stale, corrected here rather than in the entry.** It reports
+`main` at `0a89f37` (now `9ea09fc`) and the backlog at 57 done / 2 blocked /
+93 pending / 152 total (now **83 / 0 / 112 / 195**). Its statement that
+`draft-tracker` sits clear of the valuation chain remains true, but its
+implication that its dependencies were nearly closed has not held:
+`draft-board-feed-integration` is still pending behind `fantrax-auction-capture`.
+Its rulings stand - the repository stays public, and Q15 is the live board with
+picks and budgets tracked automatically.
+
+
+## 2026-08-27 - architect - Coordinator handoff: ten merges, four lanes closed, and what the next architect needs
+
+**Written as a handoff brief.** This session is being retired for context reasons
+and its successor should start here.
+
+### State, re-derived rather than recalled
+
+- `main` = `0a89f37`. **Zero open pull requests.**
+- `docs/backlog.md` recounts to **57 done / 2 blocked / 93 pending / 152 total**,
+  matching its own header. `backlog_graph.py` exit 0.
+- `docs/handoff.md` ends with a newline, 0 CRLF, and this is entry 319.
+- All four lane sessions archived **after** being asked what they held. None
+  answered "nothing"; two were holding finished work that had to be recovered.
+
+### What merged, 26–27 August
+
+`#103` the owner's draft-day page · `#104` the draft feed, thirteen review rounds
+· `#105` reliability endpoint · `#106`/`#108` verification toolchain · `#107`
+projection profile · `#109` the board blocker · `#110`/`#111`/`#112` recovered
+tooling and the coordinator register · `#113` the owner's questionnaire answers ·
+`#114` the instrumented mock capture procedure · `#115` the ASP.NET postback
+probe · `#116` what thirteen rounds could not establish.
+
+### The thing that reorders everything
+
+**The owner answered the questionnaire.** `docs/what-draft-day-looks-like.md`
+now carries all fifteen questions. Question 15 — *the one thing that must work
+on 18 October* — is **"the live draft board with picks and budgets tracked
+automatically."**
+
+That is `draft-tracker`, and it does **not** sit behind the nine-item valuation
+chain. `auction-budget-manager` depends on `draft-tracker`, not the reverse. Six
+of its seven dependencies were already done; the seventh merged as `#104`.
+
+**I had the dependency graph the entire time and never asked which end he cared
+about.** That is the single most expensive mistake of the week and it cost
+nothing to fix once asked.
+
+### Three of his answers contradict assumptions the plan was built on
+
+1. **Two minutes per pick**, not the 8–30 seconds the overlay was designed
+   against. An evidence panel is affordable.
+2. **No manual fallback exists in his plan** — *"realtime awareness of draft
+   status so that I don't need to input all of that information."* The bridge
+   feed is load-bearing, not a convenience.
+3. **Projections rank above reliability**, with reliability's value explicitly
+   conditional on whether the tool absorbs in-season chaos. That makes the
+   in-season lineup manager — currently first on the cut list — load-bearing for
+   a reason the plan does not state. **This is an open decision, costed and
+   owed to him, not a question to re-ask.**
+
+### Blocked on the owner
+
+- **One mock draft with the userscript loaded.** Procedure now written down at
+  `docs/mocks/instrumented-capture.md`. It settles three open questions at once,
+  including whether `capture_order_disputed` will refuse *real* picks on a live
+  board. Waiting five days and rising in value.
+- **Bind or decline preregistration v3.** Declining costs no schedule.
+- **Correct this page.** Every `[architect inference]` in
+  `what-draft-day-looks-like.md` is unstruck and unconfirmed.
+
+**Ruled by him on 2026-08-27:** the repository stays **public** with his draft
+strategy in it. Raised, declined with the exposure stated. Do not privatise or
+revert `#113` on that basis without asking again.
+
+### Eight units he named that are not in the backlog
+
+Live league category table (asked for twice) · rival-strategy detection ·
+positional scarcity tipping points · out-of-position production · an agent to
+talk choices through with · an over-policing warning · per-team budgets · a
+feedback loop on his own bias.
+
+**Per-team budgets is a schema gap, not a feature.** `DraftParticipant` has no
+budget column; `auction_budget` is one scalar on `Draft` and
+`draft/state.py:680-682` derives every seat's remaining bank from it.
+
+### What is on `main` that will save the next architect time
+
+- `scripts/check_ci_gates.py` — the only honest way to read a CI head. Reports
+  failed **steps**, splits **skipped from starved**, refuses a short SHA before
+  querying, and returns non-zero while jobs are still running.
+- `scripts/check_append_only.py` — byte-prefix containment against the
+  **merge-base**, blob to blob, both negative controls gating.
+- `scripts/check_doc_terminators.py` and its CI job — the trailing-newline
+  hazard recurred twice before this existed.
+- `docs/governance/coordinator-register.md` — 338 entries.
+- `docs/adapters/draft-feed-what-thirteen-rounds-could-not-establish.md`.
+
+### What I could not verify
+
+- **That the recogniser fires on a real Fantrax draft-room payload.** It never
+  has. Every key in `FIELD_ALIASES` is a guess. Not disproved, unestablished.
+- **That the register is complete.** It is complete as of `#112`, and the gap
+  reopens the moment anyone adds an entry, because nothing syncs the session
+  table to the file.
+- **That the eight recovered caveat blocks are all of them.** 81 scratch files
+  were deleted before I asked what that lane held, and the loss is inferred from
+  memory rather than audited.
+- **That no other lane's work is stranded.** I found two lanes' finished tooling
+  by enumerating worktrees and temp directories *after* sessions went idle — not
+  by any process that would have caught it.
+
+### The failure mode this coordinator kept producing
+
+Twelve corrections from the lanes. The pattern worth inheriting: **I would reach
+a correct conclusion from a real artefact by a mechanism that was wrong**, and
+the wrong mechanism would then propagate as an instruction. I told four lanes to
+verify append-only against `origin/main`, which moves. I told them to run
+`resolve_doc_conflicts.py`, which silently rewrote 28,596 lines LF→CRLF while
+printing `Safe to stage.` I used `mergeStateStatus: CLEAN` as a merge signal.
+
+**State the mechanism, not just the conclusion** — it is the only thing that made
+those catchable.
+
+## 2026-09-05 - architect - The draft-day valuation deliverable cannot ship, and why that was invisible
+
+**Reviewed the coordinator handoff and re-derived state rather than inheriting
+it.** `main == origin/main == 9ea09fc7aa5bc55811753bb8fb91725eda74e067`, clean,
+zero open PRs; backend `127.0.0.1:8000` and frontend `127.0.0.1:5174` both
+answered 200, so the deliberately-detached services did survive.
+
+**The finding.** `draft-day-synthesis` - one versioned run on 18 October
+producing our own rankings and dollar values end-to-end, no external ranking in
+the lineage (ADR-008 clause 5) - is unreachable, and not for a schedule reason.
+It needs `risk-adjusted-valuation`, which sits behind `availability-model`,
+which is `FIT_VETOED_PREREQUISITES` under the preregistration protocol **the
+owner accepted on 2026-09-01**. `PROCEED_COMMON` requires four direct seasonal
+censuses - 2023-24 and 2024-25 hold zero protocol-eligible observations - and
+`unknown_share <= 0.05`, which is not failing but **not calculable**, because no
+independent roster-interval evidence exists to form a denominator.
+
+That last part is a source capability, not an effort gap.
+`nba-official-transactions` was built, is live, verified 2026-09-02, 9,777 rows
+back to 2015 - and states in its own boundary section that it emits **no
+player-game rows**. The NBA publishes no structured contract-expiration,
+retirement or assignment event, and the archive's incompleteness has a named
+counterexample: Wiseman's release sits in the Pacers' own 2025-12-26 notice and
+is absent from the central feed.
+
+`scripts/backlog_graph.py` puts the shape beyond argument. **All ten of the
+deepest remaining chains - twelve, eleven and ten deep - terminate at the same
+item, `participation-opportunity-coverage`**, and that item is the one whose
+denominator cannot be built.
+
+**Written.** `docs/decisions/ADR-021-draft-day-without-availability.md`
+(`Proposed`), indexed in `docs/decisions/README.md`: draft day ships the live
+board, projections-only category values, seed AAV beside them per ADR-017, and
+durability as **published observation with its unknown share** - displayed
+beside the number, never fused into it, fitting nothing and so not touching the
+veto. `docs/governance/OPEN-draft-day-deliverable.md` puts the two ADR
+acceptances and the three perishable owner actions in one place with expiry
+dates. Risks **R44** and **R45** added; R18 marked realised in part.
+
+**Corrected.** `draft-page-invalid-id-request` was marked `pending` while its
+guard and no-request test landed 2026-08-28 in PR #120 at `174dd519`. Verified
+in the tree, not from the commit message: `DraftPage.tsx:95` refuses before
+`DraftBoardLoader` mounts, and `DraftPage.polling.test.tsx:179` asserts the
+empty request list. Header recounted to **83 done / 0 blocked / 112 pending /
+195 total**; `backlog_graph.py` exit 0.
+
+**The error I made, recorded because the tooling predicted it.** I read
+`participation-opportunity-coverage` as *ready* off the dependency graph - every
+dependency `done` - and drafted a plan to assign it, before reading the item. Its
+prose says the denominator is unobtainable. `backlog_graph.py`'s own output warns
+in those words that an item whose prose says it is blocked while its
+`Depends on:` line names only finished work is well-formed and passes silently,
+and the item's own text names the same failure mode. **A graph-valid edge is a
+self-describing value, and it lied the way `gameEt` lies** - not malformed,
+simply not the thing it claims. Filed as R45. My first framing, that a week of
+frontend work while the spine stalled was a sequencing failure, was wrong in its
+cause: the spine is evidence-blocked, and no assignment would have moved it.
+
+**Could not verify:**
+
+- **That the durability panel ADR-021 proposes is safely computable.** It is a
+  rate over confirmed-observed games with the unknown share beside it, which is
+  what would make it honest - but nobody has driven it against the store, and
+  the player-specific silence that blocks the denominator (`player_id` 893,
+  2154, 5109) will appear inside it. If that share is large enough to mislead,
+  it must not ship. I have not put that Model-gate question to `quant`.
+- **That no source exists supplying dated roster starts and ends including
+  contract expiry.** I read the adapter's own boundary statement and the
+  protocol's gate. I did not independently survey alternatives, so this is an
+  absence of evidence I inherited rather than one I established.
+- **That the projections-only path is actually buildable by 4 October.** I have
+  asserted the board half is unaffected by the veto and that projections and
+  category values are reachable, from the dependency graph - which is exactly
+  the instrument that misled me above. Nobody has costed it.
+- The ADR is `Proposed`. Two ADRs now gate 18 October and only the owner may
+  accept either. Do not merge or self-approve from this session.
+
+## 2026-09-05 - architect - Model-use measurement, and a definitive negative on auction evidence
+
+**Landed `docs/governance/model-use-2026-09-05.md`**, produced by a dedicated
+analysis session that touched no production, backlog, handoff or governance file
+of its own. Committed into the repository rather than left in session artifacts,
+by the same rule applied to the stranded predecessor brief earlier today.
+
+**The switch is a step change, derived rather than assumed** from
+`assistant_usage_events`: `gpt-5.6-sol-fast` has zero rows before 2026-08-28,
+takes 11% of that day's tokens, then 91.1% on 08-29 and every day after. The
+boundary is 08-28/08-29, pinned to the day and not the hour, because local
+timestamps mix formats.
+
+**The useful result is a refusal.** Period A (opus-5) shows 491 backend
+file-touches and **+373 net test definitions**; Period B (sol-fast) shows 141
+backend touches, **+34** net test definitions, and bridge work nearly tripling.
+The work changed character at the same moment the model did, no work-type spans
+the boundary at comparable volume, and **no controlled per-model productivity
+ratio is defensible**. The report says so instead of publishing a ratio. The one
+finding robust to the confound is within-turn: sol-fast is ~2x faster and ~1.8x
+cheaper per turn - and even that is contaminated, since opus-5 averaged 250K
+input tokens per turn against sol-fast's 147K, consistent with being handed
+larger-context work.
+
+Quality signals held across the boundary and do not separate the models: the
+mutation matrix ran 42 -> 46 caught with **0 survived at every step**, and of
+474 "could not verify" occurrences in this file, **zero** are empty. That
+discipline is a property of the suite and the protocol, not provably of either
+model. Three things the report asks be recorded going forward - work-type labels
+at capture time, gate outcomes against session and model, and review-round count
+as a field - are what would dissolve the confound next time.
+
+**Separately, a definitive negative worth recording because absence is cheap to
+assume and expensive to be wrong about.** The retiring coordinator session was
+asked directly what auction evidence it held and answered: **none.** No private
+NBA auction-room capture, payload, nomination, sale, price, participant or
+source-column evidence exists outside this repository. The positive board
+evidence is snake and explicitly non-transferable - ADR-020's 49/49 captures
+with no observable `/fxpa`, 42 parsed rendered-board captures, one completed
+**216-pick football snake** board. `fantrax_getleagueinfo_2026-09-05.raw.json`
+is league settings, not draft-room evidence.
+
+So the owner's first auction room is not merely the best path to Q15, it is the
+only one, and `docs/governance/OPEN-draft-day-deliverable.md` now records the
+step that invalidates the rest if skipped: `instrumented-capture.md:113-116`
+requires watching `capture_order_disputed`, and if capture order and arrival
+order disagree **neither reading applies**. The room must be driven through a
+*completed sale*.
+
+**Could not verify:**
+
+- **That five review rounds on one form were quality rather than churn.** The
+  report argues quality from 0 mutations survived and commits-per-PR *falling*
+  6.3 -> 4.7, which is the opposite of runaway rework. That is an inference from
+  proxies. A different reviewer could read the same rounds as over-polishing a
+  setup form while the spine sat evidence-blocked, and nothing in the data
+  settles it.
+- **Whether opus-5 is better for statistical work**, which is where "confident,
+  plausible, wrong" is the documented hazard. Period B did almost no quant work,
+  so the data is silent. The report recommends a deliberate paired trial on one
+  bounded quant task before the next statistical push, rather than inferring it
+  from this dataset. That trial has not been run.
+- **PR numbers #62 to #137** never merged to `origin/main` in the measured
+  window and were not audited, so the per-period PR counts are merges-to-main
+  rather than total activity.
+- Nothing in this session has been committed or pushed. Two ADRs, 017 and 021,
+  now gate 18 October and only the owner may accept either.
+
+## 2026-09-05 — architect — a pre-registered model trial, and what it did not show
+
+**Why.** `docs/governance/model-use-2026-09-05.md` refused to answer which model
+suits this project, because the 08-28/08-29 switch is confounded with a
+backend->frontend work shift and no clean slice spans it. A confound you cannot
+remove after the fact is fixed by running the thing prospectively. This is that
+run. Meta-work, chosen because the spine is owner-blocked and agent capacity was
+the one resource not scarce.
+
+**Design, fixed and hashed before any arm ran.** Five blind parallel arms build
+the same real backlog item (`adr-index-consistency-test`) from `9ea09fc` in
+isolated worktrees, scored by an eight-entry mutation battery written in advance.
+A second read-only task scores judgment against four artifacts whose answers are
+already recorded in `gates.md`. Pre-registration `sha256 90d0b0bd...`, judgment
+items `sha256 a27e83e5...`, both in `docs/governance/`.
+
+**A2 is the arm that makes the rest mean anything** — `gpt-5.6-sol-fast` run
+twice, to measure the dice before comparing models.
+
+**Result: the build task could not tell the models apart.** All five scored 6/6
+CORE, all five passed the clean-tree veto, all five stayed in scope, and all five
+read the frozen banner on `PLAIN-ENGLISH.md` and believed the file over the brief
+that commissioned the work. No model won, so the pre-registered rule returns **no
+change to the default**.
+
+**What did separate them was not what the rule was watching.** `claude-sonnet-5`
+did the same work for ~3x less than the current default, against a 33%
+within-model cost spread. `gpt-5.6-sol-fast` missed the same judgment item on
+both runs where the other three models caught it; `gpt-5.6-sol` catching it
+isolates the fast tier rather than the family. Both survive the noise floor,
+neither was pre-registered as decision-bearing, and the recommendation is
+deliberately smaller than the evidence would allow.
+
+**The turn-count finding is dead.** A1 and A2 differ by 59% on turns taken. Any
+model comparison by turns — including one I nearly wrote — measures the dice.
+Related: `gpt-5.6-sol-fast` took the fewest turns and spent the *most* per task,
+so the earlier report's "1.8x cheaper per turn" is not evidence of cheaper work.
+
+**Could not verify:**
+
+- **The judgment gap rests on one item.** Three of four failed to discriminate.
+- **Two harness bugs found during validation, both before any arm output was
+  read.** The second — a doubled `-q` suppressing pytest's summary line, because
+  `backend/pyproject.toml` already sets one — would have classified **every
+  genuine catch as a broken harness** and made the trial read as inconclusive for
+  reasons having nothing to do with any model. Caught only by deliberately
+  running the battery against a known-failing probe. A harness only ever run on
+  the data it is meant to judge has not been tested.
+- **I nearly published a false negative.** I first recorded that two arms ignored
+  the `PLAIN-ENGLISH.md` banner. My grep passed `-SimpleMatch` with an alternation
+  pattern, so it searched for a literal pipe character and returned zero. The
+  command succeeded and the zero looked like a finding. It was caught only
+  because the result was surprising enough to re-check; a less surprising wrong
+  number would have shipped.
+- **A5's submission detects everything and is still not mergeable.** Its
+  subprocess test decodes the child's cp1252 output as UTF-8, so it errors on
+  every non-clean tree on Windows — and would very likely stay green in CI on
+  Linux. Found only because the battery ran on the owner's actual machine.
+- **One task, one shape.** Nothing here reaches the statistical core or the write
+  path.
+- **Code gate verified for A4 only** (`ruff`, `ruff format`, `mypy`, `pytest` 9
+  passed). The other four were battery-scored, not gate-checked end to end.
+- **I designed the battery knowing all three traps.** Procedural guarantee, not
+  structural.
+
+**Artifact.** A4 (`gpt-5.6-sol`) is a review *candidate*, not a merge:
+`scripts/check_adr_index.py` + `backend/tests/test_adr_index.py` in worktree
+`sr2501-didactic-spoon`. `adr-index-consistency-test` stays `pending`. Winning a
+trial is not a gate. All five worktrees left in place for inspection.
+
+**Owner decisions unchanged and still open:** ADR-017 and ADR-021 acceptance, the
+Fantrax NBA auction-room capture, the seasonal ESPN blind mock.
+
+## 2026-09-05 — architect — correction: I scored a trial arm that was still working
+
+**Correcting the entry immediately above.** It reported that A5
+(`claude-sonnet-5`) "detects everything and is still not mergeable" because its
+subprocess test decoded cp1252 output as UTF-8 and errored on every non-clean
+tree. **That was true of a mid-run revision and is not true of the submission.**
+
+A5 edited the file at 17:30, after I scored it at ~17:20. Re-scored against its
+final state: **6/6 CORE, clean-tree veto passed, zero harness failures** — the
+same as every other arm. Its `subprocess.run` now pins `encoding="utf-8"`. I have
+not isolated which edit removed the error and am not going to invent a mechanism
+for it.
+
+**The mistake was mine and it is the more useful finding.** I inferred "finished"
+from "no file has changed for thirteen minutes". I had no completion signal for
+any arm — only mtimes — and I treated a gap in them as an end state. The one
+thing I marked the arm down for was a defect it was in the middle of fixing.
+
+It was caught only because an unrelated idle notification arrived for a
+*different* arm after I had already written the report, and the notification made
+me re-check bytes I had no reason to believe had moved. **Without that accident
+the wrong finding would have stood**, in a document whose entire purpose is to be
+more trustworthy than an impression.
+
+**Rule for any repeat:** score only after an explicit per-arm idle signal, and
+re-verify input bytes immediately before and immediately after scoring, so a
+mid-flight change is detected rather than assumed absent.
+
+**What changed in the conclusions.** A1-A4 were re-verified byte-identical to the
+copies scored, and the battery is deterministic, so their scores stand unchanged.
+The correction removes the *only* quality difference the build task produced,
+which strengthens rather than weakens the headline: **all five models completed
+the task correctly and the build task could not tell them apart.** It also means
+the cheapest arm in the trial no longer carries a defect — noted, and explicitly
+**not** promoted into a reason to switch, because the cost finding still was not
+pre-registered as decision-bearing.
+
+**Could not verify:** A5's bytes were stable across two checks seven minutes
+apart, which is the same weak evidence that misled me the first time.
+
+`docs/governance/model-trial-2026-09-05-results.md` sections 1, 2, 4, 6 and 8 are
+corrected accordingly; section 4 is now about this error rather than about A5.
+
+### 2026-09-05 17:46 — architect — model trial: A5 settled, figures final
+
+Third and final correction to `docs/governance/model-trial-2026-09-05-results.md`.
+All five arms have now reported idle. A5 (`claude-sonnet-5`) was the last, and it
+did two things worth recording.
+
+**Its artifact was re-scored against final bytes, post-idle, and holds.** Battery
+re-run in a fresh scratch worktree at `9ea09fc`: CORE 6/6, `B8` PASS, zero
+harness failures, EXT 0/2. Same treatment A4 (the candidate) received. The
+mid-flight mis-score described in the report's section 4 is fully corrected.
+
+**It kept spending after it reported idle** — 55 to 57 usage events, 182.6 to
+189.6 AIU, entirely after the idle signal arrived. So the rule I adopted earlier
+today ("score only after an explicit idle signal") is sufficient for artifacts
+and *insufficient* for cost figures. Bytes settle when the arm stops writing; the
+usage table settles later. Final figures were taken only once two pulls 105
+seconds apart agreed. The report now states both signals separately.
+
+Final numbers changed as a result: A5 is 189.6 AIU / 295 s / 57 turns, and the
+cost headline is **2.8x cheaper than the sol-fast mean**, not the "at least 2.9x"
+that the provisional version carried.
+
+**Nothing about the verdict moved.** All five models still scored CORE 6/6 with
+`B8` PASS, so the build task still could not discriminate, and the pre-registered
+rule still returns no change to the default. The two surviving observations are
+unchanged: `claude-sonnet-5` is materially cheaper per task, and `gpt-5.6-sol-fast`
+missed judgment item J2 on both runs while the other three models caught it.
+
+- Gates: Code (terminator gate rc=0; battery lint-clean). No Model, Adapter or
+  Automation gate applies - this is governance measurement, not a shipped number.
+- Scratch worktree `trial-rescore-a5` created and removed; `git worktree prune`
+  run. Arm worktrees left in place for inspection.
+- **Could not verify:** cost figures are `total_nano_aiu` from the local session
+  store and have never been reconciled against billing - the ratios are internally
+  consistent but their absolute scale is unaudited. I also did not establish *why*
+  A5 continued accruing after idle, only that it did; if that is a store-flush lag
+  rather than real work, the same lag may have affected the earlier arms in ways
+  the 105-second agreement check would not catch.
+
+### 2026-09-05 18:20 — architect — model trial verdict given a durable home
+
+The trial verdict was sitting in a dated results file, which is the wrong place
+for a live recommendation: nobody reads `model-trial-2026-09-05-results.md` when
+deciding which model to run a lane on. Split evidence from guidance.
+
+**New: `docs/governance/model-selection.md`** — a *standing* file, updated in
+place, that owns the current lane-to-model guidance. Carries the lane table, an
+explicit statement of what the evidence does **not** support, the conditions that
+would change it, and seven rules for measuring this again that outlive any model
+name. The dated `model-*-2026-09-05-*.md` files are now labelled frozen evidence
+and point forward to it.
+
+**Pointers added at the moment of use, not copies.** A row in the standup skill's
+rules table plus a paragraph in its fan-out section (`.github/skills/standup-hoops-gm/SKILL.md`),
+and `docs/governance/` in `.github/agents/architect.md` line 18 now names model
+selection alongside ownership, gates and risks. Deliberately *not* copied into
+seven agent files or `AGENTS.md`: the specific model names have a short shelf
+life, and AGENTS.md's own rule about derived counts applies equally here - one
+file owns it, everything else points.
+
+**A superseded claim was corrected rather than left to mislead.**
+`model-use-2026-09-05.md` recommended keeping sol-fast partly on a "~1.8x cheaper
+per turn" finding. The trial measured the same model as the **most expensive per
+task** of five - fewer turns, more spend in them - and found a 59% turn-count
+spread between two runs of the same model, so any turn-normalised figure rests on
+an unstable denominator. That file now carries a "superseded in part" banner and
+is otherwise unedited; its own caveat that "per turn is not per unit of value" was
+correct and is now measured rather than suspected.
+
+Also fixed a stale "3x cheaper" in the results file (correct figure 2.8x).
+
+- Gates: Code (terminator gate rc=0). Documentation only; no Adapter, Model or
+  Automation gate applies.
+- **No backlog item added.** All three revisit conditions in the new file are of
+  the form "next time you do X" - a cost-first trial, a second judgment item, a
+  statistical-core task - and none is startable today. A backlog entry that cannot
+  be picked up would move the derived header for no gain.
+- **Could not verify:** the review-lane recommendation still rests on **one**
+  judgment item, and three of the four items failed to discriminate at all; the
+  new file says so in the evidence-strength column rather than burying it. The
+  guidance is also entirely from doc-governance tooling, so it is untested against
+  the statistical core and the write path - stated plainly in the new file's
+  "what would change this".
+- Checked and clean: no conflicting model preference exists anywhere else in the
+  repository. Searched all `.md` outside `docs/governance/` for the five model
+  names; the only hit is the pointer added to `architect.md`, so this file has no
+  rival.

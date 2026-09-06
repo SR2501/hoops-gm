@@ -15,7 +15,7 @@ Read these. Do not rely on a summary in your prompt.
 
 - `docs/plan.md` — the full plan, including the research findings that constrain it
 - `docs/decisions/` — every ADR, including any `## Amendments`
-- `docs/governance/` — ownership, gates, owner-only decisions, risk register
+- `docs/governance/` — ownership, gates, owner-only decisions, risk register, model selection
 - `docs/handoff.md` — current state and what previous agents could not verify
 
 ## Scope
