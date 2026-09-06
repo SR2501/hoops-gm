@@ -470,6 +470,52 @@ def test_frontend_report_refuses_to_claim_a_fraction_without_its_configured_limi
     assert "test.testTimeout" in capsys.readouterr().err
 
 
+def test_report_refuses_an_unrecognised_label_instead_of_silently_omitting_headroom(
+    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "front-end", [metrics.Metric("test.a::b", 100.0, "ms")])
+
+    assert metrics.main(["report", "--current", str(current)]) == 1
+    assert "unrecognised report label 'front-end'" in capsys.readouterr().err
+
+
+def test_collect_refuses_an_unrecognised_label_without_writing_an_artifact(
+    metrics: ModuleType,
+    vitest_report: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "metrics.json"
+
+    assert (
+        metrics.main(
+            [
+                "collect",
+                "--label",
+                "front-end",
+                "--vitest",
+                str(vitest_report),
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert "unrecognised report label 'front-end'" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_backend_report_does_not_claim_the_frontend_vitest_timeout(
+    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "backend", [metrics.Metric("test.a::b", 100.0, "ms")])
+
+    assert metrics.main(["report", "--current", str(current)]) == 0
+    assert "Vitest timeout" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("multiplier", [1.1, 2.0, 10.0, 100.0, 1000.0])
 def test_no_magnitude_of_growth_makes_the_report_fail(
     metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], multiplier: float
@@ -573,10 +619,14 @@ def test_added_and_removed_tests_are_counted(
     baseline = tmp_path / "baseline.json"
     current = tmp_path / "current.json"
     metrics.write_metrics(
-        baseline, "f", [metric("test.a::x", 1.0, "ms"), metric("test.gone::y", 1.0, "ms")]
+        baseline,
+        "backend",
+        [metric("test.a::x", 1.0, "ms"), metric("test.gone::y", 1.0, "ms")],
     )
     metrics.write_metrics(
-        current, "f", [metric("test.a::x", 1.0, "ms"), metric("test.new::z", 1.0, "ms")]
+        current,
+        "backend",
+        [metric("test.a::x", 1.0, "ms"), metric("test.new::z", 1.0, "ms")],
     )
 
     metrics.main(["report", "--current", str(current), "--baseline", str(baseline)])

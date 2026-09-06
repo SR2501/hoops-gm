@@ -62,6 +62,7 @@ SCHEMA = 1
 #: file exists to treat.
 TOTAL_KEY = "suite.test_time_ms"
 COUNT_KEY = "suite.tests"
+REPORT_LABELS = frozenset({"backend", "frontend"})
 VITEST_CONFIG = Path(__file__).resolve().parents[1] / "frontend" / "vite.config.ts"
 VITEST_TIMEOUT_LOADER = """
 import { loadConfigFromFile } from 'vite'
@@ -361,7 +362,20 @@ def render_report(
     return "\n".join(out)
 
 
+def _recognise_report_label(label: str) -> bool:
+    if label in REPORT_LABELS:
+        return True
+    print(
+        f"error: unrecognised report label {label!r}; expected one of {sorted(REPORT_LABELS)}",
+        file=sys.stderr,
+    )
+    return False
+
+
 def _cmd_collect(args: argparse.Namespace) -> int:
+    if not _recognise_report_label(args.label):
+        return 1
+
     if args.vitest:
         source: Path = args.vitest
         metrics = collect_vitest(source, args.root or source.parent)
@@ -406,6 +420,9 @@ def _cmd_report(args: argparse.Namespace) -> int:
             baseline = None
 
     report_label = label or args.label
+    if not _recognise_report_label(report_label):
+        return 1
+
     test_timeout_ms: float | None = None
     if report_label == "frontend":
         try:
@@ -413,6 +430,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
         except (OSError, ValueError) as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
+    # Backend durations come from pytest's JUnit report, not Vitest, so the
+    # frontend's configured timeout does not apply to them.
 
     report = render_report(
         report_label,
