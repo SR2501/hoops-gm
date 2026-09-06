@@ -1022,14 +1022,21 @@ def parse_box_score_traditional_v3(
     return box_scores, participation
 
 
-#: No NBA game has ever tipped off outside this Eastern local window — not
-#: even the earliest Christmas Day slate (noon ET) or the latest West Coast
-#: game (10:30pm ET for a 7:30pm Pacific tip). This is knowledge the box-score
-#: payload does not itself supply: it comes from the league's own scheduling
-#: practice, not from anything ``gameEt`` or ``gameTimeUTC`` claims about
-#: themselves. A hour outside this range means one of those fields has been
-#: corrupted in a way that is internally consistent and therefore invisible to
-#: any check that only compares the payload against itself.
+#: No **regular-season or playoff** NBA game has ever tipped off outside this
+#: Eastern local window — not even the earliest Christmas Day slate (noon ET)
+#: or the latest West Coast game (10:30pm ET for a 7:30pm Pacific tip). This
+#: is knowledge the box-score payload does not itself supply: it comes from
+#: the league's own scheduling practice, not from anything ``gameEt`` or
+#: ``gameTimeUTC`` claims about themselves. An hour outside this range means
+#: one of those fields has been corrupted in a way that is internally
+#: consistent and therefore invisible to any check that only compares the
+#: payload against itself.
+#:
+#: The qualifier matters: NBA China preseason games have tipped as early as
+#: 7:00am ET, below this floor. This bound is safe only because every current
+#: caller (``backfill.py``, via ``LeagueGameFinder`` scoped to
+#: ``"Regular Season"``/``"Playoffs"``) never reaches a preseason game. Widen
+#: that scope before trusting this bound against preseason box scores.
 _EARLIEST_PLAUSIBLE_TIPOFF_HOUR: Final = 9
 _LATEST_PLAUSIBLE_TIPOFF_HOUR: Final = 23
 
