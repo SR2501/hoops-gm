@@ -38207,3 +38207,67 @@ assumption. I have not checked whether any *other* claim I pushed today rests on
 or artefact chosen because its name matched, which is the failure mode above and I have
 found it twice already. I have not audited the two entries with stray `##` subheadings
 to see whether anything else depends on the one-heading-per-entry invariant.
+
+## 2026-09-06 — architect (delivery) — the owner's headline deliverable was blocked behind an edge that did not need to exist
+
+**Changed:** `docs/backlog.md` only. `draft-day-shortlist` now depends on
+`draft-tracker-persistence`, `draft-tracker-screen`, `projection-blending`,
+`scoring-profiles` instead of the `draft-tracker` umbrella, with the reasoning
+written into the item. No status marker moved; the header still recounts to
+**91 done / 0 blocked / 127 pending / 218 total** and 218 headings map 1:1 to 218
+markers. No code, no ADR, no gate, no owner question.
+
+**What the graph said.** `draft-day-shortlist` is the item carrying the owner's own
+words about what he wants working on 18 October. Its transitive closure was **28
+items, 24 of them `done`**, and the four that were not formed a single chain:
+`draft-day-shortlist` <- `draft-tracker` <- `draft-board-feed-integration` <-
+`fantrax-auction-capture`. That last one is `READY` in dependency terms and blocked
+on the owner obtaining a live Fantrax NBA auction room, outstanding since
+2026-08-22, with no fallback. **The headline draft-day deliverable was un-startable
+behind the single action only he can take**, and nothing said so out loud — it was
+a property of four dependency lines, visible only to whoever walked them.
+
+**Why the edge was wrong, read rather than inferred.** `draft-tracker` states one
+reason for staying `pending`: *automatic* product tracking is established only for
+the recorded `fantrax_football_snake_v1` profile. `draft-board-feed-integration`
+states that auction refuses as `board_reading_unestablished_for_auction` and that
+**no NBA profile exists**. Both gate *how draft state arrives*. Neither gates
+whether draft state exists. The shortlist needs state.
+
+**And the item already contained the argument against its own edge**, two
+paragraphs above the dependency line: *an item that cannot render until that clears
+converts a blocked model into a missed deadline*. It was written about
+`availability-model`. It is equally true of capture, and I did not notice when I
+filed it this morning.
+
+**Verified in code, not from this file's summary of it.**
+`draft-tracker-persistence` and `draft-tracker-screen` are both `done` — migration
+`0017`, the append-only event log, `GET/POST /api/v1/drafts/*`, the seat board.
+`seed_auction_draft` in `hoops_gm/dev/seed_draft.py` composes a 12-team, 13-slot,
+$200 auction through the real recorders with a nomination/bid/sale cycle, a
+standalone sale and a correction, and **26 tests across eight files** drive seeded
+auction drafts. After the retarget the closure is **20 items, 19 done**, and
+`draft-day-shortlist` is **`READY`**.
+
+**What this is not.** `fantrax-auction-capture` still governs whether state arrives
+*automatically* on the day. Without it, state is enterable only through the manual
+recorder the owner ruled a catastrophe-only firebreak on 2026-08-29 — workable for
+a rehearsal, punishing at auction speed. **Buildable and rehearsable now; not
+usable at speed on the day.** It remains the top item in
+`OPEN-draft-day-deliverable.md` and nothing here reduces its urgency. I have
+deliberately not weakened a real constraint to make a board look green: the
+constraint is unchanged, it is now attached to the thing it actually constrains.
+
+**A live check corrected me mid-way.** I was about to claim seeded auction state was
+queryable right now; `GET /api/v1/drafts` on the running `:8000` returns
+`{"drafts": []}` because that instance is pointed at the Reliability store. The
+capability is real and the running demo does not have it seeded, and those are
+different claims.
+
+**Could not verify:** whether the shortlist's Done-when is satisfiable purely from
+seeded state — I confirmed auction *drafts* seed and are tested, not that the seeded
+cohort carries enough projection and category coverage for a 3-5 candidate ranking
+to be meaningful, which is the first thing whoever builds it should measure. I have
+not re-walked the other pending items for the same over-tight-umbrella shape, and
+`draft-tracker` is unlikely to be the only umbrella depended on for one of its
+parts. Postgres CI for `cefa313a` was still running when this was written.

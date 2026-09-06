@@ -5709,7 +5709,7 @@ id on a machine that did not produce it. Gate: Code + Adapter.
 ### `draft-day-shortlist` - The thing the owner actually asked to have working on draft day
 
 - [ ] **pending**
-- **Depends on:** `draft-tracker`, `projection-blending`, `scoring-profiles`
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `projection-blending`, `scoring-profiles`
 
 **Owner requirement, 2026-09-06, in his words:** *"What I want working on draft
 day is live suggestions on my pick that fit my current strategy. With health
@@ -5758,6 +5758,42 @@ calibrated probability, and the shipped reliability evidence already satisfies
 "visible" without fusing a new number. **Build the surface so the health column
 is a slot**: filled by reliability evidence today, and by `p(play)` later
 without reshaping the surface.
+
+**Dependency retargeted 2026-09-06, and the reason belongs in the item.** This
+depended on the `draft-tracker` umbrella. Walking the graph, 24 of its 28
+transitive dependencies are `done` and the remaining four are one chain:
+`draft-day-shortlist` <- `draft-tracker` <- `draft-board-feed-integration` <-
+`fantrax-auction-capture`, which is owner-blocked on a live Fantrax NBA auction
+room and has no fallback. So the owner's headline draft-day requirement was
+un-startable behind the one action only he can take.
+
+**That edge was over-tight, and this item already contains the argument against
+it.** Two paragraphs up: *an item that cannot render until that clears converts a
+blocked model into a missed deadline*. The same reasoning applies to capture. Read
+rather than inferred from the graph, `draft-tracker` is `pending` for exactly one
+stated reason - *automatic* product tracking is established only for the recorded
+`fantrax_football_snake_v1` profile, and `draft-board-feed-integration` says
+plainly that auction refuses as `board_reading_unestablished_for_auction` and *no
+NBA profile exists*. Both gate **how draft state arrives**, not whether it exists.
+
+**What exists today, verified in code rather than from this file's own summary.**
+`draft-tracker-persistence` and `draft-tracker-screen` are both `done`: migration
+`0017`, the append-only event log, `GET/POST /api/v1/drafts/*`, and the seat board.
+`hoops_gm.dev.seed_draft.seed_auction_draft` composes a 12-team, 13-slot, $200
+auction through the real recorders, exercising a nomination/bid/sale cycle, a
+standalone sale and a correction; 26 tests across eight files drive seeded auction
+drafts. So the shortlist can be built and its recorded-fixture test can run with no
+network and no capture, which is what its own Done-when asks for.
+
+**What is still gated, stated so this retarget is not read as more than it is.**
+`fantrax-auction-capture` governs whether draft state arrives **automatically on
+18 October**. Without it the state is enterable only through the manual
+append-only recorder the owner ruled a catastrophe-only firebreak on 2026-08-29 -
+workable for a rehearsal, punishing at auction speed where nominations land every
+few seconds. **This retarget makes the shortlist buildable and rehearsable now; it
+does not make it usable at speed on the day.** That still needs the owner's live
+room, it remains the top item in `docs/governance/OPEN-draft-day-deliverable.md`,
+and nothing here reduces its urgency or moves it off the critical path.
 
 **Gate boundary, stated so it is not argued later.** The shortlist *surface* -
 joining existing numbers, filtering to the owner's roster, budget and category
