@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 119 pending - 203 total**
+**84 done - 0 blocked - 120 pending - 204 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5124,3 +5124,33 @@ Pydantic model rather than from the specimen's values, since the point is to des
 what is *allowed* rather than what happened to be chosen. Compare that manifest in CI
 alongside the specimen. Decide explicitly whether the fixture should be made read-only
 or carry a generated-file header; record the decision either way. Code gate.
+
+### `doc-append-line-ending-helper` - Make the append helper choose the line ending
+
+- [ ] **pending**
+- **Depends on:** nothing
+
+`docs/backlog.md` is 100% CRLF (5,126 of 5,126 lines). `docs/handoff.md` is 99.1% LF
+(269 CRLF of 36,039). **The two append-only documents have opposite conventions**, and
+a carried-forward session note asserted both were CRLF. Appending CRLF to
+`handoff.md` on that belief makes `scripts/check_append_only.py` fail with "adds N CR
+bytes to a region the base keeps pure-LF".
+
+The failure is unfixable in place once pushed, which is the part worth recording. The
+same script also enforces that the base blob is a byte-prefix of HEAD, so converting
+an already-committed entry's endings turns a purity failure into a **containment**
+failure - strictly worse, because containment is what protects 2.36 MB of accumulated
+handoff from a silent whole-file rewrite. So the correct response to getting this
+wrong is to leave it wrong and stop the next one, not to repair it.
+
+The 269 pre-existing CRLF lines in `handoff.md` show prior authors hit this too. Every
+author is being asked to remember a per-file fact that the machine can read directly.
+
+**Acceptance.** A helper - `scripts/append_doc.py` or equivalent - that takes a target
+path and body text, detects the target's dominant line ending from its own bytes, and
+appends via `read_bytes()`/`write_bytes()` with that ending. It must refuse a file with
+mixed endings whose majority is under some stated threshold rather than guessing, and
+refuse to write if the result would not be a byte-prefix extension. Tests: one CRLF
+target, one LF target, one empty file, and a control proving a hand-written CRLF append
+to the LF file still fails `check_append_only.py`. Document it where the append-only
+rule is stated, so the rule and its tool sit together. Code gate.
