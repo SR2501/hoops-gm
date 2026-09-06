@@ -36398,3 +36398,45 @@ confirms the number without making it durable.
 preseason refusals have negative controls proving they reject an empty slate —
 only the injury-report one is documented as having been exercised, by failing.
 Why lane 4 and lane 1 both went quiet.
+
+## 2026-09-06 — architect — the editable install was pointed at a red branch
+
+Reconciling stale session todos against re-derived reality turned up something
+worth more than the bookkeeping. Eight of nine overnight lanes had merged PRs
+while their todos still read *in progress*; only #171 was genuinely open. But
+checking why the lanes' worktrees were still on disk exposed a live fault.
+
+**From the main checkout at `4b5e72f6`, `import hoops_gm` resolved into
+`copilot-worktrees/hoops-gm/sr2501-bookish-barnacle` — lane 4's worktree, on the
+unmerged and red #171 branch.** The editable install is a machine-global
+singleton; whichever worktree last ran `pip install -e` owns the name for every
+checkout on the machine. This is the mechanism behind the three false diagnoses
+recorded last night, including the lane that concluded `alembic`'s
+`command.stamp` was defective and rewrote working code before withdrawing.
+
+**My doc gates were unaffected and their results stand.** `check_doc_terminators`,
+`backlog_graph`, `check_no_secrets` and `check_append_only` import no repository
+code; I checked rather than assumed. But `capture_schedule_grid_contract.py` and
+`capture_openapi.py` do import it, so regenerating either while mis-pointed would
+have recorded another branch's tree *as* `main`'s reference contract — the drift
+detector committing the drift as the baseline.
+
+**Fixed and verified by content, not by path.** `cd backend; python -m pip install
+-e . --no-deps`. A path check is necessary and insufficient, so I asserted a
+symbol present on exactly one branch: `_EARLIEST_PLAUSIBLE_TIPOFF_HOUR` was
+reachable while mis-pointed and is absent now. Full-suite `--collect-only` exits 0
+with zero import errors and no `PYTHONPATH` pinning.
+
+**This fixes the instance, not the class**, and I want that stated plainly rather
+than left as an implied win. The next `pip install -e .` from any worktree
+re-hijacks every checkout, silently. No gate can ever catch it: CI installs per
+job into a clean environment, so it is green on the branch and green on `main`,
+and the fault exists only on this machine. Per-worktree virtual environments are
+the structural fix and are not in place. Recorded in `gates.md` as *The import you
+got is not the tree you are in*.
+
+**Could not verify.** Whether any artefact already committed was generated while
+the install was mis-pointed — I found it aimed at lane 4's branch but do not know
+how long it had been, so the schedule-grid contract and OpenAPI capture on `main`
+are unaudited against this. That is a concrete, cheap check for whoever picks it
+up: regenerate both now that the install is correct and confirm no diff.

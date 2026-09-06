@@ -494,3 +494,45 @@ with no consumer* were filed instead of written up.
   rather than an assertion. **"Reachable, driven, harmless" and "believed unreachable" are
   different claims and only one of them is evidence** — prefer the first, and where only the
   second is available, say so in those words.
+
+### The import you got is not the tree you are in
+
+Added 2026-09-06, found live rather than reasoned about. From the main checkout at
+`4b5e72f6`, `import hoops_gm` resolved to
+`copilot-worktrees/hoops-gm/sr2501-bookish-barnacle/backend/src/hoops_gm` - another
+worktree, on the unmerged and **red** #171 branch. The editable install is a
+machine-global singleton: whichever worktree last ran `pip install -e` owns the name
+for every checkout on the machine, including the canonical one. This is the mechanism
+behind three false diagnoses in a single night, one of which got as far as replacing
+working code - a lane concluded `alembic`'s `command.stamp` was defective and rewrote
+it before withdrawing the claim.
+
+It is worse than the already-documented deleted-worktree case, and the asymmetry is the
+point: a **deleted** target raises `ModuleNotFoundError`, which is loud and immediately
+suspicious, while a **live sibling** silently supplies another branch's bytes and every
+failure it produces looks like a real bug in your own change.
+
+- **Verify by content, not by path.** `module.__file__` tells you what the loader
+  resolved, which is necessary and not sufficient - it cannot distinguish a correct
+  path from a correct path serving stale or partially-installed bytes. The decisive
+  check is a symbol that exists on exactly one branch:
+  `hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` returned `True` while
+  mis-pointed and `False` from `main`. Assert the code you are running, not its
+  address.
+- **The blast radius is evidence, not only tests.** `capture_schedule_grid_contract.py`
+  and `capture_openapi.py` both import the package. Regenerating either from the main
+  checkout while mis-pointed would have recorded another branch's tree *as* `main`'s
+  contract - the drift detector faithfully capturing the drift, and committing it as
+  the reference everything later is compared against.
+- **No gate can ever see this.** CI installs per job into a clean environment, so it is
+  green on the branch and green on `main`; the discrepancy exists only on the
+  developer's machine. This is the rare failure where local evidence outranks CI, and
+  where "but CI is green" is not merely weak, it is structurally incapable of speaking
+  to the question.
+- **Fix applied, and its limit.** `cd backend; python -m pip install -e . --no-deps`
+  repointed it; full-suite `--collect-only` then exited 0 with zero import errors and
+  no `PYTHONPATH` pinning. That fixes today's instance, **not the class**: the next
+  `pip install -e .` from any worktree re-hijacks every checkout, silently. Pinning
+  `PYTHONPATH` protects a command; it does not protect a machine. Per-worktree virtual
+  environments are the structural fix and are not in place, which is why this trap has
+  now recurred often enough to be documented three times and fixed once.
