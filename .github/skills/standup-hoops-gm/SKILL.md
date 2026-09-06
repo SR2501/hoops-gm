@@ -173,6 +173,50 @@ Sanity numbers for the real 2026-27 season, so a wrong screen is obvious:
 cannot name the screen or the draft behaviour it unlocks is deferred. This tool
 complements paid Basketball Monster projections; it does not rebuild them.
 
+## The running demo has a single point of failure, and it is not in the repository
+
+Measured 2026-09-06, not recalled.
+
+The Reliability screen everyone demos is served from
+**`reliability_ui_demo_20250901.db`** — 16.1 MB, in the repository root, and
+**gitignored by design**. `docs/handoff.md` records the backend as intentionally
+using it. Its contents match the live API exactly: **596 scorecards, 5,206
+players, 1,230 final games, 26,651 game logs, 43,037 participation rows**, season
+`2025-26`.
+
+**It cannot be rebuilt by a seed command.** `hoops_gm.dev.seed_reliability_demo`
+builds a deliberately tiny cohort — **two** players, both named
+`[synthetic demo] …`, across three game dates — so that a rendered row can never
+be mistaken for real evidence. The live store contains **zero** synthetic rows and
+5,206 real players. The two are not the same artifact and the seed is not a
+fallback for the store.
+
+Rebuilding it means **re-running live NBA ingestion**, against an upstream this
+project documents as unstable, using payloads that are deliberately kept outside
+the repository. That is hours and an external dependency, not a command.
+
+So:
+
+- **Do not delete `*.db` from the repository root as "generated files".** Four of
+  the five are disposable; this one is not, and they look identical from the
+  outside. The others (`hoops_gm.db`, `source_board_preview.db`, `today_demo.db`,
+  `today_joined_demo.db`) hold **0** participation rows — that is how to tell
+  them apart in one query.
+- **Do not clear `.mypy_cache` while parallel units are running.** They each run
+  `mypy`, and a cold cache is minutes per unit.
+- If the demo must survive this machine, that is a **backup decision for the
+  owner**, not a cleanup task. It is currently backed up nowhere.
+
+```
+# which store is live, checked rather than assumed
+python -c "import sqlite3,glob;[print(p, sqlite3.connect(f'file:{p}?mode=ro',uri=True).execute('select count(*) from player_participation').fetchone()[0]) for p in glob.glob('*.db')]"
+```
+
+**There is no fantasy roster in this store.** `leagues`, `fantasy_teams`,
+`rosters` and `roster_slots` all exist in the schema and all hold **0 rows**. Any
+feature phrased as "across your roster" is blocked on data that is absent, not on
+a missing endpoint — worth knowing before designing one.
+
 ## Two standing traps in this repository
 
 - **`docs/handoff.md` is append-only.** Never edit an existing entry to agree
