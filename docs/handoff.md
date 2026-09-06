@@ -36253,3 +36253,39 @@ run there is not evidence the check works.
 sequenced against the guard-wiring gap rather than treated as cosmetic. The wiring gap
 itself is 1 of 4 `check_*` scripts: `check_append_only` is the only one with both no
 workflow reference and no test.
+
+## 2026-09-06 - architect - Closing two of my own "could not verify" items by execution
+
+**Changed:** Nothing in the tree. This entry closes two uncertainties the previous
+entry declared, because both were cheap to settle and a disclosure that stays open
+reads as diligence while functioning as noise.
+
+**Now true:** The claim that `check_append_only.py` would have blocked the three
+CRLF appends is no longer arithmetic. Running its real `check()` function at a
+detached checkout of `d65e7484`, with the base forced to `d65e7484^`, returns exactly
+one failure: "docs/handoff.md: HEAD adds 69 CR byte(s) to a region the base keeps
+pure-LF". Containment reported `True` in the same run, which is the distinction that
+matters - the append destroyed nothing, it simply used the wrong endings. The
+instrument's own negative controls moved correctly in that run (seeded CR 70 against
+an expected 70), so the failure is the check working rather than the check breaking.
+
+The second item is confirmed and is worse than I framed it. On `main` the script is
+**vacuous**: its base is `git merge-base origin/main HEAD`, so once a branch is
+pushed and HEAD equals `origin/main`, base and head are the same blob and it reports
+`appended +0` while comparing the file to itself. Its three negative controls still
+execute, so it proves the instrument works and nothing about the content. Earlier
+this session I recorded a manual run of this script as evidence and labelled it
+non-vacuous; that was true only because `main` was then behind my local commits. The
+operational rule this implies: run it **before** pushing, or from CI against the
+merge-base of a branch. A green run taken after the push proves nothing at all, which
+makes it a check that is most reassuring exactly when it is least informative.
+
+**Could not verify:** Whether the other two wired checks have the same
+before-versus-after-push asymmetry; I established it for this one only. The +51 and
++43 commits were not individually executed, only `d65e7484`; their CR deltas are
+measured but their failures are inferred from the same predicate.
+
+**Next:** The wiring gap is now the load-bearing part rather than the helper. Any
+fix should place this check where a delta genuinely exists - PR CI against
+merge-base - because wiring it to run on `main` post-merge would reproduce the exact
+vacuity documented above and look like coverage.
