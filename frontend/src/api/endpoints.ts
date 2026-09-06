@@ -32,6 +32,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value)
+  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
+}
+
 function isHealth(value: unknown): value is Health {
   return (
     isRecord(value) &&
@@ -139,11 +144,10 @@ function isStringArray(value: unknown): value is string[] {
  * be silent here (the model reads only `game_date`, so a mismatched reason
  * would simply never be rendered), and a boundary that can be closed should be.
  *
- * The label fields are deliberately **not** in that category. A `null`
- * `game_label` is a gap this screen can describe — `describePendingGame`
- * renders "no label given" — and refusing the response over it would cost every
- * count on the page for a missing piece of prose. Tolerate a gap you can
- * describe, reject a value that cannot be true.
+ * Label gaps arrive as empty strings, not nulls: that is the backend model and
+ * the committed response specimen. `describePendingGame` still renders them as
+ * "no label given", but accepting null here would advertise a wider wire
+ * contract than the producer can emit.
  */
 function isNullableString(value: unknown): boolean {
   return typeof value === 'string' || value === null
@@ -152,11 +156,19 @@ function isNullableString(value: unknown): boolean {
 function isSchedulePendingGame(value: unknown): boolean {
   if (
     !isRecord(value) ||
+    !hasExactKeys(value, [
+      'nba_game_id',
+      'game_date',
+      'game_label',
+      'game_sub_label',
+      'game_subtype',
+      'date_absence_reason',
+    ]) ||
     typeof value.nba_game_id !== 'string' ||
     !isNullableString(value.game_date) ||
-    !isNullableString(value.game_label) ||
-    !isNullableString(value.game_sub_label) ||
-    !isNullableString(value.game_subtype) ||
+    typeof value.game_label !== 'string' ||
+    typeof value.game_sub_label !== 'string' ||
+    typeof value.game_subtype !== 'string' ||
     typeof value.date_absence_reason !== 'string'
   ) {
     return false
@@ -187,6 +199,17 @@ function isPendingBlock(value: Record<string, unknown>): boolean {
 function isScheduleRefreshLineage(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, [
+      'refresh_id',
+      'version',
+      'refreshed_at',
+      'source_game_count',
+      'resolved_game_count',
+      'persisted_team_row_count',
+      'unresolved_game_ids',
+      'pending_game_ids',
+      'pending_games',
+    ]) &&
     typeof value.refresh_id === 'number' &&
     typeof value.version === 'string' &&
     typeof value.refreshed_at === 'string' &&
@@ -201,6 +224,7 @@ function isScheduleRefreshLineage(value: unknown): boolean {
 function isProjectionRefreshLineage(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ['refresh_id', 'version', 'refreshed_at']) &&
     typeof value.refresh_id === 'number' &&
     typeof value.version === 'string' &&
     typeof value.refreshed_at === 'string'
@@ -208,12 +232,23 @@ function isProjectionRefreshLineage(value: unknown): boolean {
 }
 
 function isRecordLineage(value: unknown): boolean {
-  return isRecord(value) && typeof value.id === 'number' && typeof value.version === 'number'
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['id', 'version']) &&
+    typeof value.id === 'number' &&
+    typeof value.version === 'number'
+  )
 }
 
 function isScheduleGridLineage(value: unknown): value is ScheduleGridLineage {
   return (
     isRecord(value) &&
+    hasExactKeys(value, [
+      'schedule',
+      'scoring_period_projection',
+      'deadline_calendar',
+      'settings_snapshot',
+    ]) &&
     isScheduleRefreshLineage(value.schedule) &&
     isProjectionRefreshLineage(value.scoring_period_projection) &&
     isRecordLineage(value.deadline_calendar) &&
@@ -224,6 +259,7 @@ function isScheduleGridLineage(value: unknown): value is ScheduleGridLineage {
 function isScheduleGridTeam(value: unknown): value is ScheduleGridTeam {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ['team_id', 'nba_team_id', 'abbreviation', 'name']) &&
     typeof value.team_id === 'number' &&
     typeof value.nba_team_id === 'number' &&
     typeof value.abbreviation === 'string' &&
@@ -234,6 +270,7 @@ function isScheduleGridTeam(value: unknown): value is ScheduleGridTeam {
 function isScheduleGridPeriod(value: unknown): value is ScheduleGridPeriod {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ['period_number', 'start_date', 'end_date', 'is_playoff']) &&
     typeof value.period_number === 'number' &&
     typeof value.start_date === 'string' &&
     typeof value.end_date === 'string' &&
@@ -253,6 +290,7 @@ function isScheduleGridPeriod(value: unknown): value is ScheduleGridPeriod {
 function isScheduleGridCount(value: unknown): value is ScheduleGridCount {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ['period_number', 'team_id', 'games']) &&
     typeof value.period_number === 'number' &&
     typeof value.team_id === 'number' &&
     typeof value.games === 'number' &&
@@ -273,6 +311,7 @@ function isScheduleGridCount(value: unknown): value is ScheduleGridCount {
 export function isScheduleGrid(value: unknown): value is ScheduleGrid {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ['league_id', 'season', 'lineage', 'teams', 'periods', 'counts']) &&
     typeof value.league_id === 'number' &&
     typeof value.season === 'string' &&
     isScheduleGridLineage(value.lineage) &&

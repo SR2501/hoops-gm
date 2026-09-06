@@ -1,0 +1,73 @@
+{
+  "league_id": 1,
+  "season": "2026-27",
+  "lineage": {
+    "schedule": {
+      "refresh_id": 11,
+      "version": "schedule-contract-v1",
+      "refreshed_at": "2026-09-06T00:00:00Z",
+      "source_game_count": 3,
+      "resolved_game_count": 1,
+      "persisted_team_row_count": 2,
+      "unresolved_game_ids": [],
+      "pending_game_ids": [
+        "pending-dated",
+        "pending-undated"
+      ],
+      "pending_games": [
+        {
+          "nba_game_id": "pending-dated",
+          "game_date": "2026-12-04",
+          "game_label": "Emirates NBA Cup",
+          "game_sub_label": "Quarterfinal",
+          "game_subtype": "in-season-knockout",
+          "date_absence_reason": ""
+        },
+        {
+          "nba_game_id": "pending-undated",
+          "game_date": null,
+          "game_label": "",
+          "game_sub_label": "",
+          "game_subtype": "",
+          "date_absence_reason": "not_offered"
+        }
+      ]
+    },
+    "scoring_period_projection": {
+      "refresh_id": 12,
+      "version": "period-contract-v1",
+      "refreshed_at": "2026-09-06T00:00:00Z"
+    },
+    "deadline_calendar": {
+      "id": 13,
+      "version": 1
+    },
+    "settings_snapshot": {
+      "id": 14,
+      "version": 1
+    }
+  },
+  "teams": [
+    {
+      "team_id": 15,
+      "nba_team_id": 1610612737,
+      "abbreviation": "ATL",
+      "name": "Atlanta Hawks"
+    }
+  ],
+  "periods": [
+    {
+      "period_number": 1,
+      "start_date": "2026-10-19",
+      "end_date": "2026-10-25",
+      "is_playoff": false
+    }
+  ],
+  "counts": [
+    {
+      "period_number": 1,
+      "team_id": 15,
+      "games": 1
+    }
+  ]
+}
