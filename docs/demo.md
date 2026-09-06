@@ -339,9 +339,11 @@ half-seeded files this page replaces: the schedule commits, the draft seed
 refuses, and you are left with a database that is neither empty nor usable and
 no signal saying which.
 
-Schema is built with `Base.metadata.create_all`, not Alembic, so a demo database
-is model-built rather than migration-built. Fine for a throwaway file, wrong for
-anything else — the migration tests exist to catch exactly that divergence.
+Schema is built with `Base.metadata.create_all`, not by replaying every
+migration, then stamped at Alembic `head`. The database is still model-built,
+but it identifies the migration revision those models are expected to match;
+the migration tests catch model/migration divergence before that stamp can
+become a false claim.
 
 `*.db` is gitignored. A **relative** SQLite path is anchored to the repo root
 rather than the working directory (`Settings._resolve_relative_sqlite_path`), so

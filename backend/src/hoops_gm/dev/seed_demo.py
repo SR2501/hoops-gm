@@ -64,9 +64,9 @@ earlier one is written to refuse. Delete the database file and run the command
 again — that is the supported repeat, and :func:`looks_like_a_previous_demo_seed`
 exists so the refusal says so instead of reading as data loss.
 
-Schema is built with ``Base.metadata.create_all`` rather than Alembic, so the
-result is model-built rather than migration-built. Fine for a throwaway file,
-wrong for anything else.
+Schema is built with ``Base.metadata.create_all`` rather than by replaying every
+migration, then stamped at Alembic ``head``. The result remains model-built, but
+it now identifies the migration revision those models are expected to match.
 """
 
 from __future__ import annotations
