@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -158,12 +159,30 @@ def collect_junit(report: Path) -> list[Metric]:
     return _summarise(observed)
 
 
-def write_metrics(path: Path, label: str, metrics: Sequence[Metric]) -> None:
+def _test_timeout(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"test_timeout_ms must be a positive number or null, got {value!r}")
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"test_timeout_ms must be a positive number or null, got {value!r}")
+    return timeout
+
+
+def write_metrics(
+    path: Path,
+    label: str,
+    metrics: Sequence[Metric],
+    *,
+    test_timeout_ms: float | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": SCHEMA,
         "label": label,
         "source": _source_id(),
+        "test_timeout_ms": _test_timeout(test_timeout_ms),
         "metrics": [asdict(metric) for metric in metrics],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -189,7 +208,7 @@ def _source_id() -> str:
     return sha[:7] if sha else "local"
 
 
-def read_metrics(path: Path) -> tuple[str, str, dict[str, Metric]]:
+def read_metrics(path: Path) -> tuple[str, str, float | None, dict[str, Metric]]:
     payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     schema = payload.get("schema")
     if schema != SCHEMA:
@@ -203,7 +222,12 @@ def read_metrics(path: Path) -> tuple[str, str, dict[str, Metric]]:
     }
     # An older file with no source is reported as unknown rather than silently
     # attributed to this run, which would be the parameter-for-state swap again.
-    return str(payload.get("label", "")), str(payload.get("source") or "unknown"), metrics
+    return (
+        str(payload.get("label", "")),
+        str(payload.get("source") or "unknown"),
+        _test_timeout(payload.get("test_timeout_ms")),
+        metrics,
+    )
 
 
 def _format(value: float, unit: str) -> str:
@@ -393,7 +417,15 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         )
         return 1
 
-    write_metrics(args.out, args.label, metrics)
+    test_timeout_ms: float | None = None
+    if args.label == "frontend":
+        try:
+            test_timeout_ms = read_vitest_timeout()
+        except (OSError, ValueError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    write_metrics(args.out, args.label, metrics, test_timeout_ms=test_timeout_ms)
     print(f"{args.label}: collected {len(cases)} test durations from {source} -> {args.out}")
     return 0
 
@@ -403,7 +435,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"error: {args.current} does not exist", file=sys.stderr)
         return 1
 
-    label, current_source, current = read_metrics(args.current)
+    label, current_source, test_timeout_ms, current = read_metrics(args.current)
     if not current:
         print(f"error: {args.current} holds no metrics", file=sys.stderr)
         return 1
@@ -412,7 +444,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
     baseline_source = "unknown"
     if args.baseline and args.baseline.is_file():
         try:
-            _, baseline_source, baseline = read_metrics(args.baseline)
+            _, baseline_source, _, baseline = read_metrics(args.baseline)
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             # An unreadable baseline is a missing baseline. It must never be the
             # reason a build goes red: this whole unit is print-only.
@@ -423,13 +455,18 @@ def _cmd_report(args: argparse.Namespace) -> int:
     if not _recognise_report_label(report_label):
         return 1
 
-    test_timeout_ms: float | None = None
-    if report_label == "frontend":
-        try:
-            test_timeout_ms = read_vitest_timeout()
-        except (OSError, ValueError) as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 1
+    if report_label == "frontend" and test_timeout_ms is None:
+        print(
+            f"error: frontend metrics artifact {args.current} has no resolved test_timeout_ms",
+            file=sys.stderr,
+        )
+        return 1
+    if report_label == "backend" and test_timeout_ms is not None:
+        print(
+            f"error: backend metrics artifact {args.current} unexpectedly carries test_timeout_ms",
+            file=sys.stderr,
+        )
+        return 1
     # Backend durations come from pytest's JUnit report, not Vitest, so the
     # frontend's configured timeout does not apply to them.
 
