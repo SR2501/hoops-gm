@@ -55,6 +55,8 @@ def test_every_seed_created_database_reports_alembic_head(
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     expected = ScriptDirectory.from_config(config).get_current_head()
+    # Otherwise an unstamped database and a missing migration tree agree on None.
+    assert expected is not None
     engine = create_engine(database_url)
     try:
         with engine.connect() as connection:

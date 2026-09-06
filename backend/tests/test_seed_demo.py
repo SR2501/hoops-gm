@@ -61,6 +61,21 @@ from hoops_gm.identity.names import normalize_name
 COHORT = 8
 
 
+def _published_sanity_bounds(document: str) -> dict[str, tuple[int, int]]:
+    return {
+        name: (int(minimum.replace(",", "")), int(maximum.replace(",", "")))
+        for name, minimum, maximum in re.findall(
+            r"^\| `([a-z_]+)` \| ([0-9,]+) \| ([0-9,]+) \|$",
+            document,
+            flags=re.MULTILINE,
+        )
+    }
+
+
+def test_published_sanity_bounds_accept_markdown_thousands_separators() -> None:
+    assert _published_sanity_bounds("| `games` | 1,000 | 2,400 |") == {"games": (1_000, 2_400)}
+
+
 def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient) -> None:
     """The deliverable, end to end: one seed, every data route answers 200.
 
@@ -161,14 +176,7 @@ def test_documented_sanity_bounds_contain_the_demo_screen_counts(
     }
 
     demo_document = (repo_root / "docs" / "demo.md").read_text(encoding="utf-8")
-    published = {
-        name: (int(minimum), int(maximum))
-        for name, minimum, maximum in re.findall(
-            r"^\| `([a-z_]+)` \| ([0-9,]+) \| ([0-9,]+) \|$",
-            demo_document,
-            flags=re.MULTILINE,
-        )
-    }
+    published = _published_sanity_bounds(demo_document)
 
     assert set(published) == set(actual)
     outside_bounds = {
