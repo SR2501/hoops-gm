@@ -37755,3 +37755,42 @@ trustworthy.
 - **Whether anything else was lost the same way in August.** The stash was found
   because I was looking at worktrees for a different reason. Nothing routinely
   looks here, and this entry does not change that.
+
+## 2026-09-06 - architect - a constraint that shaped the fan-out was never checked, and was false
+
+The overnight plan assigned models on the basis that `gpt-6-astra` could review
+but **could not own a lane**, because it appears in the `task` tool's model list
+and not in `create_session`'s. The plan was honest about the weakness - it filed
+the claim under *"a schema read is not a live check - confirm by attempting it"* -
+and then nobody attempted it for a day.
+
+I attempted it. It works: the session was created and GPT-6 actually ran. The
+detail that makes it a finding rather than a correction is that **accepted and
+silently-downgraded-to-default are indistinguishable from the caller**, so the
+check has to read the runtime's usage record rather than the parameter passed in.
+It records `gpt-6-astra`, 38,133 input tokens, 5 output - the one word the probe
+was asked for. Probe session archived immediately.
+
+**Full reasoning, the caveats and the two carry-forwards are in
+`docs/governance/model-selection.md`**, under *"GPT-6 can own a session after
+all"*, rather than duplicated here. In short: the option set widens, the
+recommendation does not move - GPT-6 still costs 3.4x `gpt-5.6-sol` for a tied
+score, and cost was always the reason we declined it. The second carry-forward is
+independent of GPT-6 and more broadly useful: **a session spawn bills ~38K input
+tokens of bootstrap before doing any work**, which is a floor, not a variable, and
+argues against spawning sessions to answer questions a tool call can answer.
+
+Also landed: the stranded 2026-08-17 quant design entry recovered from
+`stash@{1}`, reproduced verbatim above.
+
+**Could not verify.**
+
+- **Whether the enum is unenforced, or merely not exhaustive.** I tested one real
+  model missing from the list. An invented name might still be rejected. The
+  weaker claim is the evidenced one.
+- **Whether the ~38K bootstrap floor is constant across agents.** One measurement,
+  one agent definition, one repository. It could scale with `AGENTS.md` and the
+  agent file, which would make it grow as this repository does - untested.
+- **Whether any *other* model-assignment premise in the plan is similarly
+  unchecked.** I checked the one the plan flagged. It flagged one; that is not
+  evidence it was the only one.

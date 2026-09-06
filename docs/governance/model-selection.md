@@ -235,3 +235,57 @@ These outlive any model name and cost real time to learn.
     means the instrument does not separate them, not that they are the same.
     Break the tie on cost, which is measured, rather than on reputation, which is
     not.
+
+## GPT-6 can own a session after all, checked by attempting it
+
+**2026-09-06.** The overnight fan-out plan recorded a constraint that turned out
+to be false, and recorded correctly that it was unverified: *"`gpt-6-astra` is
+offered by the `task` sub-agent tool but **not** by `create_session`'s kickoff
+model list. GPT-6 can review; it cannot own a lane. A schema read is not a live
+check - confirm by attempting it, and fall back rather than assume."*
+
+I attempted it. **The session was created and `gpt-6-astra` actually ran.**
+
+The distinction that matters is between *accepted* and *silently downgraded to
+the default*, because those are indistinguishable from the caller and only one of
+them is safe. A silent fallback would be much the worse outcome: every future
+comparison would be labelled GPT-6 and be something else, and the label is the
+whole point of a controlled arm. So the check reads the runtime's own usage
+record rather than the parameter I passed:
+
+```sql
+SELECT model, COUNT(*), SUM(input_tokens), SUM(output_tokens)
+FROM assistant_usage_events WHERE session_id = '<probe session>'
+```
+
+It returns `gpt-6-astra`, one event, **38,133 input tokens, 5 output**. The five
+output tokens are the single word the probe was asked to reply with, so the model
+both ran and obeyed. The probe session was archived immediately after.
+
+**This widens the option set and changes no recommendation.** The verdict above
+stands untouched: GPT-6 ties at 8/8 and costs **3.4x** `gpt-5.6-sol` for the tie,
+and the revisit condition is still "a task `gpt-5.6-sol` actually fails". Being
+*able* to own a lane was never the reason we declined it. Read as permission to
+staff a lane with GPT-6, this section has been read backwards.
+
+**Two things to carry forward.**
+
+1. **A tool description's enum is not authoritative about what the runtime
+   accepts.** `create_session`'s documented model list omits `gpt-6-astra`; the
+   runtime took it regardless. This is the same shape as the `open_canvas` result
+   that echoed back the URL passed to it, recorded in
+   `docs/governance/coordinator-register.md` - a check that reads the declaration
+   instead of the effect cannot fail. Confirm by attempting, then read the effect
+   from somewhere the caller does not control.
+2. **A session costs about 38K input tokens before it does anything.** The
+   probe's entire task was to emit one word, and it billed 38,133 input tokens of
+   bootstrap context to do it. That is a floor per session spawn, not a variable
+   cost, and it is a real input to fan-out sizing: eight lanes begin roughly 305K
+   input tokens in the hole whatever they are asked to do. It argues for fewer,
+   larger lanes over many trivial ones, and against spawning a session to answer
+   a question a tool call could answer.
+
+**Could not verify.** Whether the runtime would accept an outright invented model
+name. I tested one *real* model that is absent from the enum, which shows the
+enum is not exhaustive; it does not show the enum is unenforced. Those are
+different claims and only the first is evidenced here.
