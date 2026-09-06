@@ -74,6 +74,24 @@ backend   http://127.0.0.1:8000/health
 frontend  http://127.0.0.1:5173/schedule
 ```
 
+**5173 is Vite's default, not a guarantee. Read the port Vite actually printed.**
+When 5173 is taken, Vite silently increments — 5174, then 5175 — and the runbook
+number is then wrong for that run. Worse, a *stale* dev server can hold 5173 on
+`::1` only, so `127.0.0.1:5173` is refused while `netstat` still shows something
+listening. Observed on 2026-09-06: an orphaned listener on `::1:5173` with the
+live dashboard actually serving `127.0.0.1:5174`.
+
+To check rather than guess:
+
+```
+Get-NetTCPConnection -State Listen -LocalPort 5173,5174,5175 |
+  Select-Object LocalAddress,LocalPort,OwningProcess
+```
+
+An entry whose `LocalAddress` is `::1` and not `127.0.0.1` will refuse an IPv4
+probe. **The number is not swapped in above deliberately** — pinning this file to
+one machine's incidental port is the same error as the `8010` note below.
+
 **8000 is not arbitrary and changing it breaks the frontend.** `vite.config.ts`
 proxies both `/api` and `/health` to `http://127.0.0.1:8000` unless
 `VITE_API_PROXY_TARGET` says otherwise, so a backend on any other port leaves
