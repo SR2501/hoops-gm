@@ -36091,3 +36091,56 @@ runs specifically. The same sampling error may sit under a job whose slow path I
 have not seen. Whether `R44`/`R45` citations in this file refer to the upstream or
 the model pair; I did not read all seven. And the cause of the single 40.6-minute
 Postgres outlier - contention survives by elimination, not by evidence.
+
+## 2026-09-06 — architect — R40 raised to red: the draft-day news ceiling is arithmetic
+
+**Changed:** Raised **R40** from amber to red in `docs/governance/risks.md` with a
+measured bound rather than a judgement, and added **R67** on single-review approval
+variance. Filed two backlog items: `preseason-news-honesty-repairs` and
+`draft-day-news-source-decision`. No production code touched; this entry records a
+measurement and an escalation, not a build.
+
+**Now true:** The mitigation R40 has relied on since it was opened — "the preseason
+news adapter substitutes for the official injury report, which covers nothing on 18
+October" — is now known to be **insufficient by arithmetic, not by opinion**. The
+RotoWire feed at `https://www.rotowire.com/rss/news.php?sport=NBA` exposes exactly
+**two `<item>` elements** and declares `<ttl>10</ttl>`. Two items per ten minutes is
+**0.2 items/minute**, or twelve observable items per hour under perfect polling — and
+no poller exists; the ten minutes is a cache lifetime on a single fetch. Confirmed
+twice from independent observations: the committed fixture
+`backend/tests/fixtures/rotowire_nba_news.xml.gz` (SHA-bound `0650edfe…`) and a live
+fetch I performed myself. Preseason news volume in the days before an auction exceeds
+twelve items an hour, and the excess is displaced silently and unrecoverably — the
+adapter cannot tell a quiet feed from a saturated one. This holds regardless of the
+unresolved selectivity question below, because the ceiling is a rate, not a sample.
+
+Separately, **PR #176 merged at `df6811c8` on one reviewer's "no significant
+findings" while a second independent review of the same head returned four, two
+High.** I confirmed the fourth against the bytes on `main` rather than from the
+report: `docs/adapters/preseason-news.md` claims an item timestamp of
+`2026-09-03T20:50:00Z`; the committed fixture it cites holds
+`Fri, 04 Sep 2026 7:15:00 AM PDT` = `2026-09-04T14:15:00Z`. **A false evidence row is
+live on `main`** and is the first item in `preseason-news-honesty-repairs`. R67 records
+the general lesson — that a single approval is weaker evidence than this project has
+been treating it as — and deliberately makes **no claim about which model is better**,
+because N=1 across two different reviews cannot support one, and asserting it would be
+exactly the post-hoc move `docs/governance/model-selection.md` exists to forbid.
+
+**Could not verify:** I could not reproduce the second reviewer's page-level evidence
+for feed selectivity — `news.php` returns HTTP 200 but renders client-side, and
+`/basketball/player-news` is 404 — so whether the feed is a *window* or a *selective
+subset* remains open, and both branches are recorded rather than one asserted. I could
+not determine whether the nine-id gap between the two observed items (`532515` and
+`532524`) means eight NBA items were skipped or the id space is shared across sports;
+these have very different implications and I have no evidence separating them. One
+observation of two items proves only that two were exposed, **not** that two is the
+feed's configured maximum window. I did not verify equivalence with Fantrax's in-page
+notes, and I did not attempt to recover items displaced between polls — I believe that
+is impossible with this feed, but I did not prove it.
+
+**Next:** Owner decision, filed as `draft-day-news-source-decision`: buy a complete
+feed, accept the 0.2 items/minute cap and check manually on the day, or build a second
+source inside 41 days. **Doing nothing selects the second option undeliberately** —
+the cap arrives on draft morning whether or not anyone chose it. Recommendation:
+accept the cap now and price the purchase before the 5 October rehearsal window, so
+the rehearsal exercises the real ceiling rather than a hoped-for one.
