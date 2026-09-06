@@ -35302,3 +35302,34 @@ empty 500 response, but it does not kill a real Vite proxy connection after a
 backend commit; reproducing that timing safely would require a purpose-built
 faulting server. Hosted checks and another fresh exact-head review remain
 required. Do not merge or self-approve from this session.
+
+---
+
+## 2026-09-05 - backend - ADR index consistency gate
+
+**Changed:** Added the stdlib-only `scripts/check_adr_index.py` and executable
+coverage in `backend/tests/test_adr_index.py`. The check reads only the
+`docs/decisions/README.md` Index section, requires every
+`ADR-0NN-*.md` file in that directory to be linked there, and resolves every
+index-row link relative to the README so an ADR rename cannot leave a
+plausible-looking broken link. Positive controls mutate each direction and
+exercise missing/malformed index input so an empty parse cannot pass. Marked
+`adr-index-consistency-test` done and recounted the backlog header.
+
+**Now true:** Adding an ADR without an index row, deleting or renaming a linked
+ADR, replacing an index link with plain text, removing the Index section, or
+running the checker over no ADR files fails the Code gate. `PLAIN-ENGLISH.md`
+remains deliberately out of scope: its existing banner says it is a frozen
+historical walkthrough through ADR-009, not a second authoritative index, and a
+test pins that declaration.
+
+**Could not verify:** Hosted CI has not run on this working tree. The checker
+does not compare row numbers, titles, statuses, or summaries with ADR contents;
+does not validate links outside the README Index section; and does not decide
+whether the frozen plain-English walkthrough accurately summarizes ADR-001
+through ADR-009. Those are semantic documentation claims, while this gate is
+limited to ADR membership and link resolution.
+
+**Next:** No dependent implementation is required. Future ADR authors add the
+file and README index row together; expanding `PLAIN-ENGLISH.md` would be a
+separate documentation decision, not a way to satisfy this check.
