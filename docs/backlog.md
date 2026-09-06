@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**82 done - 0 blocked - 113 pending - 195 total**
+**83 done - 0 blocked - 112 pending - 195 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1487,7 +1487,7 @@ overwhelmingly on `out` (74 legacy, 45 short-lead).
 
 ### `adr-index-consistency-test` - Testing that the decision log's two indexes cannot drift
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `ci-pipeline`
 
 `docs/decisions/README.md` was found missing rows for ADR-013 and ADR-014 on

@@ -35302,3 +35302,36 @@ empty 500 response, but it does not kill a real Vite proxy connection after a
 backend commit; reproducing that timing safely would require a purpose-built
 faulting server. Hosted checks and another fresh exact-head review remain
 required. Do not merge or self-approve from this session.
+
+
+---
+
+## 2026-09-05 - backend - ADR index consistency gate
+
+**Changed:** Added the stdlib-only `scripts/check_adr_index.py` and its
+`backend/tests/test_adr_index.py` regression suite. The checker compares every
+`docs/decisions/ADR-NNN-*.md` file with the authoritative `README.md` `## Index`
+table in both directions: an ADR file without a row fails, and an index row
+whose relative link does not resolve fails. Synthetic tests reproduce both the
+historical missing-row defect and the rename/broken-link defect, guard both
+input sets against vacuous scans, and execute the script through its real
+command-line path. Marked `adr-index-consistency-test` done and recounted the
+backlog header from 82 done / 113 pending to 83 done / 112 pending.
+
+**Now true:** A missing ADR index row and a plausible-looking stale relative
+link are Code-gate failures through the default backend pytest suite. Duplicate
+index targets also fail. `PLAIN-ENGLISH.md` remains deliberately outside the
+completeness check because its opening notice identifies it as a frozen
+ADR-001-through-ADR-009 walkthrough and points readers to the README index as
+the current authoritative record.
+
+**Could not verify:** The checker deliberately does not compare displayed ADR
+numbers, titles, statuses, summaries, or amendment status with ADR contents.
+It recognizes the repository's current first-cell inline-link table syntax; a
+future switch to reference-style links would fail closed as an empty or
+malformed index and require the parser to be updated. Hosted CI was not run
+from this uncommitted working tree.
+
+**Next:** Any future ADR author or renamer must update the README index in the
+same change. `PLAIN-ENGLISH.md` should remain frozen unless the project
+explicitly changes the scope stated in that file.
