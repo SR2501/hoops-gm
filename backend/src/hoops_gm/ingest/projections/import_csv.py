@@ -431,7 +431,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _safe_stderr() -> None:
+    """Preserve runtime names on consoles that cannot encode them directly."""
+    reconfigure = getattr(sys.stderr, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _safe_stderr()
     parser = build_parser()
     args = parser.parse_args(argv)
 
