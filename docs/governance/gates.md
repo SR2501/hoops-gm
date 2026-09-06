@@ -1115,10 +1115,25 @@ it. The claim was the rhetorical-convenience failure `AGENTS.md` names - reachin
 for the objection that sounds most serious rather than the one that can be
 evidenced.
 
-It was never committed. Searching `gates.md`, `handoff.md` and `backlog.md` for
-it returns nothing, which is why this entry says *caught*, not *retracted*.
-**The distinction is load-bearing and worth keeping straight**: claiming to have
-retracted something never written would itself be an unevidenced claim, and this
-file would then contain a false statement about how it came to contain a true
-one. The check that settles it is cheap - grep the three files before writing
-the word "retracted".
+**Corrected the same day, and the correction is the more useful half.** The
+paragraph that stood here said the framing was never written down, on the
+evidence that `gates.md`, `handoff.md` and `backlog.md` do not contain it, and
+it closed by recommending exactly that check. Both halves were wrong. The claim
+**was** written - as the lead paragraph of the owner-facing executive summary
+for 2026-09-06, which is the single most-read owner sentence this project
+produces in a day. So this is a retraction, and it has now been made there.
+
+The failure is not that three files were too few. It is that the search set was
+drawn from **where claims are usually recorded** rather than **where this claim
+was actually communicated**. A claim addressed to the owner lives in
+owner-facing artifacts, and in this project those sit deliberately *outside* the
+repository because it is public - so a repository-only grep cannot see the one
+place the claim did the damage. That is the same denominator error as counting
+tracked files and calling it the working tree: the method was sound and the set
+it ran over was the wrong set.
+
+**The check, restated so it would have worked:** before writing "never said",
+list the audiences the claim was addressed to, then search each audience's
+artifacts. If it was told to the owner, the owner-facing file is the *first*
+place to look, not a place omitted because it is untracked. A grep that returns
+nothing is evidence about its search path and nothing else.
