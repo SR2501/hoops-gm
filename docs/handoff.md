@@ -36601,3 +36601,66 @@ squash-merging repository.**
 **Could not verify.** Whether any of the ten worktrees holds work on a *detached
 HEAD*, which no branch-based check I ran would see. That gap is unchanged from
 the retracted entry and is the one claim in it that still stands.
+
+## 2026-09-06 — quant — Pre-unblind ruling on the cohort manifest drift (ADR-019 referral)
+
+The ADR-019 amendment (`b8fb1916`) referred the drift-safety question here:
+*is the retracted "UNVERIFIED, NOT ZERO" a verified zero or an absence wearing a
+zero?* Full ruling in `docs/models/cohort-drift-preunblind-ruling-2026-09-06.md`.
+Three findings, each executed at HEAD, store held fixed, offline:
+
+**Q1 — the drift does not compromise the blind.** Every blind-sensitive section
+is byte-identical committed-vs-regenerated: `canonical_observations`,
+`cross_source_reconciliation` (1245 leaves), `cross_source_tipoff_reconciliation`,
+`reason_evidence`, `position_evidence`, `participation_join` — including the
+withheld `participation_outcome_counts` marginal, identical sentinel in both.
+Every moved leaf is a coverage denominator or capture provenance, never an
+outcome. Coverage completeness is what a blind analysis is permitted to see.
+
+**Q2 — the retraction is honest; the zeros are verified, not vacuous.** The
+slate enumerates a real 1230-game denominator (`expected_count = 1230`, not the
+empty-slate `0` that defeated `enforce_expected_game_coverage` before);
+`ingested_count = 1230`, `missing = []`; cross-checked against the manifest's
+independent `games_in_scope = 1230`. The three non-fetched candidates are DNS
+failures (`[Errno 11001] getaddrinfo failed`, `status_code = null`, all
+2026-01-19) — genuinely not 403/404, so those counters' zeros are real. The
+stronger finding runs the other way: **the committed `null` was the dishonest
+artifact.** Its limitation text blames "a different date range"; the report is
+present, byte-identical, and correctly scoped. Removing the limitation repairs a
+standing misstatement.
+
+**Correction to the amendment's causal story.** It attributes the cascade
+`null → number` to the store growing to cover the window. Measured false. The
+`expected_games.json` (sha `77ec3cd8…`) and `coverage.json` (sha `fe9571d2…`) on
+disk are **byte-identical** to the hashes the committed manifest's own
+`operational_artifacts` recorded at commit. The window was covered at commit; the
+`null` is a **CWD path-resolution artifact** — `build_cohort_evidence`'s cascade
+loader reads a CWD-relative `data/reports` while `operational_artifacts` honours
+`--report-dir`, so from `backend/` the two disagree, which is exactly the
+committed state (reproduced). Store growth is a *separate* cause and touches only
+the 25 disclosed-nonreproducible `source_capture_summary` leaves.
+
+**Q3 — refresh, do not pin; differential gate endorsed with a pairing rule.**
+The committed manifest is internally inconsistent (inventories files it reports
+absent) — pinning freezes a known-bad artifact ADR-019 already refused to freeze.
+The differential is the right repair and I proved it works: with the store held
+fixed, #171 moves **exactly one leaf** (its own `parsers.py` fingerprint) — a
+clean `0 added, 0 removed, 1 changed`. But the differential answers *"is the edit
+inert?"*, not *"is the drift shippable?"* — so it must be **paired** with the
+absolute regen-vs-committed diff, quant-certified (done here), never replace it.
+
+**#171 may proceed** on its one permitted leaf. Its regeneration must run from
+the data root (a `backend/` run empties `operational_artifacts` and re-nulls the
+cascade) and carry both diffs. Two generator bugs to file: `build_cohort_evidence`
+skips `_expected_coverage_matches_scope` (correct here only because window == full
+season) and its cascade loader ignores `--report-dir`.
+
+**Could not verify.** (1) The exact historical command that produced the
+committed manifest — I reproduced a CWD yielding its precise state but did not
+witness the original invocation. (2) Truth of the frozen cohort numbers
+themselves — a whole-leaf diff certifies *no change*, never *correctness*. (3)
+Whether a future widened/playoff window keeps `games_in_scope == expected_count`;
+it holds now, the generator does not enforce it. The three 2026-01-19 DNS
+failures are a real but minor injury-report coverage gap (box-score ingest is
+complete 1230/1230), surfaced only as `attempted − fetched = 3`, not a named
+cascade field.
