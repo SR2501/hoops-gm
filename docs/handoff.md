@@ -37326,3 +37326,129 @@ already there.
   history versus an explicit provisional price adjustment - is still open. No
   purchase, no access change, no ADR acceptance and no model-gate waiver is
   implied by anything here.
+
+
+## 2026-09-06 - architect - owner accepts independent auction values without a mock-price prerequisite
+
+**Changed:** Recorded the owner's acceptance of ADR-017, updated its decision-log
+index and the Decision 2 section of `OPEN-draft-day-deliverable.md`. Asked
+"Should we proceed without waiting for mock-draft price data, keeping our player
+valuations and published market prices separate?", the owner answered:
+
+> Yes, realistically we have everything we need to draft today if we had to.
+> Everything from here is just refinement and improving our chances of success.
+
+**Now true:** ADR-017's separation and dependency removal are owner-approved.
+Mock-price collection improves market context; it does not gate auction advice.
+The preceding requirement remains a live, strategy-aware 3-5-player shortlist
+with health/rest effects visible, starting from BBM projections. This approval
+does not accept ADR-021's descriptive-only fallback, change the valuation
+method, waive an existing model gate, or authorize a paid subscription.
+
+**Could not verify:** The live shortlist and dollar-value pipeline have not been
+exercised here. The owner's information-baseline statement is not a claim that
+the application is already draft-ready. Backlog dependencies still name
+`aav-blending` and `aav-source` for `auction-values`, and directly name
+`aav-empirical` and `aav-source` for `auction-inflation`; these were observed but
+not edited in this decision-only change.
+
+**Next:** The active delivery architect was notified to remove obsolete market
+prerequisites throughout the auction path, including the direct inflation edge,
+and to distinguish required live integration from optional data/model
+refinements. Any unresolved alternative availability-input or valuation-method
+choice stays explicit rather than being inferred from this approval.
+
+
+## 2026-09-06 - architect - year-one success is useful draft assistance, not perfection
+
+**Changed:** The owner clarified: "A lot of refinement to be clear, but we should
+not behave like we've failed. I want to make it so that I don't need BBM tools
+the day of the draft, but if I do, I'll survive. This is only year one, league
+one, of developing this tool."
+
+**Now true:** The target is to use hoops-gm for the live draft without needing
+the BBM interface. BBM is an acceptable contingency, not evidence of project
+failure. This does not retract BBM projections as an input: independence from
+its draft-day tools is different from independence from its data. Substantial
+refinement remains expected; year one, one league is the governing scope.
+
+**Could not verify:** No live rehearsal was conducted in this decision thread;
+the clarification states the desired outcome and acceptable fallback, not
+application readiness.
+
+**Next:** The delivery architect has this direction. Keep the live shortlist
+target ambitious and remaining work concrete, without equating an unfinished
+advanced model or use of a fallback with failure of the project.
+
+
+## 2026-09-06 - architect - owner directly confirms the draft date
+
+**Changed:** Asked whether Sunday, October 18, 2026 is the confirmed league draft
+date. The owner selected "Yes - October 18 is confirmed."
+**Now true:** The date in `docs/plan.md` has direct owner confirmation today; it
+is not merely an inherited planning assumption.
+**Could not verify:** Start time and timezone were not requested or confirmed;
+this answer says nothing about when mock rooms become available.
+**Next:** The delivery architect was notified. Retain October 18 as the draft
+date and stop presenting its date as an unresolved owner question.
+
+
+## 2026-09-06 - architect - correcting the auction graph, and two errors of mine
+
+**Changed.** Three sets of edits to `docs/backlog.md`, all **line-count-neutral**
+because `auction-inflation` (1649), `auction-values` (1663), the
+`draft-tracker-bridge-feed` caveat (2756) and `overlay-auction-panel` (3253) all
+sit *above* the range 3623-3661 pinned by digest in
+`test_opportunity_coverage_predicate.py`. Shifting that range is what left main
+red for six commits earlier today, so every edit rewrites an existing line and
+the script asserts the line count and both line-ending counts are unchanged.
+
+1. **ADR-017 (Accepted 2026-09-06) applied to the graph.** `auction-values` no
+   longer depends on `aav-blending` or `aav-source`; `auction-inflation` no
+   longer depends on `aav-empirical` or `aav-source`. The ADR mandates the first
+   explicitly. The second is my extension of the same reasoning, made because
+   those two edges reintroduce precisely the mock-corpus prerequisite the ADR
+   removed - flagged here as a consequential edit rather than a decision, and one
+   line to revert if the owner disagrees.
+2. **Two dependency edges were contradictions, not mis-wires.** `blind-mocks`
+   states it *"explicitly requires the mock be run **without** this tool"*, yet
+   `overlay-auction-panel` and `rehearsal-harness` both depended on it while
+   requiring our tool to be *present*. Both now depend on
+   `fantrax-auction-capture`, which the backlog already held distinct at
+   1312-1315: `blind-mocks` wants uncontaminated market prices and is satisfied
+   by ESPN; `fantrax-auction-capture` wants Fantrax payload shape and can only
+   ever be satisfied by Fantrax. `adherence-experiment` and `behavioural-baseline`
+   were left alone - both read blind captures after the fact and are correct.
+3. **A stale caveat corrected.** `draft-tracker-bridge-feed` claimed no source had
+   ever returned a real draft payload. ADR-020 falsifies it: 49 of 49 captures,
+   42 boards parsed correctly, a completed 216-pick draft - all **football,
+   snake**. The caveat now says what is actually unobserved, which is NBA auction
+   nominations, clearing prices and participant binding.
+
+**Now true.** The auction chain no longer routes through an item whose own
+definition excludes it, and no longer carries AAV preconditions the owner has
+accepted removing. `test_backlog_graph.py` and the pinned-digest test are green;
+the header recount is unchanged at 91 done / 0 blocked / 127 pending / 218 total
+because no status marker moved.
+
+**Two errors of mine, both recorded in `gates.md`.** Asked for the single
+highest-leverage owner blocker, I cited the caveat in (3) as current evidence and
+asked the owner to run a mock that had already been run on 2026-08-28. In the
+same message I described his offer to paste observations manually as covering
+*draft state*; he offered it for **public news**. The second is the supposition
+error I had already been corrected on once. Neither is catchable by a gate: a
+citation is well-formed whether or not it still holds.
+
+**Could not verify.**
+- Whether dropping `aav-empirical` and `aav-source` from `auction-inflation` is
+  what the owner intends. ADR-017 does not name that item; I extended its logic.
+- Whether any *other* item depends on a prerequisite that excludes it. I checked
+  the six dependents of `blind-mocks` only, because that is where the tell was.
+  The same shape may exist elsewhere and no test looks for it.
+- Whether `rehearsal-harness` needs a second edge I removed rather than replaced.
+  It wants a corpus of at least ten predominantly auction mocks; I asserted the
+  binding prerequisite is payload shape, which is a judgement, not a measurement.
+- Whether an NBA auction practice room is available to the owner at all. That
+  question is live in the decision thread and is not mine to answer.
+- CI on the head carrying these edits has not been observed at the time of
+  writing.

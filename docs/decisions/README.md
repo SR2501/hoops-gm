@@ -33,7 +33,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [013](ADR-013-forward-schedule-completeness.md) | Forward-schedule completeness: source-declared pending is not a resolution failure | **Accepted** | A game the source publishes without teams is recorded as pending, not refused and not dropped; a pending game's `game_date` is nullable and names its cause |
 | [014](ADR-014-read-endpoints-detect-not-lock.md) | Read endpoints detect a moved cohort; they do not lock to prevent one | *Proposed* | A read must not hold a lock that can block a writer; bracket the read between two canonical releases and refuse instead |
 | [015](ADR-015-blend-recipe-durable-binding-transient.md) | The blend recipe is durable; its binding to imports is transient | *Proposed* | Owner-authored weights survive a refresh; the imports they were executed against do not, and the blend is recomputed on read rather than stored |
-| [017](ADR-017-auction-pricing-without-mock-corpus.md) | Auction pricing ships on seed AAV; empirical AAV is an enhancement | *Proposed* | `auction-values` derives dollars from our own valuation and never consumed AAV; drop the blocked dependency and show published AAV beside ours |
+| [017](ADR-017-auction-pricing-without-mock-corpus.md) | Auction pricing ships on seed AAV; empirical AAV is an enhancement | **Accepted** | `auction-values` derives dollars from our own valuation and never consumed AAV; drop the blocked dependency and show published AAV beside ours |
 | [018](ADR-018-calibration-displayed-beside-the-number.md) | `p(play)` calibration is displayed beside the number it grades | *Proposed* | Owner rejected both auto-brake and footnote; the restricted calibration figure becomes a visible, flattenable badge that blocks nothing |
 | [019](ADR-019-cohort-fingerprint-boundary.md) | The cohort fingerprint boundary is the derivation closure, and the check claims bytes, not entitlement | *Proposed* | Nothing is dropped and the set is under-inclusive by 31 files; a fingerprinted file may be edited with a leaf-diff transcript attached |
 | [020](ADR-020-board-reading-keyed-by-board.md) | A rendered board reading is keyed by the board, not by the bytes | **Accepted** | Both automatic pick paths are negative, so the rendered board is the live source; transport stays `BRIDGE_CAPTURE`, `artifact_key` digests the parsed board, and a board that lost a pick never clears it |
@@ -67,6 +67,10 @@ ADR-020 Decisions 1-4 were accepted by the project owner on **2026-08-28**:
 unchanged board readings are duplicates, bridge contact establishes liveness,
 and a later incomplete reading never erases an earlier pick. Its amendments
 retain their independent `Proposed` status.
+
+ADR-017 was accepted by the project owner on **2026-09-06**: proceed without
+waiting for mock-draft price data and keep our valuations separate from
+published market prices. This does not accept ADR-021 or waive model gates.
 
 The recursive weekly refresh amendments to ADR-011 and ADR-012 were accepted by
 the project owner on **2026-08-17**. They extend the original sequencing

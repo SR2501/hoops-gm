@@ -1,6 +1,7 @@
 # ADR-017: Auction pricing ships on seed AAV; empirical AAV is an enhancement
 
-- **Status:** Proposed
+- **Status:** Accepted
+- **Accepted:** 2026-09-06 by the project owner, in the decision thread
 - **Date:** 2026-08-23
 - **Deciders:** owner (accepts), architect (proposes)
 - **Supersedes:** nothing. **Amends:** nothing.
@@ -80,3 +81,18 @@ in the tool observes what players *actually clear for* in a league like his —
 the dollars are a projection of worth, not a forecast of price. That gap is
 real, it is unavoidable given the block, and naming it is better than closing it
 with data we would have had to invent.
+
+## Owner acceptance - 2026-09-06
+
+Asked whether to proceed without waiting for mock-draft price data, keeping our
+player valuations and published market prices separate, the owner answered:
+
+> Yes, realistically we have everything we need to draft today if we had to.
+> Everything from here is just refinement and improving our chances of success.
+
+The accepted decision is the dependency removal and separation above: empirical
+auction-price data is an enhancement, not a prerequisite for auction advice.
+This does not certify the live recommender as implemented, accept ADR-021's
+projections-only fallback, change the valuation method, or waive a model gate.
+The owner's preceding requirement remains live, strategy-aware recommendations
+with visible health/load-management effects and BBM projections as a baseline.

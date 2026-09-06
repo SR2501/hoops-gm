@@ -1,7 +1,7 @@
 # OPEN: What we walk into 18 October with
 
 **Raised:** 2026-09-05 by `architect`
-**Status:** Open. Two owner decisions and three owner actions.
+**Status:** Open. Decision 2 accepted on 2026-09-06; Decision 1 and the three owner actions remain unresolved.
 **Risks:** R35, R37, R40
 
 ---
@@ -95,15 +95,19 @@ fits nothing, so it does not touch the veto you accepted.
 dollar value itself. That is the thing this project exists to fix, and on
 18 October it will not be fixed. Saying so on the screen is the whole point.
 
-## Decision 2 — accept or decline ADR-017, pending 13 days
+## Decision 2 — ADR-017 accepted on 2026-09-06
 
-`docs/decisions/ADR-017-auction-pricing-without-mock-corpus.md` has sat
-`Proposed` since 2026-08-23. **ADR-021 is inert without it**, and the backlog
-still carries the `aav-blending -> auction-values` edge that ADR-017 exists to
-cut. Two proposed ADRs now sit on the 18 October path and only you can accept
-either.
+The owner approved proceeding without waiting for mock-draft price data,
+keeping our player valuations and published market prices separate. See
+`docs/decisions/ADR-017-auction-pricing-without-mock-corpus.md` for the exact
+question, answer and acceptance scope. The delivery architect must remove the
+obsolete market-data prerequisites from the auction path; recording acceptance
+does not itself change the backlog dependencies or implement the recommender.
 
-Five ADRs are awaiting you in total: 014, 015, 017, 018, 021.
+ADR-021 remains `Proposed`. The owner instead requested live, strategy-aware
+3-5-player suggestions with visible health/load-management effects, using BBM
+projections as a baseline; a descriptive durability panel alone does not meet
+that requirement. The current ADR statuses are in `docs/decisions/README.md`.
 
 ---
 

@@ -1649,9 +1649,9 @@ AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not in
 ### `auction-inflation` - Building the live auction inflation tracker
 
 - [ ] **pending**
-- **Depends on:** `aav-empirical`, `aav-source`, `auction-values`, `draft-tracker`
+- **Depends on:** `auction-values`, `draft-tracker`
 
-AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Track inflation continuously as money leaves the board and restate prices for the remaining pool. If the top tier goes over value, everything after deflates. This is the single largest edge available in an auction and most managers only eyeball it.
+AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Track inflation continuously as money leaves the board and restate prices for the remaining pool. If the top tier goes over value, everything after deflates. This is the single largest edge available in an auction and most managers only eyeball it. Per ADR-017 (Accepted 2026-09-06) `aav-empirical` and `aav-source` are no longer dependencies: inflation is money leaving the board measured against our own remaining dollar values, so it needs neither a mock corpus nor a published seed. Where published AAV is displayed it is a separate labelled quantity beside ours, never blended into it and never substituted when ours is unavailable.
 
 ### `auction-nomination` - Building the nomination strategy engine
 
@@ -1663,9 +1663,9 @@ AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not in
 ### `auction-values` - Deriving auction dollar values
 
 - [ ] **pending**
-- **Depends on:** `aav-blending`, `aav-source`, `draft-format-abstraction`, `risk-adjusted-valuation`
+- **Depends on:** `draft-format-abstraction`, `risk-adjusted-valuation`
 
-AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Convert risk-adjusted G-score to dollar values via value over replacement scaled to the league total budget pool, accounting for roster size and the minimum-bid reserve.
+AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Convert risk-adjusted G-score to dollar values via value over replacement scaled to the league total budget pool, accounting for roster size and the minimum-bid reserve. Per ADR-017 (Accepted 2026-09-06) `aav-blending` and `aav-source` are dropped as dependencies: this derivation consumes `risk-adjusted-valuation` and league configuration and does not consume AAV at all. Published AAV stays available beside our number as a labelled cross-check, never blended in.
 
 ### `automation-audit` - Building the automation audit log
 
@@ -2753,7 +2753,7 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker-bridge-feed` - Feeding the tracker from the bridge and official API
 
-- [x] **done** - Landed 2026-08-26. The tracker reads the board from the bridge and, where it answers, the official API. Provenance is recorded per instant, freshness is computed on the server clock, and a disagreement between the two sources is reported and never resolved. Ordering is by publication time rather than arrival, and where those two disagree about which reading is current the feed refuses both rather than preferring either clock. Open caveats: neither source has ever returned a real draft payload, so the recogniser is fail-closed by design and may recognise nothing until one mock draft is run with the userscript loaded; and whether the refusal above fires on real captures is unknown, because it depends on the userscript setting `captured_at` consistently. **Historical caveat, fixed by `draft-feed-unreadable-id-surfacing`:** a record whose player id was present but unreadable used to be counted only at ingest and omitted from `GET`; it now persists with a permanent `skipped_reason` and is published by the status contract below.
+- [x] **done** - Landed 2026-08-26. The tracker reads the board from the bridge and, where it answers, the official API. Provenance is recorded per instant, freshness is computed on the server clock, and a disagreement between the two sources is reported and never resolved. Ordering is by publication time rather than arrival, and where those two disagree about which reading is current the feed refuses both rather than preferring either clock. Open caveats, narrowed 2026-09-06 because the original claim is now false: a real payload HAS been captured - ADR-020 records 49 of 49 captures with `board_dom.parse_draft_board` reading 42 of them correctly, through a completed 216-pick draft - but every byte of it is **football, snake**. What remains unobserved is **NBA auction** semantics: nominations, clearing prices and participant binding, tracked by `fantrax-auction-capture`, until which `recognise_board_snapshot` keeps returning `board_reading_unestablished_for_auction`; and whether the refusal above fires on real captures is unknown, because it depends on the userscript setting `captured_at` consistently. **Historical caveat, fixed by `draft-feed-unreadable-id-surfacing`:** a record whose player id was present but unreadable used to be counted only at ingest and omitted from `GET`; it now persists with a permanent `skipped_reason` and is published by the status contract below.
 - **Depends on:** `draft-tracker-persistence`, `bridge-capture`, `fantrax-official-adapter`
 
 ### `draft-feed-unreadable-id-surfacing` - Surfacing records whose player id cannot be read
@@ -3253,9 +3253,9 @@ Tune the draft simulator opponent models from observed behaviour in the mock cor
 ### `overlay-auction-panel` - Building the auction overlay panel
 
 - [ ] **pending**
-- **Depends on:** `auction-budget-manager`, `auction-inflation`, `blind-mocks`, `bridge-overlay`
+- **Depends on:** `auction-budget-manager`, `auction-inflation`, `bridge-overlay`, `fantrax-auction-capture`
 
-AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Auction draft surface: current nomination, inflation-adjusted max bid, value versus standing bid, budget and slots remaining, tier-exhaustion alerts. Optimised for a seconds-long bid clock - one number, big and unambiguous.
+AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Auction draft surface: current nomination, inflation-adjusted max bid, value versus standing bid, budget and slots remaining, tier-exhaustion alerts. Optimised for a seconds-long bid clock - one number, big and unambiguous. Dependency corrected 2026-09-06: was `blind-mocks`, which is contradictory - that item requires the mock be run *without* this tool, so it can never supply a room this panel is present in. The real prerequisite is Fantrax auction payload shape (`fantrax-auction-capture`); `blind-mocks` supplies uncontaminated market prices and is satisfied by ESPN, per backlog 1312-1315.
 
 ### `overlay-draft-panel` - Building the draft-day overlay panel
 
@@ -3731,9 +3731,9 @@ Punt-config modelling with recomputed rankings per build, side-by-side compariso
 ### `rehearsal-harness` - Building the instrumented rehearsal harness
 
 - [ ] **pending**
-- **Depends on:** `blind-mocks`, `draft-day-synthesis`, `draft-simulator`, `surface-parity-tests`
+- **Depends on:** `draft-day-synthesis`, `draft-simulator`, `fantrax-auction-capture`, `surface-parity-tests`
 
-Instruments the Fantrax dress-rehearsal mocks (no fewer than 10): per pick, whether the overlay alone sufficed, when the dashboard was opened and what was checked, time-to-decision, and recommendation take rate. Produces an evidence-based answer on whether a second monitor is actually needed and identifies anything repeatedly checked elsewhere that belongs in the overlay. NOTE: league is auction, so the corpus must be predominantly AUCTION mocks - snake mocks cannot calibrate inflation curves or budget behaviour.
+Instruments the Fantrax dress-rehearsal mocks (no fewer than 10): per pick, whether the overlay alone sufficed, when the dashboard was opened and what was checked, time-to-decision, and recommendation take rate. Produces an evidence-based answer on whether a second monitor is actually needed and identifies anything repeatedly checked elsewhere that belongs in the overlay. NOTE: league is auction, so the corpus must be predominantly AUCTION mocks - snake mocks cannot calibrate inflation curves or budget behaviour. Dependency corrected 2026-09-06: was `blind-mocks`, which is contradictory - a blind mock is run *without* this tool, and this item exists to measure whether the overlay sufficed, which requires the overlay present. The real prerequisite is `fantrax-auction-capture`.
 
 ### `reliability-ui` - Building the reliability UI
 

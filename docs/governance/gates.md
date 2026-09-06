@@ -1137,3 +1137,42 @@ list the audiences the claim was addressed to, then search each audience's
 artifacts. If it was told to the owner, the owner-facing file is the *first*
 place to look, not a place omitted because it is untracked. A grep that returns
 nothing is evidence about its search path and nothing else.
+
+### A dependency edge that resolves can still be incoherent
+
+**Recorded 2026-09-06.** `docs/backlog.md` had `overlay-auction-panel` and
+`rehearsal-harness` both depending on `blind-mocks`. Every reference resolved,
+`test_backlog_graph.py` was green, and the edges had survived every prior audit.
+They were nonetheless **contradictions**: `blind-mocks` states that it
+*"explicitly requires the mock be run **without** this tool"*, while the overlay
+panel renders a live nomination and the rehearsal harness exists to measure
+whether that overlay sufficed. Neither can be satisfied by a room our tool is
+absent from. The real prerequisite for both is Fantrax auction *payload shape* -
+`fantrax-auction-capture`, which the backlog already held distinct at 1312-1315.
+
+**The graph checker cannot catch this and should not be extended to try.** It
+verifies that a named dependency *exists*; coherence is a claim about two items'
+contents. The cheap check is to read the prerequisite's own constraints, not just
+its name - and the tell is a prerequisite phrased as *without*, *blind*,
+*uncontaminated* or *held out*, because a constraint of that shape usually
+excludes some of its own dependents. Cost here: an owner-facing ask that
+requested work already completed on 2026-08-28.
+
+### A caveat is a claim with a shelf life, and `done` items are where they rot
+
+**Recorded 2026-09-06.** Asked for the single highest-leverage owner blocker, I
+cited `draft-tracker-bridge-feed`'s caveat that *"neither source has ever
+returned a real draft payload"*. It was true when written and false when cited:
+ADR-020 records 49 of 49 captures, 42 boards parsed correctly and a completed
+216-pick draft, on **2026-08-28, nine days earlier**. The caveat sat on an item
+marked **done**, and a done item is precisely what nobody re-reads when the world
+changes - so its caveats decay silently while reading as current evidence.
+
+**Two instances, one shape.** In the same message I described the owner's offer
+to paste observations manually as covering *draft state*; he offered it for
+**public news**. Both errors take a record of one thing and use it as evidence
+for another, and neither is detectable by any gate - a citation is well-formed
+whether or not it still holds, exactly like the `gameEt` field that is
+timezone-correct and wrong. **Before citing a caveat as a live blocker, check
+what has landed since it was written.** For a `done` item that means reading the
+ADRs and captures dated after it, not the item.
