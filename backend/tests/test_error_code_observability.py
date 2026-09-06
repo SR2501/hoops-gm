@@ -79,3 +79,25 @@ def test_validation_error_logs_its_error_code(
     assert response.json()["error"] == "validation_error"
     assert "validation_error" in caplog.text
     assert "422" in caplog.text
+
+
+def test_middleware_request_completed_line_cannot_satisfy_the_assertions_above(
+    app: FastAPI, client: TestClient, caplog: LogCaptureFixture
+) -> None:
+    """Negative control: prove these tests are exercising the new log line.
+
+    `RequestContextMiddleware` already logged `status_code` on every request
+    at INFO level (`request.completed`) before this fix existed. If the tests
+    above captured at INFO instead of WARNING, they could pass on that
+    pre-existing line alone — matching on the status code digits — without
+    `app.py`'s new `request.error` line (added in `_error_response`) ever
+    running. Capturing at WARNING is what rules that out. This confirms it
+    directly: at WARNING, `request.completed` is absent and `request.error`
+    is present, so the assertions above can only be satisfied by the new
+    line, not the middleware's older one.
+    """
+    with caplog.at_level("WARNING"):
+        client.post("/api/v1/bridge/handshake", json={"protocol": 1})
+
+    assert "request.completed" not in caplog.text
+    assert "request.error" in caplog.text
