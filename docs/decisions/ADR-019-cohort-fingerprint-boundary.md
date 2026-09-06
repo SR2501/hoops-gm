@@ -148,3 +148,67 @@ rather than trusting it.
 `hoops_gm`'s real import graph, or a closure file being shown to matter that no
 import reaches — either sends membership back to a hand-list, and the body's
 completeness claim is then withdrawn rather than quietly weakened.
+
+
+### Amendment, 2026-09-06: the gate compares the wrong two things, and section 4 has expired
+
+- **Status:** Proposed
+- **Proposed by:** architect. Only the owner accepts.
+
+**Section 4's measurement no longer holds, and it cannot be restored.** It
+recorded, driven on 2026-08-27, that regeneration against an unmodified tree
+moves one leaf. Driven again on 2026-09-06 against an unmodified tree it moves
+**thirty-three**, plus two `limitations` removed. Nothing in the repository
+changed. The local capture store grew: `data/raw` holds 10,437 files, newest
+write 2026-09-01, and `BoxScoreTraditionalV3` went 1,230 to 4,920 captures with
+`last_fetched_at` moving 2026-08-22 to 2026-09-02. Four live sweeps landed
+between the two measurements.
+
+**The mechanism, which is a design fault and not an accident.** The manifest
+mixes three kinds of leaf and the gate treats them alike. *Evidence* —
+`canonical_observations`, `cross_source_reconciliation` — must be frozen and
+did not move. *Provenance* — `operator.*` — is expected to move on an edit.
+*Environment description* — `source_capture_summary`, and the `null` fields that
+populate once the store covers the window — describes a **mutable local store
+that no reviewer controls** and moves on its own, with no code change at all.
+Freezing an artefact that records a moving quantity guarantees the gate fires
+for reasons unrelated to any edit.
+
+**Consequence, which section 3 did not anticipate.** Because every regeneration
+now moves environment leaves, every edit to a fingerprinted file stops for
+`quant` regardless of what it did. That is a freeze on six source files in
+practice, and the Rejected section above declined a freeze explicitly. PR #171
+is the demonstration: its footprint is **one** leaf, and it is blocked by
+thirty-three it did not cause.
+
+**Amendment.** Section 3's comparison becomes **differential, not absolute**.
+Regenerate twice from the same store in the same run — once with the edit, once
+with the edit reverted — and require the difference *between those two
+regenerations* to be confined to `operator.source_fingerprints` and
+`operator.commands`. Compare like against like. Drift shared by both is
+environment drift and is not the edit's to answer for; it is a separate finding
+against the store, escalated on its own terms rather than attached to whichever
+pull request happened to regenerate next.
+
+**What this deliberately does not do.** It does not decide whether the current
+store's drift is safe pre-unblind — two `limitations` reading "UNVERIFIED, NOT
+ZERO" now report `0`, and whether that is a verified zero or an absence wearing
+a zero is `quant`'s ruling, referred on 2026-09-06 and open at the time of
+writing. It does not weaken what may move under an edit. It changes only the
+baseline the edit is measured against.
+
+**Evidence.** The control was run twice independently — by the lane holding
+#171, and by me from the main checkout at `61f3dd72`, from the data root, with
+`--repo-root` on main and output to a temp path. Both produce the same
+thirty-three. My run additionally moved `operator.commands[8]`, which is the
+`--out` path echo that section 4 already names, and is the reason a differential
+comparison must hold the output path fixed across both regenerations or it will
+report a movement it created itself.
+
+**What would flip this amendment.** The store being made immutable per cohort —
+a content-addressed snapshot pinned in the manifest rather than summarised from
+whatever is on disk — removes the drift at its source and makes the absolute
+comparison correct again, at which point this amendment should be withdrawn
+rather than kept as redundant machinery. Equally, if `quant` rules that
+environment drift is itself unblinding, then regeneration is not a routine
+operation and the differential gate is the wrong shape entirely.

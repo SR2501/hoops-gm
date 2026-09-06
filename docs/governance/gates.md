@@ -536,3 +536,41 @@ failure it produces looks like a real bug in your own change.
   `PYTHONPATH` protects a command; it does not protect a machine. Per-worktree virtual
   environments are the structural fix and are not in place, which is why this trap has
   now recurred often enough to be documented three times and fixed once.
+
+
+### Ahead-of-origin is not a measure of unmerged work
+
+**Recorded 2026-09-06, after it produced a false rescue and an owner-facing
+report that had to be retracted.**
+
+Sweeping ten worktrees before archiving them, one branch reported
+`git rev-list --count origin/main..<branch>` = 3. Read as "three commits of
+unmerged work", it looked like content about to be destroyed. It was not.
+`git cherry origin/main <branch>` marked all three `-`, and every file in the
+delta was byte-identical to `main`. The work had merged hours earlier.
+
+**Why the number lies.** This repository squash-merges. A squash rewrites a
+branch's commits into one new commit with a new hash, so the originals are
+never ancestors of `main`. **Every fully merged branch in a squash-merging
+repository reports a non-zero ahead-count, permanently.** The count measures
+SHA reachability, which after a squash is guaranteed to disagree with content
+presence. It is not a weak signal; for this workflow it is a broken one.
+
+**Use patch-equivalence instead.**
+
+    git cherry origin/main <branch>     # '-' already present, '+' genuinely absent
+    git diff origin/main <branch> -- <delta paths>
+
+`git cherry` compares patch-ids rather than hashes, so it survives the rewrite.
+A content diff of the changed files answers the same question and is the check
+to reach for when you are about to destroy something.
+
+**The trap has a matching twin, already recorded above:** a clean working tree
+(`dirty=0`) says nothing about whether commits exist elsewhere. So the two
+obvious pre-deletion checks fail in opposite directions - `dirty` under-reports
+risk, ahead-count over-reports it. Neither is a safety check. Only comparing
+content is.
+
+**What this cost:** a preserved remote ref nobody needed, a backlog item filed
+for gates and review that were never required, and a false claim in a commit
+message and an owner report. What it would have cost to avoid: one command.

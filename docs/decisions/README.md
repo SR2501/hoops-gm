@@ -87,5 +87,6 @@ ADR's body rather than its amendments — so an `Accepted` row can hold a
 | [020](ADR-020-board-reading-keyed-by-board.md) | The truncation guard the body named was dead — `coordinate_grid_incomplete` fires 0 times in 771 in-board cuts — and the safety comes from Fantrax's layout rather than from our check | 2026-08-28 | `architect` |
 | [020](ADR-020-board-reading-keyed-by-board.md) | Source columns require an explicit participant binding; direct `seat == team_slot`, displayed names, and inferred Fantrax franchise identity are forbidden | 2026-08-28 | `architect` |
 | [021](ADR-021-draft-day-without-availability.md) | All four direct censuses have landed, so `PROCEED_COMMON` has one unmet conjunct rather than two; and point 4 publishes a denominator, because the protocol's `unknown_share` is not computable | 2026-09-06 | `architect` |
+| [019](ADR-019-cohort-fingerprint-boundary.md) | Point 4's measurement expired — an unmodified tree now moves 33 leaves, not 1, because the manifest freezes a mutable store; the gate becomes differential, comparing two regenerations rather than one against a stale baseline | 2026-09-06 | `architect` |
 
 Agents write `Proposed` only. Only the project owner accepts.

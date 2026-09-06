@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 127 pending - 211 total**
+**91 done - 0 blocked - 120 pending - 211 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -240,7 +240,7 @@ GitHub Actions running lint, type-check and tests for both backend and frontend 
 
 ### `cli-help-no-side-effects` - Making `--help` print help rather than start a server
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #168. Verified by the presence of `backend/tests/test_cli_help.py` on `main`.
 - **Depends on:** `backend-skeleton`
 
 `python -m hoops_gm --help` starts the server instead of printing usage, because the module
@@ -265,7 +265,7 @@ Originally scoped to compute every future deadline from the ingested settings: p
 
 ### `demo-db-alembic-stamp` - Stamping demo and seed databases with an Alembic revision
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #173 as `backend/tests/test_seed_revisions.py`. Note the bound the lane itself stated: the test proves each seed CLI exits zero and that `alembic_version` equals a discovered non-`None` head. It does **not** independently compare seeded schema against migration-built schema - that bridge is the separate `test_models_and_migrations_agree` gate, and if that gate were defective this one could bless drift with a false head.
 - **Depends on:** `db-foundation`
 
 Databases created by the demo and seed paths (`projections_demo.db` among them) are built by
@@ -2129,7 +2129,7 @@ before a separately reviewed profile value can widen the boundary.
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 as `scripts/check_doc_terminators.py`, wired as the `doc-terminators` CI job. The script states its own limit in its output: a terminator check says the next append will start on a fresh line and says nothing about whether a previous entry was rewritten.
 - **Depends on:** `frontend-skeleton`
 
 **Observed 2026-08-28, in a merge the coordinator performed.** `docs/handoff.md`
@@ -2935,7 +2935,7 @@ fixture to `tmp_path` and plant there, or point the scanner at a temporary tree.
 
 ### `error-code-observability` - Logging the error code, not just the status
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #168. Verified by the presence of `backend/tests/test_error_code_observability.py` on `main`.
 - **Depends on:** `backend-skeleton`
 
 `api/middleware.py` logs `status_code` and `app.py`'s HTTP exception handler
@@ -3943,7 +3943,7 @@ nothing. The enumeration is the deliverable; the fixes may each be small.
 
 ### `demo-sanity-numbers-gate` - Gating the sanity numbers published in docs/demo.md
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #173 as `_published_sanity_bounds` in `backend/tests/test_seed_demo.py`, comparing the documented table against 12 measures read through screen REST responses under `set(published) == set(actual)`, so adding or removing a metric on one side alone fails. Bounded by design: a plausible wrong value inside a range passes silently, and no percentage category is among the 12, so volume-weighted FG%/FT% semantics are not exercised here.
 
 Promoted from coordinator register `c308`. `docs/demo.md` publishes figures a
 reader uses to decide whether their local demo came up correctly. **Nothing
@@ -4592,7 +4592,7 @@ misexplains one is spending the exact currency it exists to earn.
 
 ### `console-safety-for-runtime-names` - Surviving a non-ASCII player name on the owner's console
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #169. Verified by content, not by branch state: `_safe_stderr` is present in `backend/src/hoops_gm/ingest/projections/import_csv.py` on `main`, and all three files on the follow-up branch compare byte-identical to `main`. An earlier note here claimed that branch held unmerged work; it did not, and the retraction is in `docs/handoff.md` under 2026-09-06.
 - **Depends on:** `projections-import-cli`
 
 **Acceptance:** a refusal or report path carrying a name like `Nikola Jokic`
@@ -5048,7 +5048,7 @@ gate.
 
 ### `ci-job-timeout-ceiling` - Bound CI job runtime so a hung job cannot burn six hours
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-09-06 in PR #175. Verified by parsing `.github/workflows/ci.yml` at `61f3dd72`: 11 jobs defined, 11 carrying `timeout-minutes`, zero unbounded. A first pass with a crude regex reported 15 jobs and a 4-job gap; that was the regex matching non-job keys at the same indent, and the gap does not exist.
 - **Depends on:** none
 
 No job in `.github/workflows/ci.yml` sets `timeout-minutes`. The only timeout in

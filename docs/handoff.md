@@ -36543,3 +36543,61 @@ Whether the other eight worktrees hide anything similar: I checked
 ahead-of-origin per branch and only this one was non-zero, so I believe not, but
 that check would miss work committed to a *detached HEAD* in any of them, which I
 did not look for.
+
+
+## 2026-09-06 - Retraction: the worktree sweep saved nothing, and the test I used was wrong
+
+**Agent:** architect (coordinator)
+
+**Retracting the entry immediately above**, pushed hours earlier in `61f3dd72`,
+which said a worktree sweep had nearly lost real work and that three commits on
+`sr2501-secret-scan-console-safety` were "absent from `main`" carrying content
+that would otherwise have been destroyed.
+
+**That is false. All three commits are already on `main`, in full.** I checked
+by content, and every file in the delta is byte-identical:
+`import_csv.py`, `test_projection_import_cli.py` and `test_secret_scan.py` all
+compare equal between `origin/main` and the preserved ref. `git cherry
+origin/main origin/preserved/secret-scan-vacuity-followup` marks all three
+commits `-`, meaning each already has a patch-equivalent on `main`. Nothing was
+at risk. Nothing was rescued. The `_safe_stderr` console fix and the
+anti-vacuity secret-scan control both reached `main` through PR #169.
+
+**The mechanism, because this is the part worth keeping.** I used
+`git rev-list --count origin/main..<branch>`, got `3`, and read it as "three
+commits of unmerged work". That number is correct and it does not mean what I
+used it to mean. This repository **squash-merges**, so a merged branch's commits
+never appear on `main` by SHA - they are rewritten into one new commit with a
+different hash. Under squash merge, *every* fully merged branch reports a
+non-zero ahead-count forever. Commit reachability is therefore not a test of
+whether work is merged; it only tests whether these exact SHAs are ancestors,
+and after a squash they never are.
+
+**The correct test is patch-equivalence, not reachability:** `git cherry
+<upstream> <branch>` marks `-` for commits already present in equivalent form
+and `+` for genuinely absent ones. A content diff of the delta files answers the
+same question. Either would have taken under a minute and would have stopped
+this before it reached a commit message and an owner-facing report.
+
+**This is the fourth retraction of this session and they are all one shape.**
+Three of five trial arms "corrupting handoff.md" (measured: none did). A
+docstring "citing a path that does not exist" (it cited a bare filename). A
+four-job gap in CI timeout coverage (a bad regex; the real parse is 11 jobs, 11
+bounded, zero gap - caught before it was written down). And now this. Each time
+I reached for the more alarming reading of an ambiguous signal and reported it
+before running the cheap check that would have disproved it. `AGENTS.md` names
+this exactly - rhetorical convenience - and notes that no gate catches it,
+because it is a writing failure rather than a code failure. The pattern here is
+sharper than that: in every one of the four, the disproving check existed, was
+cheap, and I skipped it *because the alarming reading was more interesting*.
+
+**What survives.** `origin/preserved/secret-scan-vacuity-followup` at `ee872019`
+is harmless but redundant; it can be deleted whenever convenient and no longer
+needs gates or a PR. The backlog item claiming it holds unmerged work is
+withdrawn. The one genuinely useful residue is the rule above, which is now in
+`gates.md`: **ahead-of-origin is not a measure of unmerged work in a
+squash-merging repository.**
+
+**Could not verify.** Whether any of the ten worktrees holds work on a *detached
+HEAD*, which no branch-based check I ran would see. That gap is unchanged from
+the retracted entry and is the one claim in it that still stands.
