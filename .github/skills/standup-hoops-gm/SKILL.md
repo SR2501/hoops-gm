@@ -181,3 +181,65 @@ complements paid Basketball Monster projections; it does not rebuild them.
 - **`docs/backlog.md`'s header is derived.** Recount headings against markers
   from the finished file. Reconciling two headers after a merge cannot produce
   the right answer.
+
+### The way appending to `docs/handoff.md` actually goes wrong
+
+The rule above says *do not edit past entries*. That is not the failure anyone
+has actually had. On 2026-09-05 **three of three independent agents**, working
+separately and each intending only to append, produced the same incident: a
+whole-file text write through an ordinary editing tool **silently normalised
+historical CR bytes** in a legacy block, turning a ~31-line append into a diff
+of 150–184 deletions and 183–329 insertions, and breaking the append-only
+byte-prefix contract that `scripts/check_append_only.py` enforces.
+
+Nobody edited a past entry. The tool rewrote them on the way past.
+
+**So: never round-trip this file through a whole-file text write.** Not
+PowerShell `Set-Content`, not a naive Python `open().write()`, not a patch tool
+that reflows the file. Append bytes to the existing bytes:
+
+```
+git show HEAD:docs/handoff.md   # capture as BYTES, not text
+# append the new UTF-8 entry bytes, write once
+```
+
+Verify with `git diff --ignore-space-at-eol` — if the semantic change is your
+entry alone, the byte damage is elsewhere in the diff and must be undone. All
+three agents recovered by restoring the exact `HEAD` blob and re-appending; none
+used `checkout`/`reset`, which would have discarded unrelated working-tree work.
+
+*Corollary for parallel work:* when several units run at once, have them **report**
+their handoff entry and let one writer append centrally. Eight concurrent
+appends to a byte-guarded, CI-checked file is a queue, not parallelism.
+
+## The Python environment on this machine, which is not the obvious one
+
+Confirmed independently by three agents on 2026-09-05. Each lost turns to all of
+the first two before finding the working form.
+
+- **`ruff`, `pytest` and `mypy` are not on `PATH`.** `ruff check .` fails with
+  *"The term 'ruff' is not recognized"* even though the module is installed. Use
+  `python -m ruff`, `python -m pytest`, `python -m mypy`. The Code gate as written
+  in older prompts uses the bare names and will fail on the first command.
+- **There is no virtualenv, and an editable `.pth` points at a deleted worktree.**
+  A focused test run fails at `conftest.py` import with
+  `ModuleNotFoundError: No module named 'hoops_gm.app'`. Two working fixes:
+
+  ```
+  cd backend; $env:PYTHONPATH = (Resolve-Path 'src').Path    # per-shell, no side effects
+  cd backend; python -m pip install --quiet --editable .      # repairs the install
+  ```
+
+  Prefer the `PYTHONPATH` form in a parallel run — repointing a shared editable
+  install changes the environment underneath every other lane.
+- **Python 3.12 is present and is a trap.** It has `pytest` and `ruff` but **no
+  `mypy`**, and its legacy `httpx` turns a Starlette deprecation warning into an
+  error at import. Use 3.14.
+- **The full backend suite takes 18–19½ minutes** (~2,600 tests). Budget for it;
+  it will exceed a default wait window several times. This is why the gate should
+  be run once, deliberately, and not casually re-run to "check".
+
+*Why this is in the runbook rather than a comment:* an import error from a stale
+editable install is indistinguishable from a real failure, and it has already
+caused one agent to report two complete mutation matrices that were entirely
+`ModuleNotFoundError` scored as passes — see `docs/governance/coordinator-register.md`.

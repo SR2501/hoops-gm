@@ -92,6 +92,26 @@ So the rows above are separated by **speed, cost and a single judgment item** �
 not by whether the work came out right. Anyone citing this file as evidence that
 one model writes better code is citing it for something it does not say.
 
+**It is not a clean measure of task cost.** Asked separately on 2026-09-06, before
+archiving, three arms independently reported losing turns to the *same* three
+environment obstacles: `ruff`/`pytest`/`mypy` absent from `PATH`, a stale editable
+install failing as `ModuleNotFoundError: No module named 'hoops_gm.app'`, and a
+whole-file write to `docs/handoff.md` normalising historical CR bytes into a
+150-line phantom diff that had to be undone. Every arm paid all three. So the
+absolute AIU and turn figures include a floor of friction belonging to **this
+machine**, not to the task and not to the model. Those obstacles are now written
+down in `.github/skills/standup-hoops-gm/SKILL.md`, which means a rerun would be
+cheaper for every arm and **the absolute numbers here are not comparable to any
+future measurement taken after that fix.**
+
+The relative ordering is more robust than the absolute figures, because the
+friction was common — but only partly. The arms diverged in what they did
+*around* it: A2 read every ADR and the full plan before writing; A4 additionally
+probed a second Python installation. That is arm-specific effort, not a shared
+floor, and it is the most likely explanation for the 59% turn gap between the two
+runs of the *same* model — the divergence this trial's noise floor is built on.
+**Recorded as the leading hypothesis, not as the cause; nobody instrumented it.**
+
 ## What would change this
 
 - **A trial designed around cost from the start**, on a task hard enough to
