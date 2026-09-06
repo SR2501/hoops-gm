@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 127 pending - 218 total**
+**91 done - 0 blocked - 128 pending - 219 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5552,6 +5552,50 @@ can be integrated without disturbing draft preparation.
 **If nothing is decided:** (b) happens by default, undeliberately, and the owner
 meets the ceiling on draft morning instead of choosing it now. No gate; this is a
 decision, not code.
+
+### `news-feed-observation-run` - Measuring the news feed before the source decision is due
+
+- [ ] **pending**
+- **Depends on:** nothing
+
+`draft-day-news-source-decision` is due before 5 October and currently rests on
+**one fetch**. Its own text leaves the nine-id gap undetermined - a selective feed,
+or an id space shared across sports - and `preseason-news-honesty-repairs`
+deliberately scopes a scheduler out of its work. So nothing is assigned to produce
+the second observation, and this is the rare question that **cannot be answered
+retroactively**: there is no way to go back and watch how the feed behaved during
+September.
+
+**Zero dependencies, and that is not an oversight.** The client shipped in #176 and
+is on `main` - `backend/src/hoops_gm/ingest/preseason_news/`, 35 contract tests, a
+recorded fixture and a live smoke. `preseason-news-ingest` stays open for reasons -
+the honesty repairs, and R40 - that do not gate observing the feed. A zero-dependency
+item is not evidence that nobody has done the work, so the reason is written here
+rather than left to be inferred from the graph.
+
+**This is an instrument with an end date, not a poller.** It does not make draft-day
+burst volume survivable; the 0.2 items/minute ceiling is arithmetic and stands
+whatever this run finds. Its only job is to replace a single measurement with a
+distribution before the owner chooses between (a), (b) and (c).
+
+**Acceptance.** (1) A bounded run of repeated fetches ending before 5 October,
+recording per observation: every item guid, its `pubDate`, the fetch time, and the
+window size. (2) A report giving distinct NBA items per day, the observed
+window-size distribution, and whether any later-observed NBA item ever falls inside
+a previously seen guid gap - that is the evidence which distinguishes the two
+explanations, and **if it remains undetermined the report says so** rather than
+picking one. (3) **State the denominator.** From the observed window size and TTL,
+compute what fraction of the feed's throughput the chosen cadence can see; a cadence
+slower than the TTL cannot observe displaced items, and that belongs in the headline
+sentence rather than a footnote. (4) **It must not push to a git branch.** `ci.yml`
+triggers on `push: branches: ['**']`, so a committing collector fires CI on every
+observation and, off `main`, cancels its own predecessors - it would spend the runner
+pool measuring an RSS feed.
+
+**It must not delay the decision it serves.** If the run is inconclusive by
+5 October then that is the reported result and (b) proceeds as already recommended.
+Adapter + Code gate. Explicitly not a second source, not a production poller, and
+not a notification path.
 
 
 ### `coverage-preregistration-v2-evaluability-states`

@@ -38591,3 +38591,77 @@ audit the history; the mechanism says they would. Whether GitHub ever emits a
 check run for a pending-cancelled workflow under other conditions. Whether
 `copilot-setup-steps.yml` produces runs at all - it appeared in no listing here
 and I did not read its triggers.
+
+
+## 2026-09-06 - architect (delivery) - what `preseason-news-ingest` actually is, and the one thing nobody is doing
+
+I had this item recorded as *"the only high-leverage item that is genuinely
+actionable, and the only deadline-bound one"*, and planned to fan it out. **Both
+halves of that were wrong**, and measuring it took twenty minutes.
+
+**The adapter is shipped, not mid-build.** `backend/src/hoops_gm/ingest/preseason_news/`
+holds ten modules on `main`, with a recorded fixture, a live smoke and an adapter
+doc; it landed in #176. The branch `sr2501-preseason-news-ingest` is one commit
+ahead of `main` and that commit is the squash-merged `992978bb`, so it is logically
+merged and physically not an ancestor - the same shape as the orphan worktree the
+weekend plan records.
+
+**What it does and does not do, since the name oversells it.** The CLI fetches,
+writes raw bytes through `RawPayloadStore` to `data/raw`, resolves names **against**
+the database, and writes a JSON report to `data/reports/`. The session is used
+read-only: there is **no news table, no migration, and no API route** - I checked
+the schema and the Alembic tree for both. `data/` is gitignored. So nothing
+downstream can consume news today without either reading that JSON file or a new
+persistence path, and the item's name promises ingestion it does not perform.
+`preseason-news-honesty-repairs` already exists and already says the adapter
+overstates itself.
+
+**It is owner-blocked as well, which is the part I had wrong.** R40 is 🔴 and the
+mitigation is *measured insufficient*: two items with `ttl=10`, a ceiling of
+0.2 items/minute, confirmed twice. `draft-day-news-source-decision` frames the
+choice, recommends (b), prices (a) before 5 October, and states what happens if
+nothing is decided. **It is already complete and I had nothing to add to it.** So
+the corrected picture is that **five of the five highest-leverage items are blocked
+on the owner or on missing evidence, not four** - there is no high-leverage,
+unblocked, deadline-bound work, and yesterday's plan implied there was.
+
+**The one genuine gap, filed as `news-feed-observation-run`.** That decision is due
+before 5 October and rests on **one fetch**, with the nine-id gap explicitly
+undetermined and a scheduler explicitly out of scope everywhere else. Nothing was
+assigned to produce a second observation, and it is the rare question that **cannot
+be answered retroactively** - September cannot be re-watched. The item is scoped as
+an instrument with an end date rather than a poller, because a longer archive does
+**not** fix draft-day burst volume; the ceiling is arithmetic and survives whatever
+the run finds. It must not delay the decision: inconclusive on 5 October is a
+result, and (b) proceeds.
+
+**A constraint I could only see because of this morning's CI work.** `ci.yml`
+triggers on `push: branches: ['**']`. A collector that commits its observations
+fires CI on every observation, and off `main` - where `cancel-in-progress` is true -
+each push cancels its predecessor. It would spend the runner pool measuring an RSS
+feed. That is written into the item's acceptance rather than left for the
+implementer to discover.
+
+### Two corrections to my own records
+
+**"Only two workflow files exist and there is no scheduled workflow" was wrong
+twice.** CodeQL runs weekly by default setup, and `ci.yml` itself carries
+`cron: '0 9 * * *'` with a comment explaining exactly why. I asserted the absence of
+a schedule from a directory listing, which is the tool that cannot see either case.
+
+**I counted this adapter's tests with `^def test_` and got 1; the real number is 35.**
+They live in classes. `pytest --collect-only` reports `35/36 tests collected
+(1 deselected)`. Had I reported "one contract test" as evidence the adapter was thin,
+it would have been a confident, checkable, wrong claim - and the file that warns
+about exactly this is `gates.md`, whose "state the denominator" rule I had read the
+same morning while editing the bullet directly above it.
+
+**Could not verify.** Whether `data/raw` on this machine holds any accumulated
+observations - I did not look, and the answer changes how much of the observation
+run is already banked. Whether `copilot-setup-steps.yml` ever produces runs; it
+appeared in no run listing and I did not read its triggers. Whether the resolved
+news JSON is in a shape the shortlist could consume directly, which decides whether
+persistence is needed at all - I read the CLI, not `report.py`. Whether RotoWire's
+terms permit a repeated automated fetch at a cadence faster than a human would use;
+the item assumes the existing adapter's throttling posture carries over and that is
+an assumption, not a check.
