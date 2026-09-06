@@ -41,12 +41,20 @@ change, and it should be decided as one.
 
 Reported by the arms themselves, unprompted, and **not visible in the diff**:
 
-1. **Displayed number vs linked filename is unchecked.** Coverage keys on the
-   resolved filename, so a row displaying `[014]` while linking to a real
-   `ADR-015-*.md` passes both directional checks. Two arms flagged this
-   independently as a genuine semantic gap they chose not to close. Decide
-   deliberately whether "every index row's relative link resolves to a file"
-   was meant literally or as "resolves to the ADR that row names".
+1. **Displayed number vs linked filename — closed by A3 only, open in the other
+   four.** A row displaying `[014]` while linking to a real `ADR-015-*.md` passes
+   both directional checks in A1, A2, A4 and A5, because coverage keys on the
+   resolved filename. **A3 (`b818cd9`) does not have this gap.** It keys
+   Direction-1 coverage on the row's *label* number and emits a distinct
+   `index-row-number-mismatch` defect whose message names the cause: *"what a
+   rename that moved the target but not the label produces"*.
+
+   This corrects an earlier version of this note, which recorded the gap as
+   common to all five. It was wrong, and it mattered: it would have steered
+   selection toward an arm that has the defect. Verified 2026-09-06 by reading
+   each arm's script rather than its report — A3 emits **12** defect codes
+   against the others' smaller sets, and its script is 16.5 KB against A4's
+   5.7 KB. That size difference is mostly this.
 2. **`ADR_FILE_RE` matches `ADR-0\d{2}` only.** An eventual `ADR-100` falls
    silently outside the file set. Defensible today — README's own format line
    says `ADR-00N` — and it is the first future boundary to review.
@@ -73,9 +81,38 @@ unverified claim across all five.
 
 ## Next action
 
-Read A4, check the seven gaps above against it, run the gate on CI rather than
-locally, and open a normal PR. If gap 1 is judged in scope, it is a small change
-to any of the five.
+**Read A3 (`b818cd9`), not A4.** It is the only arm without gap 1, and gap 1 is
+the one that changes what the checker catches rather than how it reads. Check the
+remaining gaps against it, run the gate on CI rather than locally, and open a
+normal PR.
+
+## Two things only A3 could tell us
+
+Recorded 2026-09-06 when A3 was asked, before archiving, what it held that the
+commit does not show.
+
+**The `## Index` scoping is load-bearing, not stylistic.** README's
+`## Amendments awaiting acceptance` table reuses the *identical*
+`| [NNN](target) |` row syntax. A checker that scanned the whole README for
+ADR-shaped rows would invent duplicate-row defects for ADR-002, 007, 019 and 020
+and **fail the clean live file today**. All five arms happened to scope to
+`## Index`; only A3 reported knowing why. Anyone rewriting this from scratch with
+a whole-file regex ships something broken on first run.
+
+**The task prompt's own Code gate does not execute on this machine.** It
+specifies `ruff check scripts` and `ruff format --check scripts` from the repo
+root; bare `ruff` is not on `PATH` here, so both fail with
+`The term 'ruff' is not recognized`. A3's sharp observation: an arm that ran them
+verbatim and distinguished only zero from non-zero could **misread a PATH failure
+as a lint result**. Fix the wording in the gate doc, not just in each arm's head.
+
+**A premise in the backlog item is false.** The item justifies worrying about
+`PLAIN-ENGLISH.md` by saying a reader cannot tell "stops at ADR-009 on purpose"
+from "stopped by accident". The file's own header already self-declares as a
+frozen historical walkthrough, so the reader can tell. The scope decision the item
+delegates therefore rests partly on a premise the item got wrong — worth fixing
+when the item is next edited, because the next builder will inherit the same
+false framing.
 
 *The environment obstacles all five arms hit — `PATH`, the stale editable
 install, the `docs/handoff.md` byte hazard — are recorded in
