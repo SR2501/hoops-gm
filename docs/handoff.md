@@ -38271,3 +38271,63 @@ to be meaningful, which is the first thing whoever builds it should measure. I h
 not re-walked the other pending items for the same over-tight-umbrella shape, and
 `draft-tracker` is unlikely to be the only umbrella depended on for one of its
 parts. Postgres CI for `cefa313a` was still running when this was written.
+
+## 2026-09-06 - architect (delivery) - the shortlist fixture carries production and health for disjoint players
+
+**What I did.** Measured whether seeded auction state carries enough input for the
+3-5 candidate ranking `draft-day-shortlist` promises. That was the item's own
+stated first risk, and the previous entry flagged it explicitly as unmeasured.
+
+**Method.** Seeded a throwaway demo into a temporary SQLite file
+(`python -m hoops_gm.dev.seed_demo --database-url sqlite:///.../shortlist-probe.db`)
+and counted rows directly. Nothing ran against the live demo database or the
+running services.
+
+**Result, and it is the useful kind of negative.**
+
+- `projections`: **60 players**. Every 9-cat input present **including attempts**
+  (`field_goals_attempted_per_game`, `free_throws_attempted_per_game`), so
+  percentage categories are computable as volume-weighted impact rather than raw
+  percentage. That is the house rule's single most common bug, and the schema
+  already prevents it.
+- All 7 auction-drafted players carry projections. Projected-and-undrafted
+  candidate pool: **53**.
+- Health evidence: `player_participation` **0**, `absence_splits` **0**,
+  `injury_report_entries` **0**, `player_game_logs` **4** - ids **581 and 582**.
+- **Intersection of "has a projection" and "has any health evidence": zero.**
+- `league_scoring_profiles` **0**, `league_scoring_categories` **0**. The single
+  `league_settings_snapshots` row belongs to league 1, the schedule-grid demo;
+  the auction is league 2.
+
+So `seed_demo` composes two screens that were never required to share a player.
+The shortlist is the first surface needing both **on one row**, and the owner's
+*"health somehow visible"* currently has 53 candidates and no evidence to show
+against any of them. **The first unit of work in the item is therefore a fixture
+where that intersection is non-empty** - Code gate, a data task, and it needs none
+of the unresolved numerical availability decision. Recorded in the item itself.
+
+**A trap I nearly walked into, written down because the near-miss is the point.**
+`source_games_played_assumptions` is populated 1:1 with projections and reads
+exactly like a ready-made durability number to hang the health column on. I began
+writing it up as a discovery. Reading `api/routes/projections.py` first showed the
+repository already documents - more precisely than I had it - why a rate must not
+be multiplied by that field: for a season-total source it is the exact divisor the
+importer used (`ingest/projections/parser.py` stores `value / assumed_games_played`),
+so the product recovers the source's published seasonal total and performs the
+`expected-games` fusion ADR-002 defers. The docstring even carries an amendment
+narrowing an earlier overstatement of its own mechanism while keeping the
+prohibition intact.
+
+**That is the second time today the corrective was already in the repository.** The
+first time I appended fifteen entries past it and a peer session had to correct me.
+This time the read happened before the claim. That is the only difference between
+the two, and it is why this one cost nothing.
+
+**Could not verify.** Whether a *real* BBM CSV actually populates
+`assumed_games_played` - I confirmed the importer parses such a column and the
+synthetic seeder writes one, not that any real import has. Whether the
+596-scorecard reliability store and the projection cohort overlap **there**; I
+measured the composed demo only, and the running store is a different database, so
+the zero intersection is a fact about `seed_demo` and not about the product.
+Whether `scoring-profiles` being `done` while the demo seeds no profile is a gap in
+the seeder or an intended split - I did not read that item.

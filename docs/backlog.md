@@ -5785,6 +5785,50 @@ standalone sale and a correction; 26 tests across eight files drive seeded aucti
 drafts. So the shortlist can be built and its recorded-fixture test can run with no
 network and no capture, which is what its own Done-when asks for.
 
+**Measured 2026-09-06 by seeding a throwaway demo, and it refines the paragraph
+above: the fixture runs, but no fixture carries production and health evidence for
+the same player.** Counted from `python -m hoops_gm.dev.seed_demo` into a
+temporary SQLite file:
+
+- `projections` holds **60 players**, with every 9-cat input present *including
+  attempts* - `field_goals_attempted_per_game` and `free_throws_attempted_per_game`
+  sit beside the makes - so percentage categories can be volume-weighted rather
+  than approximated. All 7 auction-drafted players have projections; the
+  projected-and-undrafted candidate pool is **53**.
+- Health evidence in that same database: `player_participation` **0**,
+  `absence_splits` **0**, `injury_report_entries` **0**, and `player_game_logs`
+  **4** - those four belonging to player ids **581 and 582**.
+- **The intersection of "has a projection" and "has any health evidence" is
+  zero.** The two cohorts are disjoint sets of players.
+- `league_scoring_profiles` **0** and `league_scoring_categories` **0**. The single
+  `league_settings_snapshots` row belongs to league 1, the schedule-grid demo,
+  while the auction is league 2. So the auction league carries neither settings
+  nor a scoring profile, and *"the league's own categories"* in the Done-when
+  below has no source in this composition.
+
+`seed_demo` composes two screens that were never required to share a player, and
+this item is the first surface that needs both **on one row**. The 596 scorecards
+cited above are real, but they live in the separately-seeded reliability store,
+not here. **So the first unit of work in this item is a fixture in which that
+intersection is non-empty** - a Code-gated data task, not a modelling one, needing
+none of the unresolved numerical availability question. `league_scoring_categories`
+already carries `numerator_stat` and `denominator_stat`, which is the right shape
+for volume-weighted percentages, so the house rule is supported by the schema.
+
+**Do not reach for `source_games_played_assumptions` to fill the health slot.** It
+is populated 1:1 with projections and reads like a ready-made durability figure.
+`api/routes/projections.py` documents at length why a rate must not be multiplied
+by it: for a season-total source it is the exact divisor the importer already
+used (`ingest/projections/parser.py` stores `value / assumed_games_played`), so
+the product recovers the source's published seasonal total and performs the
+`expected-games` fusion ADR-002 defers. The prohibition was already written down
+before this measurement; the pointer is here so the next reader meets it *before*
+the temptation rather than after.
+
+Probes are in the session artifacts - `probe-shortlist-inputs.py`,
+`probe-availability-tables.py`, `probe-health-overlap.py` - and re-run in under a
+minute against a fresh temporary database.
+
 **What is still gated, stated so this retarget is not read as more than it is.**
 `fantrax-auction-capture` governs whether draft state arrives **automatically on
 18 October**. Without it the state is enterable only through the manual
