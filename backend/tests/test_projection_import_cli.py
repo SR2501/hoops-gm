@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Iterator
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,7 @@ from hoops_gm.ingest.projections.import_csv import (
     build_parser,
     main,
 )
+from hoops_gm.ingest.projections.parser import ProjectionProfileError
 
 SEASON = "2026-27"
 COHORT = 12
@@ -207,6 +210,34 @@ def test_bytes_that_are_not_utf8_are_refused_and_nothing_is_written(
     assert main([SEASON, str(path)]) == EXIT_REFUSED
 
     assert "UTF-8" in capsys.readouterr().err
+    assert row_counts(seeded) == (0, 0, 0)
+
+
+def test_runtime_player_names_survive_a_cp1252_console_refusal(
+    seeded: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor-supplied name must not turn an actionable refusal into a crash."""
+    path = write_csv(tmp_path, demo_csv(seeded))
+    names = ("Nikola Jokić", "Luka Dončić", "Kristaps Porņiņģis")
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise ProjectionProfileError(f"unresolved players: {', '.join(names)}")
+
+    monkeypatch.setattr("hoops_gm.ingest.projections.import_csv.run_import", refuse)
+    encoded = BytesIO()
+    console = TextIOWrapper(encoded, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stderr", console)
+
+    assert main([SEASON, str(path)]) == EXIT_REFUSED
+
+    console.flush()
+    rendered = encoded.getvalue().decode("cp1252")
+    assert "Nikola Joki\\u0107" in rendered
+    assert "Luka Don\\u010di\\u0107" in rendered
+    assert "Kristaps Por\\u0146i\\u0146\\u0123is" in rendered
+    assert "?" not in rendered
     assert row_counts(seeded) == (0, 0, 0)
 
 
