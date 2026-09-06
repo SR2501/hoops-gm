@@ -36289,3 +36289,50 @@ measured but their failures are inferred from the same predicate.
 fix should place this check where a delta genuinely exists - PR CI against
 merge-base - because wiring it to run on `main` post-merge would reproduce the exact
 vacuity documented above and look like coverage.
+
+## 2026-09-06 - architect - What four finished lanes held that the repository did not
+
+**Changed:** `docs/governance/gates.md` gains two entries and `docs/governance/risks.md`
+gains R68, all sourced from debriefs taken *before* archiving. Nothing in the tree
+changed behaviour.
+
+**Now true:** Three commands on this machine report success or failure about something
+other than what was asked, each hit independently by at least two lanes. The editable
+`hoops_gm` install resolving into a **live** sibling worktree is materially worse than
+the deleted-worktree case already recorded: a deleted target raises `ModuleNotFoundError`
+and is loud, while a live sibling silently supplies another lane's bytes and the suite
+reports a confident result about the wrong source tree. Its measured cost on one night
+was a cp1252 regression that failed despite its own fix being correct, an 80-failure run
+misread as a possible `main` regression, and a lane concluding Alembic's `command.stamp`
+was defective and **replacing working code** before withdrawing the conclusion. That is
+the only trap here that has caused a correct implementation to be rewritten.
+`python -m mypy backend/src` from the repository root does not load
+`backend/pyproject.toml` and emits about fifteen artefact errors that read as real type
+failures. `gh pr merge` can exit non-zero *after* the server-side merge succeeded, because
+the local checkout step fails when the main worktree owns `main` - two lanes hit this, and
+believing the exit code means the change is on `main` while the record says otherwise.
+
+R68 records a defect family found twice in one night in unrelated code: `==` asks about
+value and `isinstance` asks about lineage, so neither sees a scalar whose *type* drifted.
+`bool` subclasses `int`, so a JSON `true` passed an `isinstance(value, int)` count guard
+in the coverage evaluator; and `dict` equality accepted `0` becoming `False` and `1`
+becoming `1.0` in the schedule-grid contract, where 8 of 17 scalar leaves were
+bool/int-interchangeable. Both fixed with exact-type checks. This matters here rather
+than pedantically because the project's core hazard is that a wrong number does not
+crash.
+
+`gates.md` also now carries the rule a backlog item had already asked for: **a check must
+state the denominator it counted against.** Seven instances are recorded, five verified
+directly and three relayed and marked as unverified by me.
+
+**Could not verify:** The contract-artefact, sanity-gate and Alembic-stamp coverage
+boundaries are the lanes' own accounts of their work, not read from the diff by me, and
+are labelled as such in `gates.md`. One lane's census of 16 integer and 1 boolean leaf was
+scripted but never committed, so it is recollection. I did not confirm the demo sanity
+ranges against the committed table. The fourth lane debriefed has not yet replied, so its
+holdings are still outside the repository.
+
+**Next:** The three uncovered domains now have named boundaries and can be turned into
+backlog items when someone wants them closed; none is urgent. The editable-install trap is
+the one worth fixing structurally rather than documenting, since documentation has not
+stopped it recurring three times in one night.
