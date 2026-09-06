@@ -34,6 +34,17 @@ def _error_response(status_code: int, error: str, detail: str) -> JSONResponse:
     headers = {}
     if payload.request_id:
         headers[REQUEST_ID_HEADER] = payload.request_id
+
+    # The single choke point every typed refusal passes through. Without this,
+    # `RequestContextMiddleware`'s `request.completed` line logs `status_code`
+    # alone, so e.g. two distinct 409s that demand different operator actions
+    # (re-import versus a refresh that can never populate the contract — see
+    # `schedule_grid_not_current` vs `schedule_grid_incomplete_evidence`) read
+    # identically in the log. Logging `error` here, not just in individual
+    # handlers, means a route added later gets this for free.
+    log_method = log.error if status_code >= 500 else log.warning
+    log_method("request.error", status_code=status_code, error=error)
+
     return JSONResponse(status_code=status_code, content=payload.model_dump(), headers=headers)
 
 
