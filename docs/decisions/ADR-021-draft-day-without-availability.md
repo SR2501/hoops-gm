@@ -146,6 +146,34 @@ indistinguishable in it. That conflation is exactly what the denominator would
 resolve, and exactly why this panel stays descriptive, is never sorted as though
 it were value, and is never fused into a price (ADR-018, ADR-002).
 
+**The uncomputable conjunct is now measured rather than argued, and you can check
+it in ninety seconds.** When this ADR and the amendment above were written, the
+claim that `unknown_share` is uncomputable rested on reasoning about what the
+admitted sources emit. PR #172 has since merged the machine-readable finding, so
+the claim is now falsifiable against a committed file rather than against prose.
+In `docs/models/participation-opportunity-coverage-v1-evidence-gap.json`:
+
+- `evaluation_status` is `not_evaluable`, and `proceed_opportunity_coverage` is
+  `null` - **not `false`**. The distinction is the whole decision: a `false`
+  would mean we measured coverage and it was too low, which a better ingest could
+  fix. A `null` means the quantity has no denominator to be a share of.
+- `source_feasibility.real_source_registry_can_be_supplied_from_admitted_sources`
+  and `...reconstruction_contract_can_be_supplied_from_admitted_sources` are both
+  `false`. Those are the two inputs the amendment above refers to as "one input";
+  they are two fields but a single acquisition.
+- `new_source_acquisition_attempted` is `false`, with the scope field stating
+  plainly that acquiring one is separate Adapter-gate work that **may require an
+  owner-only paid-data decision**. No agent has attempted it, and none may.
+
+**What this evidence does not establish.** It shows the denominator cannot be
+built from sources we have *admitted*, which is not the same as showing no free
+authoritative source exists - the lane that produced it said so explicitly, and
+that gap is real. It also does not price or evaluate any paid source, because
+that assessment is owner-only and was correctly not started. So this artifact
+closes the question *"can we proceed on what we have?"* with a firm no, and
+leaves *"is there something we could get?"* open. Accepting this ADR does not
+answer the second question or foreclose it.
+
 **What I did not do.** I counted played rows per player. I did not compute an
 at-risk denominator, an unknown count, or any unknown share, and nothing here is
 an input to the frozen preregistration at
