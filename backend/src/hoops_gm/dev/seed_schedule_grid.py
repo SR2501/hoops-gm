@@ -43,10 +43,10 @@ any game for this season outside the fixture cohort. That guard is the point:
 ten-game fixture aimed at a working database would become the current
 registered cohort for every consumer keyed to schedule version.
 
-Schema is built with ``Base.metadata.create_all`` rather than Alembic, so the
-demo database is model-built, not migration-built — the exact divergence the
-migration tests exist to catch. Fine for a throwaway file, wrong for anything
-else.
+Schema is built with ``Base.metadata.create_all`` rather than by replaying every
+migration, then stamped at Alembic ``head`` so the resulting database identifies
+the schema revision its models are expected to match. The migration tests catch
+model/migration divergence before that stamp can become a false claim.
 
 A relative SQLite path is anchored to the repo root rather than the working
 directory (``Settings._resolve_relative_sqlite_path``), so the command above
@@ -66,6 +66,9 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, or_, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
@@ -527,7 +530,7 @@ def redacted_url(database_url: str) -> str:
 
 
 def create_schema_only_on_a_fresh_database(database: Database) -> None:
-    """Build the schema, but only where there is none of ours to disturb.
+    """Build and stamp the schema, but only where there is none of ours to disturb.
 
     ``require_safe_demo_target`` runs inside a session and is rolled back on
     refusal — but DDL is not transactional in the same sense, and
@@ -554,6 +557,12 @@ def create_schema_only_on_a_fresh_database(database: Database) -> None:
     if inspect(database.engine).has_table(League.__tablename__):
         return
     Base.metadata.create_all(database.engine)
+    backend_dir = Path(__file__).resolve().parents[3]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    with database.engine.begin() as connection:
+        MigrationContext.configure(connection).stamp(scripts, "head")
 
 
 def main(argv: list[str] | None = None) -> int:

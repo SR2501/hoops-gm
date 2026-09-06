@@ -13,8 +13,10 @@ exercised.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -123,6 +125,58 @@ def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient
     assert len(synthetic_links) == 2
     assert all(link.source_detail == "synthetic-demo" for link in synthetic_links)
     assert all(link.confidence == 0.0 for link in synthetic_links)
+
+
+def test_documented_sanity_bounds_contain_the_demo_screen_counts(
+    client: TestClient,
+    repo_root: Path,
+) -> None:
+    """Regenerate the demo so published sanity figures cannot silently invert."""
+
+    database: Database = client.app.state.database  # type: ignore[attr-defined]
+    with database.session() as session:
+        result = seed_demo(session)
+
+    schedule = client.get(
+        f"/api/v1/leagues/{result.projections.league_id}/schedule-grid/current"
+    ).json()
+    projections = client.get(
+        f"/api/v1/leagues/{result.projections.league_id}/projections/current"
+    ).json()
+    drafts = client.get("/api/v1/drafts").json()
+    reliability = client.get("/api/v1/reliability/scorecards").json()
+    actual = {
+        "teams": len(schedule["teams"]),
+        "imported_games": schedule["lineage"]["schedule"]["resolved_game_count"],
+        "published_games": schedule["lineage"]["schedule"]["source_game_count"],
+        "pending_games": len(schedule["lineage"]["schedule"]["pending_game_ids"]),
+        "scoring_periods": len(schedule["periods"]),
+        "team_games": sum(row["games"] for row in schedule["counts"]),
+        "projection_rows": len(projections["projections"]),
+        "mock_drafts": len(drafts["drafts"]),
+        "reliability_players": len(reliability["scorecards"]),
+        "reliability_final_games": reliability["counts"]["final_games"],
+        "reliability_box_scores": reliability["counts"]["player_game_logs"],
+        "reliability_non_play_rows": reliability["counts"]["participation_rows"],
+    }
+
+    demo_document = (repo_root / "docs" / "demo.md").read_text(encoding="utf-8")
+    published = {
+        name: (int(minimum), int(maximum))
+        for name, minimum, maximum in re.findall(
+            r"^\| `([a-z_]+)` \| ([0-9,]+) \| ([0-9,]+) \|$",
+            demo_document,
+            flags=re.MULTILINE,
+        )
+    }
+
+    assert set(published) == set(actual)
+    outside_bounds = {
+        name: {"actual": value, "minimum": published[name][0], "maximum": published[name][1]}
+        for name, value in actual.items()
+        if not published[name][0] <= value <= published[name][1]
+    }
+    assert outside_bounds == {}
 
 
 def test_both_mock_drafts_are_listed_with_the_selections_the_seed_recorded(
