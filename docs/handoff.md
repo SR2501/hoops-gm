@@ -36144,3 +36144,64 @@ source inside 41 days. **Doing nothing selects the second option undeliberately*
 the cap arrives on draft morning whether or not anyone chose it. Recommendation:
 accept the cap now and price the purchase before the 5 October rehearsal window, so
 the rehearsal exercises the real ceiling rather than a hoped-for one.
+
+## 2026-09-06 — architect — Ten merges, and two findings that only existed in sessions
+
+**Changed:** Merged #169, #172 and #174 after verifying each from the diff rather
+than from its lane's report; ten pull requests landed overnight in total. Filed two
+backlog items from session debriefs:
+`coverage-preregistration-v2-evaluability-states` and
+`secret-scan-counts-what-it-did-not-read`. Rebased #175 and forced its CI to
+recompute. No production behaviour changed by me; this entry records verification
+and two findings.
+
+**Now true:** Three things are worth keeping.
+
+**First, green CI can describe a tree that no longer exists.** #175 showed 24
+successes. Its merge ref's base parent was `fcd28eaf` — my own commit from hours
+earlier — while `origin/main` had advanced through four merges to `eb444251`.
+`git merge-base --is-ancestor origin/main <merge-ref>` returned **false**. The green
+was real and irrelevant. The check that catches this is to fetch `refs/pull/N/merge`,
+read its two parents, and require current `origin/main` to be an ancestor **before**
+treating green as merge evidence. `gh pr checks` alone cannot tell you this, and it
+will happily report success for a superseded ref. I learned this from a lane's
+debrief and it changed a merge decision within minutes of arriving.
+
+**Second, `scripts/check_no_secrets.py` overstates its own coverage.** It prints
+`No secrets found in {len(files)} tracked files` at line 222 from a count assigned at
+line 187, with five `continue` branches in between — tracked env file, allowlist or
+`SKIP_SUFFIXES`, not a regular file, and `except (UnicodeDecodeError, OSError)` at
+line 204 — none of which decrements it. Verified against `main`: `.gz` is not in
+`SKIP_SUFFIXES`, and three tracked gzip fixtures
+(`nba_gleague_transactions.json.gz`, `nba_player_movement.json.gz`,
+`rotowire_nba_news.xml.gz`) are counted in the 586 and never read. Those are recorded
+external-API captures — the likeliest place a credential would ever arrive. This is
+the **fourth** instance recorded today of a check that observed a subset and reported
+on the whole, after the mutation harness that regex-matched nothing and printed
+SURVIVED, the `-k` selector that silently deselected its target, and
+`check_append_only.py` comparing HEAD against itself after a push.
+
+**Third, the frozen coverage preregistration has a defect that two lanes found
+independently.** Section 4 requires integer counts; section 5 routes any non-exempt
+false conjunct to *invalid report* before it can reach the *genuine evidence failure*
+branch it also defines. A report with `total_opportunities = null` — the honest form
+when no source supplies the denominator — trips the count conjunct and is misrouted.
+Its author identified this unprompted when asked what they would write differently;
+the implementing lane hit it from the other side and recorded a section-4/section-5
+gap in its artifact. **v1 is deliberately not amended**: freezing it before the result
+was the entire point, and editing it now would destroy the property it exists to
+have. Filed for a future v2.
+
+**Could not verify:** #175 was still recomputing when this was written; I merged
+nothing on its stale green. I did not re-derive the ten merged PRs' contents from
+their diffs — I verified #169, #172 and #174 and took #165, #166, #167, #168, #170,
+#173 and #176 from their lanes' reports and CI, which is exactly the class of claim
+this project treats as least reliable. I did not survey `scripts/` for other
+defined-but-never-invoked guards; the lane I asked declined to name one outside the
+scope it had actually examined, which was the correct answer. Whether the three
+gzip fixtures contain anything sensitive is unknown — the point is that the scanner
+cannot tell you either.
+
+**Next:** #175 merges when its recomputed CI is green against real `main`. #171 stays
+red pending the ADR-019 manifest question, and must not be merged by regenerating a
+manifest to clear a fingerprint if any cohort leaf moved.
