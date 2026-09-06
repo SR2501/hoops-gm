@@ -615,3 +615,85 @@ a starting point and re-derives from this file before reporting green. Whoever
 writes the prompt **cites the gate rather than restating it** - a path and a
 section name, never a command list. The prompt is allowed to say which gate
 applies. It is not allowed to say what the gate is.
+
+
+### A green check is a verdict on a tree, and you must prove it is yours
+
+**Recorded 2026-09-06 from two lane debriefs, both executed.**
+
+Two independent ways a passing CI result describes something other than the code
+you are about to merge. Neither reports an error; both look exactly like success.
+
+**1. The watched merge ref goes stale under you.** `gh pr checks --watch` exits
+successfully for the merge ref it *began* watching, even if `main` has since
+moved. The green is real and it is about a tree that no longer exists. The
+mechanical check, which is cheap and should be run immediately before every
+merge: fetch `refs/pull/<N>/merge`, read its parents with
+`git rev-parse '<ref>^@'`, and **require current `origin/main` to be one of
+them**. If it is not, the result is stale and re-running the same ref cannot fix
+it - only a push or rebase recomputes the integration bytes.
+
+**2. A run is not the check set.** `gh run view` and `gh run watch` observe **one
+workflow run**. A lane generalised two runs' 22 outcomes to a pull request that
+had **26** checks, and reported readiness on a denominator that was missing four.
+Merge readiness must come from `gh pr checks <N> --json name,state,workflow`,
+with every returned row accounted for - and **a permitted skip is not a
+success**, it is a row that must be counted and named as skipped.
+
+**Why these belong together.** Both are the same error wearing different
+clothing: *a true statement about a smaller thing than the one you are deciding
+about.* The watch result is true of an old tree; the run result is true of a
+subset of checks. Neither is a lie, and neither is an answer to "may I merge
+this".
+
+### Zero and false are values, and a predicate that accepts them counts nothing
+
+**Recorded 2026-09-06. Two mechanisms, both found by the lane that wrote the
+predicate, before either shipped.**
+
+**`bool` is a subclass of `int`.** `isinstance(True, int)` is `True`, so a field
+validator admitting "any integer" admits `True` as the count **1** and `False` as
+the count **0**. A denominator of `True` satisfies a type check and then
+satisfies almost any ratio. The predicate now uses `type(value) is int`
+deliberately, and `type(value) in (int, float)` for shares, precisely to refuse
+booleans.
+
+**A zero-filled report passes a ratio bound vacuously.** With every count set to
+`0`, the coverage test `0 * 100 <= 0 * 5` is **true**, so a report describing no
+data at all reads as fully compliant. The fix is not a better bound: counts must
+remain `null` when the denominator does not exist, and evaluation must **raise
+before the arithmetic**, emitting a not-evaluable status rather than a pass.
+
+**This is the fourth confirmed member of the vacuity family** and the first
+caught before it shipped, which is the whole point of writing the others down.
+The others: `check_append_only` comparing a file to itself after a push; an
+empty slate satisfying `enforce_expected_game_coverage` under a mislabelled
+`"Playoffs"` season; the secret-scan positive control. **The shape is always a
+predicate that is satisfiable by absence** - and it is never visible in the
+predicate's own result, only in its denominator.
+
+### A status format that varies defeats the tool that reads it, including you
+
+**Recorded 2026-09-06, after getting this wrong in the act of checking it.**
+
+`docs/decisions/` carries two spellings of the same field: `**Status:** Proposed`
+and `- **Status:** Proposed`. Recounting ADR statuses to correct a figure in an
+owner report, I used a pattern anchored on the first form, and it silently
+skipped every file using the second - then matched an **amendment's** status
+line further down those files instead. The result was a confident wrong count
+that also invented a defect ("ADR-017 has no Status line") in a file whose line
+3 plainly reads `- **Status:** Proposed`.
+
+The number reported to the owner was **8 Proposed ADRs**. The true figure,
+re-derived by reading the first `Status` line of every file, is **6** - ADR-014,
+015, 017, 018, 019, 021 - plus Proposed *amendments* inside ADR-008 and ADR-019,
+which are a different thing and must be counted separately because they are
+accepted independently. `ADR-016` does not exist at all; the sequence has a gap.
+
+**Two rules, and the second is the one that keeps being learned.** Normalise the
+field so one pattern matches all of it. And **a derived count is a claim about a
+file, so read the file**: the failure here was not the regex, it was reporting a
+regex's output as a property of the corpus without opening a single one of the
+twenty documents it described. `scripts/check_adr_index.py` is still unshipped
+and five working implementations sit in trial tags; it would have caught the
+format split, the numbering gap, and a hand-edited index row on the same run.

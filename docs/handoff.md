@@ -36775,3 +36775,51 @@ committed artefact - the kind of claim that is expensive to fake and cheap to
 falsify - and because it argues *against* the referrer's position, which is the
 direction bias does not run. That is a reason to weight it, not a substitute for
 running it, and the next person to touch this generator should run it first.
+
+
+## 2026-09-06 - Four lane debriefs, and a wrong number I gave the owner
+
+**Agent:** architect (coordinator)
+
+Debriefed four merged lanes before archiving. The returns were substantial and
+none of them answered "nothing", which continues to be the right reason to ask.
+Two mechanisms are now in `gates.md` as *A green check is a verdict on a tree*
+and *Zero and false are values*; the details are there rather than repeated here.
+
+**The correction that matters most, because it went to the owner.** I reported
+**8 Proposed ADRs** in the morning standup. The true figure is **6** (ADR-014,
+015, 017, 018, 019, 021), plus Proposed amendments inside ADR-008 and ADR-019
+which are accepted separately and must be counted separately. `ADR-016` does not
+exist - the sequence has a gap nobody has explained.
+
+**How I got it wrong is worse than the number.** Correcting it, I recounted with
+a pattern anchored on `**Status:**` and missed every file written `- **Status:**`
+- then matched an amendment's status line instead, and briefly concluded ADR-017
+had no status at all. Its line 3 reads `- **Status:** Proposed`. **That is the
+fourth time in two days that a grep-shaped derivation produced a confident wrong
+finding that reading one file disproved**, and this one I caught only because
+the claim was surprising enough to check. The rule is already written down. I am
+recording that writing it down has not yet been sufficient.
+
+**The lane debriefs also contradicted a thing I would have repeated.** A lane
+that changed `alembic.command.stamp` to `MigrationContext.stamp` explicitly
+declined to record the first as faulty: it later proved that run had imported a
+**sibling worktree**, so it never observed its own code. *"Treating it as a
+rejected technical approach would be false history."* That is the correct
+handling of an unearned diagnosis, and better discipline than I showed on the
+retractions this week.
+
+**Also carried out of the debriefs, filed rather than fixed:** the demo sanity
+bounds are judgement calls chosen around one deterministic fixture run, so they
+constrain drift and prove nothing about whether those values were ever right;
+sixty projection rates can all be replaced with wrong numbers and the gate stays
+green. A pre-stamp demo database is detectably unstamped but is **not** repaired
+by reseeding - the helper returns early when `leagues` exists - so delete and
+rebuild is the only supported path.
+
+**Could not verify.** I archived on the strength of each lane's own statement
+that nothing remained outside `origin/main`; I did not independently inspect
+their worktrees for detached HEADs, and one lane explicitly could not certify
+its current state because I had forbidden it from touching git. That is a
+deliberate trade - the alternative is letting a lane run git while I archive it -
+but it means "nothing unreachable" is their claim, not my measurement.
