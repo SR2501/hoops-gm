@@ -15,6 +15,7 @@ credentials are precisely where that would most likely happen.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -185,19 +186,35 @@ def test_the_repository_is_clean(scanner: ModuleType) -> None:
 
 def test_a_credential_planted_in_a_committed_fixture_is_caught(
     scanner: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End to end, against a real tracked file, not a string in a list.
+    """End to end, against an isolated copy of a real tracked fixture.
 
     The line-level tests above would all have passed while the scanner was
     blind to JSON, because they were written against the shapes I already had
-    in mind. This one plants a credential in a file `git ls-files` actually
-    reports and runs the real entry point — the only version of the test that
-    could have failed for the right reason.
+    in mind. This one copies a fixture `git ls-files` actually reports, makes
+    the temporary tree the scanner's repository, and runs the real entry point
+    over the copied file — the only version of the test that could have failed
+    for the right reason without exposing concurrent readers to a mutation.
 
-    The fixture is restored in a `finally`, so a failure here does not leave a
-    fake credential in the working tree.
+    The explicit outside-the-repository assertion is load-bearing. Repointing
+    ``fixture`` at the committed file reproduces the old concurrency hazard and
+    fails before any write occurs.
     """
-    fixture = REPO_ROOT / "backend" / "tests" / "fixtures" / "nba_static_teams.json"
+    relative = Path("backend/tests/fixtures/nba_static_teams.json")
+    committed_fixture = REPO_ROOT / relative
+    fixture = tmp_path / relative
+    assert not fixture.is_relative_to(REPO_ROOT), (
+        "the secret-scan test must not mutate the checkout"
+    )
+
+    fixture.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(committed_fixture, fixture)
+
+    monkeypatch.setattr(scanner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(scanner, "tracked_files", lambda: [fixture])
+
     original = fixture.read_text(encoding="utf-8")
     planted = original[:1] + '\n  "userSecretId": "a1b2c3d4e5f6g7h8",' + original[1:]
     try:
@@ -209,4 +226,5 @@ def test_a_credential_planted_in_a_committed_fixture_is_caught(
     finally:
         fixture.write_text(original, encoding="utf-8")
 
-    assert scanner.main() == 0, "the fixture was not restored cleanly"
+    assert fixture.read_bytes() == committed_fixture.read_bytes()
+    assert scanner.main() == 0, "the isolated fixture was not restored cleanly"
