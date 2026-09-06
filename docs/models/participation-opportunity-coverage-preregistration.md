@@ -63,6 +63,12 @@ the project's corrected NBA game-date contract.
 | 2024-25 | 2024-10-22 through 2025-04-13 | Selection; candidates are advanced here, then the selected structure is refit on 2023-24 plus 2024-25. |
 | 2025-26 | 2025-10-21 through 2026-04-12 | Holdout; evaluated once by the independent evaluator. |
 
+2022-23 is the Marcel reference season because the holdout comparison requires
+each 2025-26 player to have the three immediately prior seasons of opportunity
+history: 2022-23, 2023-24, and 2024-25. Moving that support window later would
+consume the holdout; moving it earlier would not supply the required adjacent
+three-season history.
+
 Preseason, All-Star, Play-In, playoff, Summer League, G League, and cancelled
 games are excluded. There is no two-season, within-season, shortened-window, or
 rotation-only fallback under v1.
