@@ -62,3 +62,12 @@ metrics-baseline/
 # Design-hook cache. Holds absolute paths and session IDs, so it is per-machine
 # noise rather than shared configuration.
 .impeccable/
+
+# Raw private captures from a real Fantrax account. This repository is public,
+# so an un-sanitized capture must fail closed rather than rely on memory. Narrow
+# by design: the tracked adapter source lives in fantrax_private/ (underscore)
+# and sanitized fixtures are named *_sanitized.json, so neither is shadowed.
+# Limits worth knowing: this does not protect a file already tracked, and it is
+# overridden by `git add -f`. It closes the accidental-copy path, not every path.
+*.raw.json
+fantrax-playoff-private/

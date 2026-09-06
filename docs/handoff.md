@@ -36205,3 +36205,51 @@ cannot tell you either.
 **Next:** #175 merges when its recomputed CI is green against real `main`. #171 stays
 red pending the ADR-019 manifest question, and must not be merged by regenerating a
 manifest to clear a fingerprint if any cohort leaf moved.
+
+## 2026-09-06 - architect - A retracted claim, and the unwired guard's measured cost
+
+**Changed:** `docs/backlog.md` - the `doc-append-line-ending-helper` item's evidence
+paragraph is corrected. It previously relayed a trial arm's report that "three of five
+arms corrupted this file" and placed it under the heading "Confirmed empirically". I did
+not verify that claim before promoting it; measuring the five preserved arms
+(`trial/adr-index-a1..a5`) shows it is false. All five leave the base blob a byte-prefix
+of their result, and the three that appended added 1,711-1,836 bytes each. No arm
+corrupted the file. What I had actually confirmed was the adjacent hypothetical byte
+arithmetic - that a naive text-mode round-trip would add 36,207 bytes - which has never
+occurred in this repository, and which read as an observed event because it sat under
+the same heading as the relayed claim.
+
+**Now true:** The real defect is measured and is on `main`. `docs/handoff.md` held 149 CR
+bytes on 2026-08-28, a figure `scripts/check_append_only.py` names in its own source
+comment, and holds 312 now. The 163 added arrived in exactly three commits, each a
+pure-CRLF block appended to an otherwise-LF file: `d65e7484` (+69), `403b0a24` (+51),
+`59a15d3b` (+43). Every one preserves containment, so nothing was destroyed - the file is
+mixed, not damaged. Three later handoff commits written via `read_bytes()`/`write_bytes()`
+with LF endings added +0 CR, so the documented procedure works when it is followed.
+
+`check_append_only.py` fails when `added_cr > 0`. On those three commits it would have
+returned +69, +51 and +43 and refused each. It is wired into no workflow, no test and no
+hook, so it ran on none of them. The guard gap therefore has a measured cost of three
+permanent defects, not a hypothetical one, because this item's own reasoning makes the
+appends unfixable in place: repairing endings inside a committed region converts a purity
+failure into a containment failure, which is strictly worse.
+
+The five trial arms were preserved only as local tags; `git ls-remote --tags origin
+'trial/*'` returned empty, so the preservation step that existed to stop the work being
+lost was itself one disk failure from losing it. Tags pushed. Each arm is scripts, tests
+and docs only - no fixtures, no captures, no private data - verified by diffing each tag
+against its own parent rather than against current `main`, which is far ahead and made the
+first diff unreadable.
+
+**Could not verify:** Why the three lanes emitted CRLF is inferred from the uniform result
+- 69 of 69, 51 of 51, 43 of 43 lines - not observed in their tooling; a Windows text-mode
+write is the obvious cause but I did not watch one happen. I did not check whether any
+document other than `handoff.md` and `backlog.md` has taken the same treatment. Whether
+`check_append_only.py` passes on `main` for the reason I assume is untested: on a branch
+with no delta the base and head blobs coincide and `added_cr` is trivially 0, so a green
+run there is not evidence the check works.
+
+**Next:** `doc-append-line-ending-helper` now carries the measured cost and should be
+sequenced against the guard-wiring gap rather than treated as cosmetic. The wiring gap
+itself is 1 of 4 `check_*` scripts: `check_append_only` is the only one with both no
+workflow reference and no test.

@@ -5159,18 +5159,35 @@ wrong is to leave it wrong and stop the next one, not to repair it.
 The 269 pre-existing CRLF lines in `handoff.md` show prior authors hit this too. Every
 author is being asked to remember a per-file fact that the machine can read directly.
 
-**Confirmed empirically 2026-09-06.** The A3 trial arm reported that **three of five
-arms corrupted this file** performing the append that `AGENTS.md` mandates, and that
-it consciously skipped the house rule because not appending was safer than appending.
-It was right, which is the uncomfortable part: **the rule as written makes the file
-less safe than ignoring it.** Measured on the current bytes - 2,379,269 bytes, 35,895
-LF-only endings, 312 CRLF - a naive text-mode rewrite converts every LF ending, adds
-**36,207 bytes**, and does not preserve the prefix. It is not an append; it is a
-36,000-line whole-file diff that nobody reads. `check_append_only.py` would reject it
-on containment, but that script is wired into no workflow, no test and no hook, so the
-detection never runs. Until the helper exists, `AGENTS.md` should state the procedure
-on the same line as the rule: `read_bytes()`, append LF-encoded, `write_bytes()`, then
-assert the prefix is byte-identical and the CRLF count is unchanged.
+**Measured 2026-09-06, and it corrects an earlier entry here.** This paragraph
+previously relayed a trial arm's report that *three of five arms corrupted this file*
+and headed it "confirmed empirically". Measuring the five preserved arms directly
+(`trial/adr-index-a*`) shows that claim is **false**: all five leave the base a
+byte-prefix of their result, and the three that appended added 1,711-1,836 bytes
+each - an ordinary append, not a rewrite. What the measurement confirmed was only the
+adjacent byte arithmetic, which is a *hypothetical*: on the current 2,379,269 bytes and
+35,895 LF endings, a naive text-mode round-trip would add **36,207 bytes** and break
+containment. That has never actually happened here. It was written next to an
+unverified relayed claim under one heading, and read as though it had.
+
+**The real defect is smaller, and it is on `main` right now.** `docs/handoff.md`
+carried 149 CR bytes on 2026-08-28 - a number `check_append_only.py` names in its own
+source comment - and carries 312 today. The 163 added arrived in exactly three commits,
+each a **pure-CRLF block appended to an LF file**: `d65e7484` (+69), `403b0a24` (+51),
+`59a15d3b` (+43). All three preserve containment, so nothing was destroyed and nothing
+is unreadable; the file is simply mixed now. Three later handoff commits written with
+`read_bytes()`/`write_bytes()` and LF added **+0**, so the procedure demonstrably works
+when followed.
+
+**This is what the unwired guard costs, stated as a number rather than a worry.**
+`check_append_only.py` fails when `added_cr > 0`; on those three commits it would have
+returned +69, +51 and +43 and blocked each one. It is wired into no workflow, no test
+and no hook, so it ran on none of them. Per this item's own reasoning the appends are
+now unfixable in place - repairing endings inside a committed region converts a purity
+failure into a containment failure - so the guard gap has already cost three permanent
+defects rather than a hypothetical one. Until the helper exists, `AGENTS.md` should
+state the procedure on the same line as the rule: `read_bytes()`, append LF-encoded,
+`write_bytes()`, then assert the prefix is byte-identical and the CR count unchanged.
 
 **Acceptance.** A helper - `scripts/append_doc.py` or equivalent - that takes a target
 path and body text, detects the target's dominant line ending from its own bytes, and
