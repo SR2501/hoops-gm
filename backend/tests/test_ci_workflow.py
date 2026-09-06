@@ -547,3 +547,47 @@ def test_the_flag_reader_fails_on_a_flag_that_is_not_there() -> None:
 
     with pytest.raises(AssertionError):
         _flag_value("pytest --junitxml=junit.xml", "--vitest")
+
+
+def test_every_job_declares_a_timeout(jobs: dict[str, Any]) -> None:
+    """A hung job otherwise holds a runner for GitHub's six-hour default.
+
+    ``cancel-in-progress`` is deliberately false on the default branch, because
+    a superseded main run is still the metrics baseline producer. That is the
+    right call and it has a consequence: on main nothing at all reclaims a stuck
+    job, so the ceiling below is the only recovery.
+
+    The limits are generous on purpose. They exist to break a hang, not to
+    police duration -- a limit that fires on an ordinary slow run is one the
+    next person raises until it never fires at all.
+    """
+    assert len(jobs) >= 11, (
+        f"only {len(jobs)} jobs parsed; a partial or empty mapping would let "
+        "every assertion below pass without observing anything"
+    )
+
+    missing = sorted(name for name, job in jobs.items() if "timeout-minutes" not in job)
+    assert missing == [], f"jobs inheriting the 360-minute default: {missing}"
+
+    for name, job in jobs.items():
+        limit = job["timeout-minutes"]
+        assert type(limit) is int, f"{name}: timeout-minutes is {limit!r}, not an int"
+        assert 0 < limit < 360, f"{name}: {limit} does not improve on the default"
+
+
+def test_the_postgres_ceiling_clears_its_own_slowest_measured_run(
+    jobs: dict[str, Any],
+) -> None:
+    """The one limit with a real chance of firing on a healthy run.
+
+    The Postgres job measured 18.4-24.6 minutes across six pull-request runs and
+    41.7 minutes on main (run 34017556556) -- the same suite, roughly 1.7x
+    slower, and that gap is unexplained. A ceiling set from the pull-request
+    numbers alone would turn an unexplained slowdown into a red main.
+    """
+    slowest_observed = 42
+    limit = jobs["postgres"]["timeout-minutes"]
+    assert limit > slowest_observed * 1.5, (
+        f"postgres is capped at {limit} minutes but has been observed taking "
+        f"{slowest_observed}; leave headroom for the unexplained main-vs-PR gap"
+    )
