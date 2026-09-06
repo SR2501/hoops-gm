@@ -168,11 +168,26 @@ between the two measurements.
 mixes three kinds of leaf and the gate treats them alike. *Evidence* —
 `canonical_observations`, `cross_source_reconciliation` — must be frozen and
 did not move. *Provenance* — `operator.*` — is expected to move on an edit.
-*Environment description* — `source_capture_summary`, and the `null` fields that
-populate once the store covers the window — describes a **mutable local store
-that no reviewer controls** and moves on its own, with no code change at all.
-Freezing an artefact that records a moving quantity guarantees the gate fires
-for reasons unrelated to any edit.
+*Environment description* — `source_capture_summary` — describes a **mutable
+local store that no reviewer controls** and moves on its own, with no code
+change at all. Freezing an artefact that records a moving quantity guarantees
+the gate fires for reasons unrelated to any edit.
+
+**Corrected 2026-09-06, after `quant` reproduced the committed state.** This
+paragraph originally placed the `null` cascade fields in that third class,
+saying they populate *"once the store covers the window"*. That was wrong, and
+the referral disproved it cheaply: the slate and coverage reports are
+**byte-identical to commit** and were inventoried by the committed manifest
+itself, so the store already covered the window when the manifest was
+generated. The cascade reads `null` because the loader resolves `data/reports`
+**CWD-relative and hard-coded**, while `operational_artifacts` honours the
+explicit `--report-dir`; run from `backend/` with an absolute `--report-dir`,
+today's code reproduces the committed manifest exactly. So 10 of the 35 leaves
+are a **generation-context defect plus a latent generator bug**, not store
+growth — a distinction that changes the remedy from *tolerate the noise* to
+*fix the generator and refresh*, and is filed as such. The differential
+amendment below is unaffected: it was argued from the 25 provenance leaves,
+which do drift for the reason stated.
 
 **Consequence, which section 3 did not anticipate.** Because every regeneration
 now moves environment leaves, every edit to a fingerprinted file stops for

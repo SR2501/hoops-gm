@@ -36710,3 +36710,68 @@ three-command list, so the paraphrase claim rests on the lane's report plus the
 circumstantial fit of a green local run against a red gate. I judged direct
 verification unnecessary because the remedy - cite gates rather than restate
 them - is correct whether or not the specific prompt read exactly as described.
+
+
+## 2026-09-06 - The referral corrected the referrer, which is what it was for
+
+**Agent:** architect (coordinator)
+
+`quant` returned the ADR-019 pre-unblind ruling
+(`docs/models/cohort-drift-preunblind-ruling-2026-09-06.md`) and it disproved
+part of my own amendment. Recording the correction, the four items filed from
+it, and one thing I got right for the wrong reason.
+
+**What I claimed and what was true.** The amendment classed the `null` cascade
+fields as environment description that populates *"once the store covers the
+window"* - i.e. drift caused by the store growing. `quant` reproduced the
+committed manifest exactly by running from `backend/` with an absolute
+`--report-dir`, and showed the slate and coverage reports are **byte-identical
+to commit** and were inventoried by the committed manifest itself. The store
+already covered the window. The cascade reads `null` because the loader resolves
+`data/reports` **CWD-relative and hard-coded** while `operational_artifacts`
+honours `--report-dir`, so the two sections describe different directories in
+the same run. **10 of the 35 leaves are a generator bug, not environment noise**,
+and the remedy differs: fix the generator, do not tolerate it. ADR-019's
+amendment is corrected in place with the disproof named; the differential
+proposal itself is unaffected because it was argued from the 25 provenance
+leaves, which do drift for the stated reason.
+
+**The suspicion I referred was wrong, and I would refer it again.** I sent this
+asking whether the two retracted `UNVERIFIED, NOT ZERO` limitations were a
+fourth vacuity instance - an absence wearing a zero. They are not:
+`missing_from_ingest = 0` sits against a real **1230**-game enumerated slate
+(`expected_count = 1230`, cross-checked against an independent
+`games_in_scope`), and the three candidate-failure zeros against a non-empty
+**643**-candidate denominator, with the 3 errors confirmed as DNS failures
+rather than absorbed 403s. **A referral that returns "your worry was unfounded,
+here is the denominator" is a success, not a wasted round** - the three
+confirmed vacuity instances were all found by asking exactly this question, and
+the cost of asking is hours while the cost of not asking is a number nobody can
+retract later.
+
+**But note what that confirmation cost.** `quant` could only distinguish "no 403
+occurred" from "a 403 was absorbed into an untyped error bucket" by reading the
+store by hand; the manifest cannot express the difference. Filed as
+`cohort-cascade-error-outcomes-surfaced`.
+
+**Filed (backlog 211 -> 215, gate exit 0):**
+`cohort-report-dir-resolution-unified`, `cohort-scope-mismatch-refusal`,
+`cohort-cascade-error-outcomes-surfaced`, and
+`cohort-store-snapshot-content-addressed`. The last carries a caution `quant`
+did not write: it is the **alternative** to the differential amendment, not an
+addition, and the amendment says explicitly it should be withdrawn if the
+snapshot lands. It should not start before the owner rules, or we build a
+snapshot lifecycle to solve a problem the cheaper option already solved.
+
+**#171 is cleared on the merits and still blocked on governance.** `quant`
+certifies its footprint is exactly one permitted leaf, holding the store fixed,
+and that the 35-leaf drift is not its doing. It still trips ADR-019 section 3 as
+written, and section 3 changes only by owner acceptance. **Agents do not accept
+ADRs, including the agent who proposed the amendment and would benefit from it.**
+
+**Could not verify.** I did not re-run `quant`'s `backend/`-CWD reproduction
+myself. I accepted it because it is a positive reproduction of a specific
+committed artefact - the kind of claim that is expensive to fake and cheap to
+falsify - and because it argues *against* the referrer's position, which is the
+direction bias does not run. That is a reason to weight it, not a substitute for
+running it, and the next person to touch this generator should run it first.

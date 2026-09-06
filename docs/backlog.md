@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 120 pending - 211 total**
+**91 done - 0 blocked - 124 pending - 215 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5438,3 +5438,113 @@ denominator it counted against.**
 
 Gate: Code. Found by the lane that hardened this scanner, while answering what it
 held that the repository did not - the answer that is almost never "nothing".
+
+### `cohort-report-dir-resolution-unified`
+
+- [ ] **pending**
+- **Depends on:** none
+
+**A latent generator bug, found on 2026-09-06 by reproducing a state rather than
+explaining it.** In `build_cohort_evidence`, the trusted-entry cascade loader
+resolves `data/reports` **CWD-relative and hard-coded**, while the
+`operational_artifacts` section honours the explicit `--report-dir`. The two
+sections therefore describe **different directories in the same run**, and the
+manifest can simultaneously *inventory* a report file and report the cascade
+that reads it as `null`.
+
+This is not theoretical: it is what the committed
+`nba-injury-report-cohort-2025-10-21--2026-04-12.json` does today. Its cascade
+fields are `null` and carry two `UNVERIFIED, NOT ZERO` limitations, while its
+own `operational_artifacts` lists the very reports that would have populated
+them - byte-identical to the ones on disk now. `quant` reproduced the committed
+state exactly by running from `backend/` with an absolute `--report-dir`.
+
+**Why it matters beyond tidiness:** a reviewer reading that manifest concludes
+the coverage cascade is unmeasured, when it was measurable at generation time
+and the generator simply looked in the wrong place. *An artefact that reports
+absence caused by its own path handling is indistinguishable from one reporting
+a real gap* - and the two demand opposite responses.
+
+**Done when:** both sections resolve report paths through one code path that
+honours `--report-dir`; a committed test generates a manifest with reports in a
+non-CWD directory and asserts the cascade populates rather than nulling; and the
+docstring states which directory each section reads. Gate: Code.
+- *Referred by `quant`, `docs/models/cohort-drift-preunblind-ruling-2026-09-06.md`, action 2.*
+
+### `cohort-scope-mismatch-refusal`
+
+- [ ] **pending**
+- **Depends on:** none
+
+`build_cohort_evidence` does not check that the enumerated official slate covers
+the requested scope. The `observations` CLI already has this check as
+`_expected_coverage_matches_scope`; the cohort builder never got it. Today
+`games_in_scope == expected_count == 1230` holds, so nothing is wrong now - but
+the generator does not **enforce** it, and a widened or playoff window is
+exactly where it would silently stop holding.
+
+**The failure it permits is the vacuity family's signature:** a slate that
+under-covers the window still yields `missing_from_ingest = 0`, because every
+game it *did* enumerate was ingested. A zero against a short denominator reads
+identically to a zero against a complete one. This is the same shape as the
+PRESEASON-mislabelled-`"Playoffs"` defect that defeated
+`enforce_expected_game_coverage`, and it is unguarded here.
+
+**Done when:** the builder refuses, or emits `null` plus an explicit limitation,
+when the slate does not cover the requested scope; a committed test supplies a
+deliberately short slate and asserts the count is **not** reported as a verified
+zero. Gate: Code.
+- *Referred by `quant`, ruling action 1.*
+
+### `cohort-cascade-error-outcomes-surfaced`
+
+- [ ] **pending**
+- **Depends on:** none
+
+The trusted-entry cascade reports `candidates_attempted`, and the 403/404/
+quarantined counts, but transient failures have **no field of their own**. On
+the 2026-09-06 regeneration three candidates failed with DNS errors; they are
+visible only as the arithmetic residue `attempted - fetched`, which no consumer
+computes and no limitation mentions.
+
+`quant` confirmed the three are DNS failures and therefore that the
+`403 = 0` / `404 = 0` zeros are honest. **That confirmation required reading the
+store by hand** - the manifest alone could not distinguish "no 403 occurred"
+from "a 403 was absorbed into an untyped error bucket". A count whose honesty
+depends on out-of-band inspection is not doing its job.
+
+**Done when:** transient/error outcomes are a named cascade field; a committed
+test injects one and asserts it appears there rather than only in the residue.
+Gate: Code.
+- *Referred by `quant`, ruling action 4.*
+
+### `cohort-store-snapshot-content-addressed`
+
+- [ ] **pending**
+- **Depends on:** `cohort-report-dir-resolution-unified`
+
+**This is the item that would let ADR-019's absolute gate be correct again, and
+it should be read as the alternative to the differential amendment rather than
+an addition to it.**
+
+The cohort manifest freezes a *summary of a mutable local store*. Four live
+sweeps between 2026-08-22 and 2026-09-02 took `BoxScoreTraditionalV3` from 1,230
+to 4,920 captures, moving 25 `source_capture_summary` leaves with no code change
+at all. That drift is why the amendment (`ADR-019`, 2026-09-06) proposes a
+differential comparison: an absolute one fires for reasons unrelated to any
+edit, freezing six source files in practice.
+
+Pinning a **content-addressed store snapshot per cohort** removes the drift at
+its source. Regeneration then becomes reproducible, the absolute comparison
+becomes meaningful again, and the amendment says explicitly that it *"should be
+withdrawn"* at that point.
+
+**The tradeoff is real and should not be waved through:** this costs disk and
+adds a snapshot lifecycle nobody currently maintains, to solve a problem the
+differential gate already solves more cheaply. **Do not start it before the
+owner has ruled on the amendment** - if the differential gate is accepted and
+works, this may correctly never be built.
+
+**Done when:** a cohort regeneration is byte-reproducible from a pinned snapshot
+id on a machine that did not produce it. Gate: Code + Adapter.
+- *Referred by `quant`, ruling action 3, with the caution added here.*
