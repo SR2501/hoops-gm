@@ -113,6 +113,10 @@ normal schedule refresh should not require mechanically rewriting this page,
 while a missing cohort, duplicated season, or order-of-magnitude error should
 fail the gate in `backend/tests/test_seed_demo.py`.
 
+These bounds describe the fresh temporary database created by
+`scripts/run_demo.py` (and the equivalent lower-level `seed_demo` command), not
+another persistent or separately seeded database.
+
 | published measure | minimum | maximum |
 |---|---:|---:|
 | `teams` | 28 | 32 |
