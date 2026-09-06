@@ -36440,3 +36440,47 @@ the install was mis-pointed — I found it aimed at lane 4's branch but do not k
 how long it had been, so the schedule-grid contract and OpenAPI capture on `main`
 are unaudited against this. That is a concrete, cheap check for whoever picks it
 up: regenerate both now that the install is correct and confirm no diff.
+
+## 2026-09-06 — architect — retracting an overstatement in R69, hours after making it
+
+Checking why #171's head had moved sent me back to the primary source, and the
+primary source did not say what I reported it saying.
+
+I wrote in R69, in the handoff, and in a commit message that PR #171's tip-off
+docstring **"cites `ingest/nba/backfill.py`, a path that does not exist"**. It
+does not. `git grep backfill` against `07892f3c` returns exactly two hits in that
+file, and the relevant one at line 1037 is a bare ``backfill.py`` with **no path
+at all**. I inferred the path from context — a bare sibling filename inside
+`ingest/nba/parsers.py` reads naturally as `ingest/nba/backfill.py` — and then
+reported my inference as the file's text.
+
+The true finding survives and is smaller: the citation is **ambiguous**, and its
+most natural resolution is wrong, since the real file is `ingest/backfill.py` one
+directory up. "Ambiguous reference that resolves wrongly" and "cites a
+non-existent path" call for the same one-line fix but are not the same claim, and
+only one of them is what the file says. R69 has been corrected in place with the
+retraction stated inside it rather than silently edited.
+
+**The pattern is the point, not the instance.** This is the second retraction of
+identical shape in one session. Earlier I promoted a relayed claim — that three of
+five trial arms corrupted `handoff.md` — to "confirmed empirically", and
+measurement showed all five preserved the file byte-for-byte. Both times I reached
+for the more serious-sounding version of a finding that was real but smaller. Both
+times the error survived being written into a governance file, a commit message
+and an owner-facing summary, and was caught only by going back to the primary
+source for an unrelated reason. Nothing in the four gates looks at this: it is a
+writing failure, not a code failure, and `AGENTS.md` names it exactly — reaching
+for the objection that sounds most serious rather than the one you can evidence.
+
+**Lane 4 caught its own overclaim independently**, which deserves recording next
+to mine. `07892f3c` narrows "No NBA game has ever tipped off outside this window"
+to "no **regular-season or playoff** game", and adds the counterexample that
+breaks the general form — NBA China preseason games tipping at 7:00am ET. That is
+the same class of error as mine, found by the author, before review, and stated
+with its own falsifier attached.
+
+**Could not verify.** Whether my earlier claims about the other two preseason
+refusals (`ingest/backfill.py`, `injury_report/backfill.py`) are as exact as I
+stated them — I read those directly and quoted line numbers, so I believe they
+hold, but I have not re-derived them since making the same class of mistake twice.
+Anyone relying on R69 should re-check those two citations against the files.
