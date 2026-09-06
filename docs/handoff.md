@@ -37145,3 +37145,72 @@ opportunity-coverage veto - stay unresolved by design; nothing was done about
 them. The bundle's restorability was proven for one blob, not for every object
 in the branch's 12 commits. And the claim that the eleven scan reports decompose
 1/10 rests on my reading of each citing sentence, not on a test.
+
+
+## 2026-09-06 - architect - owner clarifies the draft-day recommendation, in a separate decision thread
+
+**Changed:** The owner moved questions into a separate session because the active
+architect's message queue obscured answers. The other architect continues
+delivery. No code, ADR status, model protocol, or subscription changed here.
+
+**Owner's words:**
+
+> We can use the BBM projections as a baseline and try to find other free sources
+> and feeds. If nothing else, if you refuse to scrape and aggregate free public
+> news, then I can do it manually and paste them somewhere to ingest. It would be
+> useful to see fully healthy projected value versus expected real adjusted value.
+> That way in 2 numbers I can see how much the final value is weighted by injury?
+> I'm not attached to that visual specifically. What I want working on draft day
+> is live suggestions on my pick that fit my current strategy. With health weight
+> or load management weight somehow visible. Then I only have to do last second
+> research on 3-5 options instead of overweighting one category by sorting in a
+> hurry. I think that lines up with what I've said before. LEt me know if you
+> disagree.
+
+**Now true:** A descriptive games-played panel alone does not meet the stated
+draft-day requirement. The required outcome is a live, strategy-aware shortlist
+of 3-5 available players, with health/rest assumptions visible. BBM projections
+are an acceptable starting point; finding additional free sources and supporting
+owner-pasted news are complementary paths. Two displayed values are a suggested
+explanation, not a fixed UI requirement. Earlier in this thread the owner said
+"B and A seem fine" and asked to start B: historical-source research was started,
+not a purchase. This clarification replaces the narrower history-versus-discount
+question; it does not accept ADR-021 or abandon adjusted recommendations.
+
+**Research finding:** The read-only data-engineer review found a four-season
+participation corpus already recorded in
+`docs/adapters/participation-ledger-2022-23-coverage.json`. The current protocol's
+unmet requirement is independent at-risk roster reconstruction, not absence of
+public box scores. Its evidence result is `not_evaluable`, not measured poor
+coverage. Neither "nobody gives that away free" nor "a calibrated model cannot
+be ready by draft day" was established. Public NBA/team/G League evidence merits
+assessment; SportsDataIO historical lineups and Sportradar are candidates, not
+confirmed solutions, with no verified price for the required history.
+
+**Proposed implementation boundary, not an accepted amendment:** Keep BBM
+per-game production separate from any source/owner games assumption. Quant's
+read-only consultation supports exploring an explicitly labelled scenario path
+without calling it calibrated in-house `p(play)`. A paired comparison should
+change participation over the same window while holding production, peer
+assumptions and valuation scale fixed; multiplying a price by games/82 does not
+provide that comparison. Call its difference availability sensitivity, not pure
+injury cost: rest and other non-play causes also matter, and the production
+baseline may itself reflect health. Existing own-model/sequencing/default-method
+requirements and the restriction on numerical use of BBM games need explicit,
+narrow resolution before implementation, not a silent protocol bypass.
+
+**Could not verify:** No live draft shortlist or paired valuation was exercised
+here. BBM's current export semantics, any permissible free feed's full coverage,
+the sufficiency/cost of a vendor archive, and the feasibility of a calibrated
+model by the rehearsal date remain unresolved. No automatic news-to-games
+conversion, numerical availability weight, alternate valuation method, or new
+paid source was approved. Public visibility alone does not establish collection
+or redistribution rights.
+
+**Next:** The delivery architect has the owner's clarification and should align
+the draft deliverable around it, with quant owning the explicit assumptions and
+comparison math, data-engineer owning source assessment and news intake, and
+backend/frontend/bridge owning the live shortlist surfaces under their existing
+gates. Return only genuine owner choices to the decision thread. Preserve the
+current availability fit veto for that model; do not treat it as proof that every
+separately specified recommendation path is impossible.
