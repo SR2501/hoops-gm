@@ -1303,16 +1303,16 @@ Fantrax auction mock only opens in early October, the window between "first
 auction payload seen" and 18 October could be **days**, with no slack to fix what
 it reveals.
 
-**So this is not a task to schedule; it is a trigger to watch.** The moment
-Fantrax auction lobbies open, run one — ahead of any other capture, ahead of
-polish, and treat whatever it refuses as the highest-priority defect in the
-project. `docs/mocks/instrumented-capture.md` is the procedure; record the format
-as auction and note that identity results transfer only if the mock is NBA.
+**So this is not a task to schedule; it is a trigger to watch, and checking the
+trigger is ours rather than a question to keep asking the owner.** When Fantrax
+auction lobbies open, run one ahead of any other capture and treat whatever it
+refuses as the top defect. `docs/mocks/instrumented-capture.md` is the procedure:
+record the format as auction; identity results transfer only if the mock is NBA.
 
 **Distinct from `blind-mocks`, and they must not be merged.** That item wants
-*uncontaminated market prices* and is satisfied by ESPN today. This one wants
-*Fantrax payload shape* and can only ever be satisfied by Fantrax. Running one
-does not discharge the other.
+*uncontaminated market prices* from any platform. This one wants *Fantrax payload
+shape* and can only ever be satisfied by Fantrax — so the owner's ESPN autodraft
+of 2026-09-06 discharges neither, and Fantrax lobby availability stays unknown.
 
 **Rendered-board acceptance, added after the explicit profiled
 mock-football-snake boundary landed:** record an NBA Fantrax auction room through at least one
@@ -1327,10 +1327,10 @@ binding or snake fixture is not evidence for auction semantics.
 
 - [ ] **pending**
 
-**UNBLOCKED 2026-08-28.** The block below rested on a premise that has stopped
-being true: the owner reports **ESPN is running live NBA auction mocks now**,
-while Fantrax has none. Everything this item asks for is platform-agnostic — it
-never named Fantrax — so ESPN satisfies it in full.
+**DEFERRED 2026-09-06 by the owner, and the 2026-08-28 unblock was wrong.** That
+note said ESPN satisfied this in full. The owner has since run one and reports an
+autodraft with **11 bots and no human bidders**: lobbies were open, a market was
+not. Bot prices cannot calibrate human bidding, so the corpus never existed.
 
 **Run them on ESPN, capture by hand with `docs/mocks/TEMPLATE.md`, and do not
 build collection tooling.** Three reasons, and the third is the one that decides
@@ -1339,9 +1339,9 @@ it: a scraper for a platform the owner does not draft on is throwaway code while
 is a manual capture form; and it explicitly requires the mock be run **without
 this tool**, so automation aimed at *our* side of the loop is beside the point.
 
-**This is perishable.** Auction lobbies are seasonal, the corpus only accumulates
-while they are open, and prices sharpen as the season approaches. A mock not run
-in September cannot be run in November.
+**Perishable and premature at once, which is why it is a date, not a task.** Rooms
+fill as the season nears, so waiting improves the corpus right up until it removes
+it; **review 13-20 September**. Under ADR-017 nothing ships behind this.
 
 **Do not let the tool near it.** R38's circularity risk is the whole reason this
 is the control group: once bidding is informed by our own values, the corpus
@@ -3255,7 +3255,7 @@ Tune the draft simulator opponent models from observed behaviour in the mock cor
 - [ ] **pending**
 - **Depends on:** `auction-budget-manager`, `auction-inflation`, `bridge-overlay`, `fantrax-auction-capture`
 
-AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Auction draft surface: current nomination, inflation-adjusted max bid, value versus standing bid, budget and slots remaining, tier-exhaustion alerts. Optimised for a seconds-long bid clock - one number, big and unambiguous. Dependency corrected 2026-09-06: was `blind-mocks`, which is contradictory - that item requires the mock be run *without* this tool, so it can never supply a room this panel is present in. The real prerequisite is Fantrax auction payload shape (`fantrax-auction-capture`); `blind-mocks` supplies uncontaminated market prices and is satisfied by ESPN, per backlog 1312-1315.
+AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not insurance. Auction draft surface: current nomination, inflation-adjusted max bid, value versus standing bid, budget and slots remaining, tier-exhaustion alerts. Optimised for a seconds-long bid clock - one number, big and unambiguous. Dependency corrected 2026-09-06: was `blind-mocks`, which is contradictory - that item requires the mock be run *without* this tool, so it can never supply a room this panel is present in. The real prerequisite is Fantrax auction payload shape (`fantrax-auction-capture`). This line first read that `blind-mocks` was satisfied by ESPN; that was copied from a stale 1312-1315 and the owner disproved it hours later - it is deferred, not met.
 
 ### `overlay-draft-panel` - Building the draft-day overlay panel
 
@@ -5767,6 +5767,35 @@ production with availability, is **Model** and needs calibration, held-out
 evidence, a model card and a statement of blind spots. Displaying two existing
 numbers side by side is Code; multiplying them together is Model. Do not let the
 second arrive disguised as the first.
+
+**Owner strategy hypothesis, 2026-09-06, to *support* rather than to encode.** In
+his words: *"It might also really help with reliability. I lose the top end
+value, but if I manage bankroll well I get a much tougher bench and I can handle
+missed games much better. The key though is you still need to spend out at some
+point, so striking at the right times gets very important."* He narrowed it
+minutes later: *"That is I need to fill the starters with most of my talent so I
+can still stream free agents and pick up waiver wire specialists to gain
+advantages."* The second governs. **"Middle-heavy" means distributing spend
+across a strong starting core - not skipping stars on principle, and not buying
+a deep bench.** No budget split, punt strategy, number of streaming slots or
+automated roster action has been selected.
+
+**The clarification inverts what a naive reading would optimise, which is the
+reason it is written down.** Taken alone, *"a much tougher bench"* says fill the
+bench with value. The narrowing says close to the opposite: bench slots are
+wanted **expendable**, because their job is turnover capacity for schedule and
+category streaming. An undroppable mid-tier player occupying one is a cost, not
+depth. So any future resilience measure must count **usable replacement
+production under lineup locks, positions and schedule** - not the sum of bench
+totals, and never an assumption that mid-priced players miss fewer games.
+
+**"You still need to spend out" is a live constraint on the advice, not a
+postscript.** Timing has to weigh remaining depth in the tiers he wants, his
+legal roster and budget minimums, and opponents' remaining purchasing power, so
+that *wait* flips to *buy* before both the targets and the spendable slots are
+gone. This sharpens `plan.md`'s 2026-08-29 point that roster management changes
+the draft-day cost of unreliability. It is not a new research strand, and it must
+not put mock collection back on the critical path.
 
 **Done when:** at a live pick, with a draft in progress, the surface returns 3-5
 candidates; each carries its projected per-game contribution in the league's

@@ -37452,3 +37452,219 @@ citation is well-formed whether or not it still holds.
   question is live in the decision thread and is not mine to answer.
 - CI on the head carrying these edits has not been observed at the time of
   writing.
+
+
+## 2026-09-06 - architect - owner defers useful mock-data collection for one to two weeks
+
+**Changed:** The owner reports trying an ESPN auction mock and completing an
+autodraft with 11 bots, not a useful human market. He offered to paste the
+result, but directed: "we should really hold this blocker for another week or
+even two and work around it. Real mock data is still a couple weeks out."
+
+**Now true:** Pursuing useful mock data is deferred, with September 13-20 as the
+next review window, not a promise that populated rooms will exist then. Continue
+the BBM-based live-shortlist work without this corpus. The owner has attempted a
+mock; do not frame its absence as an ignored owner action. Any supplied result
+must retain its bot/autodraft provenance rather than being presented as human
+auction-price or owner-adherence evidence. This approval does not make manual
+draft entry the primary path.
+
+**Could not verify:** No ESPN transcript was received or ingested in this
+exchange. The report does not establish whether NBA Fantrax auction rooms are
+available, and an ESPN result cannot establish Fantrax capture compatibility.
+
+**Next:** The delivery architect was notified to reflect the hold in the backlog
+and continue around it. Keep the separate NBA Fantrax nomination/completed-sale
+capture on the rehearsal plan without repeatedly asking the owner to search
+empty lobbies now. No automatic reminder was scheduled in this exchange.
+
+## 2026-09-06 - architect - an ADR index checker, and a stale claim caught being copied
+
+**Shipped `scripts/check_adr_index.py` and `backend/tests/test_adr_index.py`,
+closing `adr-index-consistency-unshipped`.** No CI workflow change: the real-repo
+test runs inside the existing backend pytest job, so that job *is* the gate. A
+separate step would have meant editing the pinned command lists in
+`test_ci_workflow.py` to buy nothing.
+
+**The index had no drift at all** - 20 files, 20 rows, zero status disagreements.
+It ships anyway because `docs/decisions/README.md` records that ADR-017 was absent
+from its own table until 2026-08-27, so this is a defect that has occurred, been
+fixed by hand, and had nothing watching for a recurrence.
+
+**The reserved-number exemption is read from the README's prose, not hardcoded.**
+ADR-016 is deliberately unwritten; four coordinator-register entries reference
+"whenever ADR-016 is written". A checker that flagged it would demand the index
+stop explaining itself - the inverse-vacuity failure already recorded in
+`gates.md`. So a number is exempt only where README.md says
+`**016 is unwritten and reserved.**` in words. Widening the exemption costs a
+sentence a reviewer sees, rather than an edit to a list nobody reads.
+
+**Mutation evidence, because a consistency checker that passes on a consistent
+repository has demonstrated nothing** - so would `return []`. Five mutants:
+always-clean; the status regex matching only `**Status:**` and not
+`- **Status:**`; the index section widened to the whole README; every number
+treated as reserved; the status comparison stubbed to `False`. **5 caught, 0
+survived**, script restored byte-identical. The first two mutants are not
+hypothetical: they are the actual bugs in the throwaway diagnostic that preceded
+this, which reported **eighteen** confident disagreements, all false.
+
+### The finding worth keeping: a stale claim gets copied, not just left
+
+The owner ran an ESPN NBA auction mock and found **an autodraft with 11 bots and
+no human bidders**. That falsifies the 2026-08-28 note claiming ESPN satisfied
+`blind-mocks` "in full" - lobbies were open, a market was not, and bot prices
+cannot calibrate human bidding.
+
+The claim was in **four** places. Three had sat there since 28 August. The fourth,
+`docs/backlog.md:3258`, **I wrote today** - while correcting a *different* defect
+in that same line, I cited 1312-1315 and carried its stale clause into a new
+location, hours before the owner disproved it.
+
+This is the third stale-caveat correction in two days, and it adds something the
+earlier two did not. The first two were about caveats rotting *in place*, and the
+mitigation was to re-read `done` items. This one rots and then **spreads**, and
+the vector is somebody working carefully nearby: the citation looked like
+diligence. So the rule is narrower than "re-read old items" - **a claim you copy
+becomes yours, and inherits none of its original checking**. Verify a cited clause
+before repeating it, or cite the location without restating its content.
+
+The sweep script I wrote to prove all four were gone then flagged the corrected
+line, because the correction quotes the claim it retracts. That is the same
+inverse-vacuity shape as the ADR-016 exemption above, met twice in one hour.
+
+### The ESPN sample: what the image shows, and what the owner said
+
+The owner supplied a screenshot, retained privately outside the repository. The
+raw image and the team names in it are **not committed** - this repo is public.
+
+**I opened it rather than repeating the description of it**, because a relayed
+observation is exactly the unexamined inheritance this project keeps catching.
+The relay was accurate on both checkable points: 11 opponent headers flagged
+`AUTO`, and the owner's own budget reading $55.
+
+**What the image shows directly.** Title *ESPN Fantasy Basketball Draft -
+Beginner 12-Team H2H Categories Mock Salary Cap*; the pick counter reads **PK 157
+OF 156**, so the draft ran to completion. Twelve teams, thirteen roster rows each,
+priced per player, with a pick-order sidebar.
+
+**What the owner separately reported:** an autodraft against 11 bots.
+
+These agree, and the agreement counts because the sources are independent - but
+they are not the same claim. `AUTO` marks a team as autodrafting, which a human
+can also switch on. The image establishes that eleven of twelve teams were not
+bidding by hand; that they were *bots* rather than departed humans comes from the
+owner, not the pixels.
+
+**The image supplies a better reason than either, and it is falsifiable.** Read
+from the header row, four teams finished with budget unspent - $63, $55, $23 and
+$20, about **$161 left on the table out of $2,400**. A competitive auction clears
+budgets; bidders who stop bidding while holding 31% of their money are not
+producing clearing prices. Below roughly the sixth roster row the board is
+overwhelmingly $1. A $1 tail alone would prove little, since real auctions
+deplete too - it is the *unspent* budget alongside it that shows these prices are
+not an equilibrium. The room title adds a third reason independent of both: a
+"Beginner" room is not a market even when it is full.
+
+So: **not** human auction-market calibration, **not** owner-adherence behaviour,
+**not** a nomination or bid sequence, **not** Fantrax capture evidence, and no
+price or health inference from the pictured values.
+
+**It is genuinely useful for one thing, and that is worth keeping.** It is a
+completed salary-cap board, and it shows the field set a result importer has to
+read: player, price, NBA team, position eligibility, fantasy team, and pick
+order. That is format material for `mock-ingestion`, which is the one claim about
+this artifact that survives everything above.
+
+### Recorded, not decided
+
+- `blind-mocks` marked **DEFERRED by the owner, review 13-20 September**. He asked
+  to hold it a week or two and work around it; that is a direction, not a lapse.
+- If the ESPN output is pasted, it is **debugging and format material**. Tag the
+  bot/autodraft composition. It is not human-market evidence and not owner
+  adherence evidence.
+- `fantrax-auction-capture` stays distinct and unsatisfied. Fantrax NBA auction
+  lobby availability is **unknown**, and watching for it is ours to do rather than
+  a question to keep putting to the owner during the hold.
+- The manual-paste offer covers **public news**, not draft state. Nothing here
+  makes manual draft entry the primary path.
+- Under ADR-017 nothing ships behind any of this.
+
+All edits line-count neutral: `test_opportunity_coverage_predicate.py` pins
+`docs/backlog.md` 3623-3661 by digest and every block edited sits above it.
+
+**Could not verify.**
+
+- **The screenshot figures are read off small rendered text.** The four unspent
+  budgets and the $2,400 room total are my reading of the header row, not a
+  parsed artifact, and the argument they support would weaken if one is
+  misread - though not collapse, since $63 unspent on its own carries it.
+- **Whether the ESPN board's visible fields are *all* of them.** I read one tab
+  of one view. Anyone building the importer should drive the page, not this
+  image.
+- **Whether the ADR index is *correct*, only that its two records agree.** The
+  checker has no opinion on whether a summary is accurate, whether an `Accepted`
+  status is justified, or whether an ADR should exist. Agreement is not truth.
+- **Whether four places was all of them.** I grepped `docs/backlog.md`,
+  `docs/decisions/`, `docs/governance/` and `docs/mocks/`. Owner-facing summaries
+  live outside the repository by design, because it is public - and that is
+  exactly the denominator error that made me claim, two days ago, that a
+  disproven framing had never been written when it was leading the executive
+  summary. I have not swept session artifacts for this one.
+- **`docs/backlog.md:1338` says the critical path runs to 4 October; the plan and
+  the rehearsal window say 5 October.** Pre-existing, untouched, and I do not know
+  which is right. Filed here rather than guessed at.
+- **Whether `blind-mocks` should stay `pending` or become blocked.** Left pending:
+  it is calendar-deferred, not dependency-blocked, and no graph edge expresses "a
+  human has to show up in a lobby".
+
+## 2026-09-06 - architect - correcting my own ESPN entry: it was an 8-cat room
+
+Two further screenshots arrived after the entry above was appended, and both
+change it. Appending rather than rewriting: this file is append-only, and a
+correction that conceals what it corrected is worth less than the correction.
+
+**Checked first-hand rather than relayed.** ESPN's Rules tab reads Scoring Type
+*Head to Head Each Category*, 12 teams, and lists **eight** scoring categories -
+FG%, FT%, 3PM, REB, AST, STL, BLK, PTS. **There is no turnovers category.**
+Roster is PG/SG/SF/PF/C/G/F one each, UTIL 3, bench 3, IR 1, and the roster panel
+reads 13/13.
+
+**This is a sharper objection than "bots are not a market", and independent of
+it.** Our league is 9-cat and turnovers are the ninth, scored negatively.
+Removing them systematically **raises** the relative value of high-usage,
+high-turnover players. So even a room of skilled humans bidding perfectly would
+have produced prices biased in a *known direction* for our purposes. That is a
+claim someone can check and overturn, rather than a general warning that formats
+differ - which is why it belongs here in that form. Roster shape is a second
+transferability question and I have not resolved it.
+
+**A provenance nuance my earlier entry got wrong by omission.** The owner reports
+he *"missed the first few waves of nominations"* because his kids needed him. His
+own roster is therefore partly autopicked. Do not read that team as a record of
+his decisions: early absence is established, and the exact manual-versus-auto
+timing is unrecorded. His own summary: *"not a total waste, but definitely need
+to wait for real lobbies and real people."* His `$4` Embiid, which prompted him to
+ask whether the room was roto, is consistent with the unspent-budget reading in
+the entry above - it is what a non-clearing auction looks like, not a scoring
+quirk.
+
+**The hold is unchanged and reinforced.** Review 13-20 September. Receiving two
+screenshots is not a reason to restart collection.
+
+**Also recorded, in `docs/backlog.md` under `draft-day-shortlist`:** the owner's
+middle-heavy hypothesis, and the clarification that inverts its naive reading -
+he wants most spend in a strong *starting core* with bench slots kept
+**expendable** for streaming, not a bench stocked with mid-tier value. Captured
+as a hypothesis to support. It selects no default build and authorises no new
+model math.
+
+**Could not verify.**
+
+- **Whether our own league's roster shape matches the mock's.** I read ESPN's
+  rules; I did not re-read ours to compare, so "roster shape is a second
+  transferability question" is a flagged unknown, not a found difference.
+- **The turnover-bias direction is reasoned, not measured.** It follows from
+  turnovers being a negative category, and I have not computed the effect on any
+  actual player ordering. Treat it as a hypothesis with a clear sign, not a
+  quantity.
+- **How much of the owner's roster was autopicked.** Only that some of it was.

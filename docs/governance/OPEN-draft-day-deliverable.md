@@ -118,7 +118,7 @@ These are the items where a lost day is **unrecoverable**. None is agent work.
 | Action | Outstanding since | Why it expires |
 |---|---|---|
 | **One Fantrax NBA auction room** through at least one nomination and sale, userscript loaded, per `docs/mocks/instrumented-capture.md` | 2026-08-22 | Lobbies open early October. The gap between first auction payload seen and 18 October could be **days**, with no slack to fix what it finds. This is the only blocker on your Q15. |
-| **One blind ESPN NBA auction mock**, by hand, per `docs/mocks/TEMPLATE.md`, without this tool | 2026-08-26 | ESPN is running them **now**. Auction lobbies are seasonal: a mock not run in September cannot be run in November. It is also the uncontaminated control group — running it *with* the tool destroys it. |
+| **One blind NBA auction mock**, by hand, per `docs/mocks/TEMPLATE.md`, without this tool | 2026-08-26 | **Deferred by the owner 2026-09-06; review 13-20 September.** He ran an ESPN room and found an autodraft with 11 bots and no humans, so the 2026-08-26 note that ESPN was running them *now* was true of lobbies and false of markets. Still the uncontaminated control group — running it *with* the tool destroys it — and under ADR-017 nothing ships behind it. |
 | **Basketball Monster workbooks**, one per named projection source, per the exact export contract in the 2026-09-05 coordinator handoff | 2026-09-04 | Projections rank above reliability in your own answers, and are now the *only* input to draft-day values. |
 
 **There is no fallback for the first one, confirmed 2026-09-05.** The retiring
