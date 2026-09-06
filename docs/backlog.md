@@ -205,42 +205,6 @@ tips outside a known daily window in Eastern time); fail loudly on disagreement 
 preferring either field. See the `AGENTS.md` house rule on self-describing fields: check the
 claim against something independent.
 
-**Landed 2026-09-06 via #171 - two of the three checks, not three.** `parsers.py`
-cross-checks `gameEt` against `gameTimeUTC` and applies the plausibility bound to both
-(`_assert_plausible_tipoff_hour`, 1050-1061; the disagreement raised at 1152). The
-schedule endpoint's own date for the same `game_id` is **not** cross-checked:
-`ScheduleLeagueV2` is parsed in `schedule.py` but never joined back to the box-score
-date. That is the remaining unit of work, and why this item is still `pending` rather
-than a stale marker.
-
-**Fix in the same edit - the bound's error message overclaims.** The comment at
-1025-1045 is correctly scoped: it says *regular-season or playoff*, and it names the
-counterexample outright, that NBA China preseason games have tipped at 7:00am ET,
-below the 09:00 floor. The `SourceContractError` message at 1057 was not narrowed with
-it and still asserts *"the NBA has never scheduled a game there"* - unqualified, and
-contradicted by the comment twenty lines above it. It misleads at exactly the moment
-the comment anticipates: the comment tells a maintainer to widen `--season-type`
-before trusting the bound against preseason, and if they do, a real 7:00am China game
-raises an error stating the NBA never scheduled it and instructing them to treat it as
-*"a corrupted field rather than a real game"*. Real data discarded on the strength of
-a false sentence. Narrow it to the scope the comment already states.
-
-The reviewer did catch this overclaim in the comment; the message kept it, because
-prose inside a `raise` never executes while the suite is green, so the diff and the
-operator read different text. ADR-019's own gate message carried a superseded
-instruction the same way until 2026-09-06 - both found the same day, in files that
-had passed review.
-
-**Gate cost, so it is not a surprise.** `ingest/nba/parsers.py` is one of the six
-files fingerprinted by the cohort manifest, so touching this string re-fires
-`test_every_recorded_source_fingerprint_matches_the_file_today` and needs an ADR-019
-regeneration in the same commit. Under the 2026-09-06 amendment that comparison is
-**differential**: regenerate twice from the same store, once with the edit and once
-with it reverted, hold `--out` and the working directory fixed across both runs, and
-confine the difference between the two to `operator.source_fingerprints` and
-`operator.commands`. Batch the string with the schedule cross-check rather than
-paying that twice.
-
 ### `bridge-capture` - Capturing Fantrax data via the bridge
 
 - [x] **done**
