@@ -585,6 +585,17 @@ failure it produces looks like a real bug in your own change.
   `git rev-parse HEAD:<path>` in each candidate tree - blob ids are content
   addresses that cannot go stale, and if two candidates share a blob then no
   content probe over that file can separate them, which is itself the answer.
+
+  **The same durability question applies to how prose cites code, and there the
+  answer is free.** `docs/` carries **245** `path:line` citations across 16 files.
+  120 are in `handoff.md`, where they are frozen historical claims and must not be
+  corrected - the entry is a record of what was true when it was written. The rest
+  are read as current guidance, and a line number drifts on the next edit above it,
+  silently pointing at whatever moved into its place. **Cite the expression as the
+  address and the line as a hint**: `--repo-root` defaults to `Path("..")` is still
+  findable by grep after any drift, where a bare `:1581` is not. No checker is
+  proposed - the durable form costs nothing to write, and a test over 245 citations
+  would be more machinery than the failure it prevents, which is one wasted grep.
 - **The blast radius is evidence, not only tests.** `capture_schedule_grid_contract.py`
   and `capture_openapi.py` both import the package. Regenerating either from the main
   checkout while mis-pointed would have recorded another branch's tree *as* `main`'s
