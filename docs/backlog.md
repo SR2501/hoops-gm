@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 128 pending - 219 total**
+**91 done - 0 blocked - 129 pending - 220 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -203,7 +203,7 @@ availability model would absorb the error as real signal. Cross-check against `g
 the schedule endpoint's own date for the same `game_id`, and a plausibility bound (no NBA game
 tips outside a known daily window in Eastern time); fail loudly on disagreement rather than
 preferring either field. See the `AGENTS.md` house rule on self-describing fields: check the
-claim against something independent.
+claim against something independent. Remaining scope and a known defect in what landed: see `boxscore-bound-message-overclaim` at the end of this file.
 
 ### `bridge-capture` - Capturing Fantrax data via the bridge
 
@@ -5975,3 +5975,54 @@ so rather than silently ranking on partial data. Gate: Code, plus Model for any
 fused score.
 - *Filed by `architect` after the owner's 2026-09-06 clarification, from a
   measurement of the draft path rather than from the backlog's own summary.*
+
+### `boxscore-bound-message-overclaim` - Narrowing the tip-off bound's error message to what is actually true
+
+- [ ] **pending**
+
+`boxscore-date-plausibility-bound` landed two of its three checks in #171: `gameEt` is
+cross-checked against `gameTimeUTC`, and the plausibility bound is applied to both
+(`_assert_plausible_tipoff_hour`, `ingest/nba/parsers.py` 1050-1061, disagreement raised
+at 1152). The schedule endpoint's own date for the same `game_id` is cross-checked
+nowhere - `ScheduleLeagueV2` is parsed in `schedule.py` and never joined back to the
+box-score date - which is why that item is still `pending` rather than a stale marker.
+
+**The defect.** The comment at 1025-1045 is correctly scoped. It says *regular-season or
+playoff*, and it names the counterexample outright: NBA China preseason games have tipped
+at 7:00am ET, below the 09:00 floor. The `SourceContractError` message at 1057 was not
+narrowed with it and still asserts *"the NBA has never scheduled a game there"* -
+unqualified, and contradicted by the comment twenty lines above it.
+
+It misleads at exactly the moment the comment anticipates. The comment tells a maintainer
+to widen `--season-type` before trusting the bound against preseason; if they do, a real
+7:00am China game raises an error stating the NBA never scheduled it and instructing them
+to treat it as *"a corrupted field rather than a real game"*. Real data discarded on the
+strength of a false sentence.
+
+A reviewer did catch this overclaim - in the comment. The message kept it, because prose
+inside a `raise` never executes while the suite is green, so the diff and the operator
+read different text. ADR-019's gate message carried a superseded instruction the same way
+until 2026-09-06, and the evidence-citation assertion in
+`test_opportunity_coverage_predicate.py` had no message at all until 2026-09-06. Three
+instances, one day, all in reviewed files.
+
+**Done when** the message states only what the callers can reach - no regular-season or
+playoff game reachable through current call sites has tipped outside the window - and a
+test asserts the message does not claim more than that.
+
+**Gate cost, so it is not a surprise.** `ingest/nba/parsers.py` is one of the six files
+fingerprinted by the cohort manifest, so touching this string re-fires
+`test_every_recorded_source_fingerprint_matches_the_file_today` and needs an ADR-019
+regeneration in the same commit. Under the 2026-09-06 amendment that comparison is
+**differential**: regenerate twice from the same store, once with the edit and once with
+it reverted, holding `--out` and the working directory fixed across both runs, and
+confine the difference between the two to `operator.source_fingerprints` and
+`operator.commands`. No dependency edge is declared on
+`boxscore-date-plausibility-bound` because this can be done alone - but doing both in one
+commit pays that regeneration once instead of twice.
+
+**Where this had to go, and why it is not next to its item.** The first attempt appended
+this beside `boxscore-date-plausibility-bound` near the top of the file and broke a Model
+gate: lines 3623-3661 here are cited by hash in frozen v1 coverage evidence, and a 36-line
+insertion above them shifted the cited block. Nothing above line 3623 may change this
+file's line count. The pointer at that item is an in-place edit for the same reason.
