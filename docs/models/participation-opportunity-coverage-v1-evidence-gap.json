@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "participation_opportunity_coverage_evidence_gap",
+  "evaluation_status": "not_evaluable",
+  "proceed_opportunity_coverage": null,
+  "preregistration_id": "participation-opportunity-coverage-v1-20260906T052618Z",
+  "preregistration_commit": "a0b78d8743c16e9d979fe97522836773965f3c98",
+  "population": "all_at_risk_player_games",
+  "cohort_rule": "roster_interval_start_inclusive_end_exclusive_at_tipoff_v1",
+  "headline_finding": "The denominator cannot be built from currently admitted sources, so coverage is not evaluable under v1.",
+  "source_feasibility": {
+    "real_source_registry_can_be_supplied_from_admitted_sources": false,
+    "reconstruction_contract_can_be_supplied_from_admitted_sources": false,
+    "reason": "The admitted official archives do not establish complete opening membership, every effective start and end including contract expiration, assignment and recall, suspension, or same-day ordering for all four seasons.",
+    "new_source_acquisition_attempted": false,
+    "new_source_acquisition_scope": "Not attempted: acquiring a new source is separate Adapter-gate work and may require an owner-only paid-data decision."
+  },
+  "evidence": [
+    {
+      "path": "docs/adapters/nba-official-transactions.md",
+      "sha256": "5e08dd49d1b289ff45442cd162ae14632e2a0588b44a302ee57f7e89a4f0a269",
+      "lines": "120-207",
+      "finding": "The admitted archives emit transaction evidence only, omit required event classes and effective instants, and cannot establish a complete player-game denominator."
+    },
+    {
+      "path": "docs/backlog.md",
+      "sha256": "407fb4712b0189df3971b7126d03adc2ec40eb95cd1884116d7e8e4c53ee27b8",
+      "lines": "3508-3546",
+      "finding": "The backlog records that no complete independent denominator or unknown share can be calculated from the admitted evidence."
+    },
+    {
+      "path": "docs/models/participation-opportunity-coverage-preregistration.md",
+      "sha256": "23120e43c232940257293e0a76efbf97e50e99e12a706dbcee3f5a9aa7185fcd",
+      "lines": "76-151",
+      "finding": "Classification is forbidden until the source registry, reconstruction contract, roster manifest, and schedule manifest are frozen and independently reproduced."
+    }
+  ],
+  "required_input_artifacts": {
+    "roster_source_registry_sha256": null,
+    "roster_reconstruction_contract_sha256": null,
+    "roster_interval_manifest_sha256": null,
+    "schedule_manifest_sha256": null,
+    "input_manifest_commit": null,
+    "classification_commit": null,
+    "cohort_key_sha256": null
+  },
+  "roster_source_registry_sha256_is_verified": false,
+  "roster_reconstruction_contract_sha256_is_verified": false,
+  "roster_interval_manifest_sha256_is_verified": false,
+  "schedule_manifest_sha256_is_verified": false,
+  "roster_reconstruction_contract_independently_validated": false,
+  "roster_interval_manifest_independently_reproduced": false,
+  "schedule_manifest_independently_reproduced": false,
+  "input_manifest_commit_is_ancestor_of_classification_commit": false,
+  "classification_started_after_input_manifest_freeze": false,
+  "cohort_key_sha256_is_reproduced": false,
+  "roster_interval_coverage_complete": false,
+  "schedule_coverage_complete": false,
+  "all_four_direct_censuses_present": true,
+  "direct_censuses": {
+    "2022-23": {
+      "path": "docs/adapters/participation-ledger-2022-23-coverage.json",
+      "sha256": "9f6151a271e9c2c17381cdd19aab167b55cc13024944d5082e77288f95940bf8"
+    },
+    "2023-24": {
+      "path": "docs/adapters/participation-ledger-2023-24-coverage.json",
+      "sha256": "13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0"
+    },
+    "2024-25": {
+      "path": "docs/adapters/participation-ledger-2024-25-coverage.json",
+      "sha256": "f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69"
+    },
+    "2025-26": {
+      "path": "docs/adapters/participation-ledger-2025-26-direct-coverage.json",
+      "sha256": "4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441"
+    }
+  },
+  "total_opportunities": null,
+  "direct_label_available": null,
+  "confirmed_observed": null,
+  "confirmed_absent": null,
+  "unknown_opportunities": null,
+  "unknown_share_overall": null,
+  "duplicate_opportunities": null,
+  "unclassified_opportunities": null,
+  "missing_required_provenance_fields": null,
+  "seasons": {
+    "2022-23": {
+      "start_date": "2022-10-18",
+      "end_date": "2023-04-09",
+      "total_opportunities": null,
+      "direct_label_available": null,
+      "confirmed_observed": null,
+      "confirmed_absent": null,
+      "unknown_opportunities": null,
+      "unknown_share": null
+    },
+    "2023-24": {
+      "start_date": "2023-10-24",
+      "end_date": "2024-04-14",
+      "total_opportunities": null,
+      "direct_label_available": null,
+      "confirmed_observed": null,
+      "confirmed_absent": null,
+      "unknown_opportunities": null,
+      "unknown_share": null
+    },
+    "2024-25": {
+      "start_date": "2024-10-22",
+      "end_date": "2025-04-13",
+      "total_opportunities": null,
+      "direct_label_available": null,
+      "confirmed_observed": null,
+      "confirmed_absent": null,
+      "unknown_opportunities": null,
+      "unknown_share": null
+    },
+    "2025-26": {
+      "start_date": "2025-10-21",
+      "end_date": "2026-04-12",
+      "total_opportunities": null,
+      "direct_label_available": null,
+      "confirmed_observed": null,
+      "confirmed_absent": null,
+      "unknown_opportunities": null,
+      "unknown_share": null
+    }
+  },
+  "unknown_diagnostics": {
+    "missing_direct_evidence": null,
+    "unresolved_join": null,
+    "reason": "Without a canonical cohort there are no player-game keys to classify, so genuine source absence cannot be separated from unresolved roster or identity joins."
+  },
+  "failing_preclassification_conjuncts": [
+    "roster_source_registry_sha256_is_verified",
+    "roster_reconstruction_contract_sha256_is_verified",
+    "roster_interval_manifest_sha256_is_verified",
+    "schedule_manifest_sha256_is_verified",
+    "roster_reconstruction_contract_independently_validated",
+    "roster_interval_manifest_independently_reproduced",
+    "schedule_manifest_independently_reproduced",
+    "input_manifest_commit_is_ancestor_of_classification_commit",
+    "classification_started_after_input_manifest_freeze",
+    "cohort_key_sha256_is_reproduced",
+    "roster_interval_coverage_complete",
+    "schedule_coverage_complete"
+  ],
+  "specification_gap": {
+    "status": "recorded_not_repaired",
+    "finding": "Section 4 requires integer counts and exact division, while section 5 permits a prerequisite evidence failure in which no denominator exists. V1 cannot represent that failure inside its canonical predicate shape.",
+    "required_v2_change": "Define a machine-readable non-evaluable state before integer count validation and division, while preserving zero-denominator refusal.",
+    "preregistration_edited_after_result": false
+  },
+  "next_source_acceptance_criteria": [
+    "complete opening NBA roster membership for every team and season",
+    "effective start and exclusive end instants for every roster interval",
+    "explicit contract expiration and release boundaries",
+    "assignment and recall boundaries based on effective reporting instants",
+    "suspension coverage",
+    "deterministic same-day event and game ordering",
+    "independent reproduction and source-completeness validation"
+  ],
+  "backlog_state": {
+    "participation-opportunity-coverage": "pending",
+    "availability-model": "blocked"
+  },
+  "could_not_verify": [
+    "Whether a free authoritative source not currently admitted by the repository can satisfy the complete four-season interval contract.",
+    "Whether a paid source can satisfy the contract; evaluating or adopting one is an owner-only decision.",
+    "The 2022-23 season boundary against the blocked official NBA press release.",
+    "Any overall or per-season opportunity, class, unknown, duplicate, unclassified, or provenance count."
+  ]
+}
