@@ -585,18 +585,53 @@ failure it produces looks like a real bug in your own change.
   decisive against the candidates that are actually in play**, and the ones in play
   are whichever worktrees exist today, not the two the original incident happened
   to involve.
-- **The #171 hazard was real and did not land, and the difference is measurable.**
-  The worry was that the cohort-fingerprint manifest, regenerated from
-  `sr2501-finish-pr-171-manifest` while imports resolved to the sibling
-  `sr2501-bookish-barnacle`, would fingerprint the wrong `parsers.py` and commit
-  it as the reference. The two trees genuinely differed - blobs `a644fdc8` and
-  `e79ad2aa`, 54,596 against 54,129 bytes - so the counterfactual is sharp rather
-  than academic: import-based resolution would have recorded
-  `49e4ec50bb5229d6dc196bd7545f846b416ca98f1550b89dceddaf81079b9302`. The merged
-  manifest records `79cd1b9332a181fb633583403d47fd8897a8a6e573fc42a440d5823ddf85d8a7`,
-  which is its own tree's file and is now `main`'s. **The tooling resolves by path,
-  not by import.** Stated as evidence, not as reassurance from the session that
-  did the work.
+- **The #171 hazard did not land, and my first explanation of why was wrong.**
+  What is verified: the merged manifest records
+  `79cd1b9332a181fb633583403d47fd8897a8a6e573fc42a440d5823ddf85d8a7` for
+  `parsers.py`, which is the LF-normalised hash of `main`'s file. **The manifest is
+  correct.** What is *not* established is any claim about how the generator
+  resolves sources, and I published one anyway.
+
+  The error is worth more than the finding. I asserted a sharp counterfactual -
+  that import resolution would have recorded `49e4ec50...` - and derived it from
+  the local ref `pr171`. But the hijacking `.pth` named a **directory**, so the
+  bytes actually served were whatever sat on disk there, and `pr171` was a stale
+  fetch pointing at `f781a402`, an earlier state of the same pull request. The
+  directory in question, `sr2501-bookish-barnacle`, is checked out to
+  `sr2501-boxscore-date-plausibility-bound` - **the #171 branch itself**, carrying
+  the very commit that refreshed the manifest. Its on-disk `parsers.py`
+  LF-normalises to `79cd1b93...`, the same value. Import and path resolution
+  therefore agree here. **There is no counterfactual, and the experiment cannot
+  distinguish the two.**
+
+  This is the same mistake as reading `direct_url.json` instead of the `.pth`,
+  committed twice in one session, the second time while writing the bullet above
+  warning against it: **choosing the artefact that is easy to name over the one
+  actually in play.** `direct_url.json` because it is documented; `pr171` because
+  it is named after the pull request. Note what made it persuasive - a full
+  sha256. **Precision is not evidence.** A hex string makes a claim look
+  checked, and this one was checked against the wrong object. When a hijack is
+  defined by a path, resolve the path; a ref that shares its name is a different
+  object that happens to sound right.
+
+  **Settled afterwards by reading the generator, which is what should have
+  happened first.** `cohort_evidence.py:1287` fingerprints
+  `repo_root / relative`; the package is never imported to locate its own
+  sources. It does resolve by path. The conclusion was right and the reason was
+  invented, and those are different things - a correct answer reached from a
+  fabricated counterfactual will not survive the next question asked of it.
+- **The equivalent defect one layer over is `cwd`, and no import guard can see
+  it.** `cohort_evidence.py:1581` defaults `--repo-root` to `Path("..")`, a
+  *relative* path resolved against the working directory. Run the generator from
+  the wrong tree's `backend/` and it fingerprints that tree, with `sys.path`
+  entirely correct and no import involved. `_source_fingerprints` refuses when a
+  declared source is missing under the given root, which catches a root pointing
+  somewhere unrelated - and catches nothing when the wrong root **also contains
+  the file**, which is exactly the sibling-worktree case and the only one that
+  occurs here. **Generators that fingerprint sources should take an absolute root
+  derived from their own location, or refuse a relative one**; the failure is
+  silent, well-formed, and lands in the artefact everything later is compared
+  against.
 - **A hash comparison is only meaningful if both sides normalise alike, and on
   Windows the default tool does not.** Checking the above, `Get-FileHash` on the
   working copy returned `f2b85835...` against the manifest's `79cd1b93...` and

@@ -38031,3 +38031,108 @@ released.
 - **CI on this head.** The corrected guard compares `recorded / "src" == actual`,
   which is untested on Linux, and it now sits on top of a merge it never ran
   against. Green locally is not the answer to either.
+
+## 2026-09-06 - architect - the same mistake twice in one session, the second time with a hash attached
+
+The entry immediately above contains a false claim, pushed in `c4d65e28`, and I
+found it eleven minutes later. Retracting it here and correcting `gates.md`.
+
+**What I claimed.** That the #171 cohort manifest proved its generator resolves
+sources by path rather than by import, because the two candidate trees differed
+and import resolution "would have recorded"
+`49e4ec50bb5229d6dc196bd7545f846b416ca98f1550b89dceddaf81079b9302` while the
+merged manifest records `79cd1b93...`.
+
+**Why it is false.** The hijacking `.pth` named a **directory**
+(`...\sr2501-bookish-barnacle\backend\src`), so the bytes served were whatever
+sat on disk there. I never hashed that. I hashed the local ref `pr171`, which is
+a stale fetch at `f781a402` - an earlier state of the same pull request. The
+directory is checked out to `sr2501-boxscore-date-plausibility-bound`, which is
+**the #171 branch itself**, carrying the commit `9f075f17` that refreshed the
+manifest. Its on-disk `parsers.py` LF-normalises to `79cd1b93...`: the same value
+the manifest records. Import resolution and path resolution agree there.
+**The counterfactual does not exist, and my test could not have distinguished the
+two.**
+
+**What survives.** The manifest's fingerprint matches `main`'s `parsers.py`, so
+the manifest is correct and #171's merge is sound. That was always the question
+that mattered and it is verified. What I have no evidence for is the mechanism,
+and "resolves by path" should be treated as unknown.
+
+**The part worth keeping.** This is the *same* error as reading
+`direct_url.json` instead of the `.pth`, made twice in one working session - the
+second time in the very commit whose message warns against it. Both times I
+reached for the artefact that was **easy to name** rather than the one **actually
+in play**: `direct_url.json` because pip documents it, `pr171` because it is
+named after the pull request. The failure is not carelessness about hashing, it
+is that a plausible name substituted for an identified object.
+
+And note what made the wrong claim persuasive: a full sha256 in the commit
+message and in a governance file. **Precision is not evidence.** A hex string
+signals that something was measured without saying what was measured, and it
+survives review better than a hedge would, which makes it the more dangerous way
+to be wrong. I would rather this sat in `gates.md` than a clean paragraph.
+
+**Could not verify.**
+
+- **How the manifest generator actually resolves sources.** Genuinely open again,
+  and now harder to settle: the one natural experiment available has been merged
+  away, since the hijack directory and the generating branch are the same tree.
+  Settling it means reading `cohort_evidence.py` for whether it walks the repo
+  root or imports the package - a five-minute job I have not done, and I am
+  recording that rather than inferring the answer a second time.
+- **Whether the earlier entry's other specifics are sound.** It also names blobs
+  `a644fdc8` and `e79ad2aa` and byte counts for both. Those numbers are real, but
+  they describe *committed refs*, not the working trees the imports served, which
+  is the distinction that broke this claim. I have re-checked the one that
+  mattered and not the others.
+- **Whether anything else I pushed this session rests on a ref chosen by name.**
+  Two instances in one session is a pattern, not a slip, and I have not audited
+  the rest of the segment's claims against it.
+
+## 2026-09-06 - architect - settling it by reading the code, and a hazard the guard cannot see
+
+Immediately after recording "how the manifest generator resolves sources" as
+open, I did the five-minute read rather than leaving it. Recording the answer,
+because an open question I could have closed for the cost of one file read is
+not an honest disclosure, it is a deferral wearing one's clothes.
+
+**It resolves by path.** `cohort_evidence.py:1287` computes
+`{relative: source_file_sha256(repo_root / relative) for relative in ...}`, where
+`repo_root` is an explicit argument threaded down from the CLI. The package is
+never imported to locate its own sources. So the conclusion I published earlier
+was **right, and my reason for it was invented** - which is worth separating,
+because a correct conclusion reached from a fabricated counterfactual is not
+knowledge and will not survive the next question asked of it.
+
+**But the hazard is real and lives one layer over.** `repo_root` defaults to
+`Path("..")` (`cohort_evidence.py:1581`) - a *relative* path, resolved against
+the working directory. Run the generator from the wrong tree's `backend/` and it
+fingerprints that tree, with no import involved at all. Two mitigations already
+exist and they are unequal:
+
+- `_source_fingerprints` **refuses** when a declared source is missing under the
+  given root (`MissingFingerprintSource`, lines 1279-1286), rather than recording
+  fewer paths. That catches a root pointing somewhere unrelated.
+- It catches nothing when the wrong root **also contains the file** - which is
+  precisely a sibling worktree, the only case that actually occurs here.
+
+So the residual exposure is: correct `sys.path`, correct import, wrong `cwd`.
+**The import-provenance guard I built today cannot see this**, because it
+measures where the package resolves and this defect never touches resolution. A
+`--repo-root` that defaulted to the git root discovered from the source file, or
+simply refused a relative default, would close it. Not doing that now: it is
+`data-engineer`'s module, the manifest currently on `main` is verified correct,
+and I have already changed my mind twice today about this file's failure mode.
+Filed rather than fixed.
+
+**Could not verify.**
+
+- **Whether any operator has ever run it from the wrong tree.** The manifest
+  records `operator.commands`, but a recorded command string does not carry the
+  `cwd` it ran in, so the artefact cannot answer this about itself - which is
+  itself the argument for making the default absolute.
+- **Whether the other path-fingerprinting generators share the relative default.**
+  I read the one that was in question. `capture_schedule_grid_contract.py` and
+  `capture_openapi.py` are named in `gates.md` as carrying the same blast radius
+  and I have not opened either.
