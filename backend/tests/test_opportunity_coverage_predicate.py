@@ -53,6 +53,15 @@ def _cited_lines_sha256(path: Path, *, start_line: int, end_line: int) -> str:
 
 def _calculable_report(*, unknowns: tuple[int, int, int, int] = (5, 5, 5, 5)) -> dict[str, Any]:
     report = _evidence()
+    report["required_input_artifacts"] = {
+        "roster_source_registry_sha256": "1" * 64,
+        "roster_reconstruction_contract_sha256": "2" * 64,
+        "roster_interval_manifest_sha256": "3" * 64,
+        "schedule_manifest_sha256": "4" * 64,
+        "input_manifest_commit": "5" * 40,
+        "classification_commit": "6" * 40,
+        "cohort_key_sha256": "7" * 64,
+    }
     verified_flags = (
         "roster_source_registry_sha256_is_verified",
         "roster_reconstruction_contract_sha256_is_verified",
@@ -214,6 +223,46 @@ def test_report_shape_and_exact_shares_are_part_of_the_predicate() -> None:
         evaluate_proceed_opportunity_coverage(bool_share)
 
 
+def test_verified_flags_cannot_authorize_null_provenance() -> None:
+    contradictory = _calculable_report()
+    for field in contradictory["required_input_artifacts"]:
+        contradictory["required_input_artifacts"][field] = None
+
+    with pytest.raises(CoveragePredicateNotEvaluable) as exc_info:
+        evaluate_proceed_opportunity_coverage(contradictory)
+
+    for field in contradictory["required_input_artifacts"]:
+        assert any(
+            f"required_input_artifacts.{field} is missing" in reason
+            and "contradicts its bound evidence" in reason
+            for reason in exc_info.value.reasons
+        )
+
+
+@pytest.mark.parametrize("malformed", [True, 123, "A" * 64, "a" * 63])
+def test_verified_hash_must_be_a_lowercase_sha256(malformed: object) -> None:
+    contradictory = _calculable_report()
+    contradictory["required_input_artifacts"]["roster_source_registry_sha256"] = malformed
+
+    with pytest.raises(
+        CoveragePredicateNotEvaluable,
+        match=r"roster_source_registry_sha256.*not a 64-character lowercase hexadecimal SHA-256",
+    ):
+        evaluate_proceed_opportunity_coverage(contradictory)
+
+
+@pytest.mark.parametrize("malformed", [True, 123, "A" * 40, "a" * 39])
+def test_bound_commit_must_be_a_full_lowercase_git_object_id(malformed: object) -> None:
+    contradictory = _calculable_report()
+    contradictory["required_input_artifacts"]["classification_commit"] = malformed
+
+    with pytest.raises(
+        CoveragePredicateNotEvaluable,
+        match=r"classification_commit.*not a 40-character lowercase hexadecimal Git commit",
+    ):
+        evaluate_proceed_opportunity_coverage(contradictory)
+
+
 def test_evidence_citations_are_bound_to_the_exact_committed_files() -> None:
     evidence = _evidence()
 
@@ -231,7 +280,7 @@ def test_evidence_citations_are_bound_to_the_exact_committed_files() -> None:
         assert _lf_sha256(REPO_ROOT / census["path"]) == census["sha256_lf_normalized"]
 
 
-def test_cited_line_digest_is_independent_of_checkout_line_endings(tmp_path: Path) -> None:
+def test_evidence_digests_are_independent_of_checkout_line_endings(tmp_path: Path) -> None:
     lf = tmp_path / "lf.md"
     crlf = tmp_path / "crlf.md"
     text = "before\ncited one\ncited two\nafter\n"
@@ -241,6 +290,7 @@ def test_cited_line_digest_is_independent_of_checkout_line_endings(tmp_path: Pat
     assert _cited_lines_sha256(lf, start_line=2, end_line=3) == _cited_lines_sha256(
         crlf, start_line=2, end_line=3
     )
+    assert _lf_sha256(lf) == _lf_sha256(crlf)
 
 
 def test_cited_line_digest_ignores_appends_after_the_range(tmp_path: Path) -> None:

@@ -52,6 +52,24 @@ _VERIFIED_INPUT_FLAGS: Final = (
     "roster_interval_coverage_complete",
     "schedule_coverage_complete",
 )
+_REQUIRED_SHA256_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "roster_source_registry_sha256": ("roster_source_registry_sha256_is_verified",),
+    "roster_reconstruction_contract_sha256": ("roster_reconstruction_contract_sha256_is_verified",),
+    "roster_interval_manifest_sha256": ("roster_interval_manifest_sha256_is_verified",),
+    "schedule_manifest_sha256": ("schedule_manifest_sha256_is_verified",),
+    "cohort_key_sha256": ("cohort_key_sha256_is_reproduced",),
+}
+_REQUIRED_COMMIT_FIELDS: Final[dict[str, tuple[str, ...]]] = {
+    "input_manifest_commit": (
+        "input_manifest_commit_is_ancestor_of_classification_commit",
+        "classification_started_after_input_manifest_freeze",
+    ),
+    "classification_commit": (
+        "input_manifest_commit_is_ancestor_of_classification_commit",
+        "classification_started_after_input_manifest_freeze",
+    ),
+}
+_LOWER_HEX_DIGITS: Final = frozenset("0123456789abcdef")
 
 
 class CoveragePredicateNotEvaluable(ValueError):
@@ -130,6 +148,7 @@ def _non_evaluable_reasons(
     report: Mapping[str, object], seasons: Mapping[str, object]
 ) -> list[str]:
     reasons: list[str] = []
+    _append_provenance_problems(reasons, report)
     if report.get("roster_interval_coverage_complete") is not True:
         reasons.append("roster interval coverage is incomplete")
 
@@ -156,6 +175,72 @@ def _non_evaluable_reasons(
     if type(total) is int and total == 0:
         reasons.append("zero denominator is vacuous and cannot authorize evaluation")
     return reasons
+
+
+def _append_provenance_problems(reasons: list[str], report: Mapping[str, object]) -> None:
+    value = report.get("required_input_artifacts")
+    if not isinstance(value, Mapping):
+        reasons.append("required_input_artifacts is missing or not an object")
+        return
+    artifacts = cast(Mapping[str, object], value)
+    for field, flags in _REQUIRED_SHA256_FIELDS.items():
+        _append_bound_identifier_problem(
+            reasons,
+            report,
+            artifacts,
+            field=field,
+            expected_length=64,
+            kind="SHA-256",
+            verifying_flags=flags,
+        )
+    for field, flags in _REQUIRED_COMMIT_FIELDS.items():
+        _append_bound_identifier_problem(
+            reasons,
+            report,
+            artifacts,
+            field=field,
+            expected_length=40,
+            kind="Git commit",
+            verifying_flags=flags,
+        )
+
+
+def _append_bound_identifier_problem(
+    reasons: list[str],
+    report: Mapping[str, object],
+    artifacts: Mapping[str, object],
+    *,
+    field: str,
+    expected_length: int,
+    kind: str,
+    verifying_flags: tuple[str, ...],
+) -> None:
+    value = artifacts.get(field)
+    if _is_lower_hex(value, expected_length):
+        return
+
+    path = f"required_input_artifacts.{field}"
+    problem = (
+        "is missing"
+        if value is None
+        else f"is not a {expected_length}-character lowercase hexadecimal {kind}"
+    )
+    asserted_flags = [flag for flag in verifying_flags if report.get(flag) is True]
+    if asserted_flags:
+        reasons.append(
+            f"{', '.join(asserted_flags)} asserted true but {path} {problem}; "
+            "the verification claim contradicts its bound evidence"
+        )
+    else:
+        reasons.append(f"{path} {problem}")
+
+
+def _is_lower_hex(value: object, expected_length: int) -> bool:
+    return (
+        type(value) is str
+        and len(value) == expected_length
+        and all(character in _LOWER_HEX_DIGITS for character in value)
+    )
 
 
 def _append_count_problem(reasons: list[str], value: object, path: str) -> None:
