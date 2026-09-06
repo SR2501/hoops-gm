@@ -818,3 +818,36 @@ form threw on both conditions and returned a count I could stand behind.
 **The general shape: never let the absence of output be the success signal.**
 Prove the instrument ran and saw something before you believe what it did not
 see.
+
+
+### The append-only gate is non-vacuous in exactly one window: after commit, before push
+
+**Recorded 2026-09-06. This closes a previously abstract entry with a concrete
+procedure, discovered by running the gate at the wrong moment twice in a row.**
+
+`scripts/check_append_only.py` compares `docs/handoff.md` at the merge-base
+against the same file at `HEAD`. Both are **committed** blobs. The working tree is
+never consulted. That gives three moments and only one of them tells you anything:
+
+- **Before committing** the gate reports `appended: +0` no matter what is sitting
+  unstaged in the tree. I had just written 4,186 bytes and it printed `+0`,
+  `CONTAINMENT: True`, `OK`. Every field was green and none of them described my
+  change.
+- **After pushing**, `merge-base` and `HEAD` converge on the same commit, so the
+  file is compared to itself and the gate is green for the same empty reason.
+- **After committing and before pushing**, `merge-base` is still `origin/main`
+  while `HEAD` carries the new commit. Re-run in that window the same gate
+  reported `+4186`, `CONTAINMENT: True`, `CR 312 -> 312`, which is a claim about
+  the change and can be false.
+
+**So the sequence is `commit` -> `check_append_only.py` -> `push`, and running it
+anywhere else is theatre.** A green from the other two moments is not weak
+evidence, it is no evidence: the number it prints is `+0` because there is nothing
+in the comparison, and `+0` bytes appended trivially satisfies append-only.
+
+Note the script is honest about a second, separate vacuity in its own negative
+controls - it prints `NEG truncated base: True, and VACUOUS / 200 bytes vs base
+2421278`, telling you that control passes for a trivial size reason rather than
+because containment logic worked. **A tool that labels its own weak checks is
+doing the thing this whole file exists to encourage**; the fix is to keep that
+label visible, not to quietly make the control pass.
