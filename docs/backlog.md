@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**83 done - 0 blocked - 115 pending - 198 total**
+**83 done - 0 blocked - 117 pending - 200 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4974,3 +4974,74 @@ real parse path rather than passing regardless of it. An unrecognised flag
 should exit 2 rather than falling through to real work. A hand-maintained list
 of entry points is the previous shape of this exact failure and must not be
 repeated here.
+
+### `roster-interval-source` - Acquiring an authoritative roster-interval source
+
+- [ ] **pending**
+- **Depends on:** `player-identity`
+
+`participation-opportunity-coverage` cannot compute a denominator, and every
+number downstream of it - `availability-model`, `expected-games`, `zscore-engine`,
+`gscore-engine`, `risk-adjusted-valuation` - is therefore unreachable. This item
+exists to acquire the one missing input, and it is currently the highest-leverage
+unblocked item in this file.
+
+**The gap, stated so it can be disproved.** An opportunity denominator needs, for
+every player and every scheduled game, whether that player was on that roster
+that day. `docs/adapters/nba-official-transactions.md:165-207` records that the
+admitted archives emit **no player-game rows**, carry no structured
+contract-expiration, retirement, suspension, assignment or recall event, and
+carry no effective time - so two moves on one date cannot be ordered. The obvious
+fallback is already disproved in that same file: a six-team 2025-26
+`CommonTeamRoster` probe found Conley's Chicago and Charlotte stints and
+Wiseman's Indiana stint **absent**, because that endpoint returns end-of-season
+membership rather than intervals.
+
+**Acceptance.** A source, or a documented reconstruction across more than one
+source, that answers for a named test set of at least twenty transient stints -
+including the Conley and Wiseman stints above, which are known-absent from the
+disproved fallback and so make the test set hostile rather than flattering - with
+(a) opening-day membership, (b) every effective start and end including contract
+expiration, (c) assignment and recall, (d) suspension, and (e) an ordering rule
+for two moves on one date. Adapter gate: recorded fixture plus contract test,
+live smoke allowed to fail loudly. The output must be a versioned manifest with a
+content hash, because
+`docs/models/participation-opportunity-coverage-preregistration.md` requires that
+manifest to be committed, independently reproduced and ancestral **before** any
+classification runs.
+
+**A negative result closes this item and is not a failure.** If no free source can
+satisfy the five requirements, record that with the evidence and stop - that
+converts an open engineering question into a clean owner decision about paying
+for one. Do not partially satisfy it and report success: a denominator inferred
+from participation silence is precisely what the preregistration forbids, and an
+empty cohort makes its own predicate return PROCEED, which is the strongest
+possible false green.
+
+### `preseason-news-burst-tolerance` - Surviving a news burst on draft day
+
+- [ ] **pending**
+- **Depends on:** `preseason-news-ingest`
+
+The RotoWire NBA RSS feed at `https://www.rotowire.com/rss/news.php?sport=NBA`
+was observed exposing only its **latest two items**. A fixed-window feed polled on
+an interval tolerates at most (window size / poll interval) items before it drops
+the rest, and it drops them **silently and unrecoverably** - the adapter cannot
+know an item existed if it was displaced between two polls, so the loss leaves no
+trace to alert on.
+
+**Why this is draft-day-shaped rather than theoretical.** Per R40 the official NBA
+injury report covers nothing on 18 October, so this feed is the only availability
+news the auction has. News on that day arrives in bursts around lineup and
+designation announcements, which is exactly the arrival pattern a narrow window
+loses - the adapter would be at its least reliable at the single moment it exists
+for.
+
+**Acceptance.** Measure the real window and a real inter-arrival distribution
+rather than assuming two; `docs/adapters/preseason-news.md` should carry the
+observed item count and publication timestamps. Then either raise the poll cadence
+to cover the measured burst rate with margin, or add a second source, or record
+explicitly that the loss is accepted and state its bound. Whichever is chosen, the
+adapter must **detect** displacement rather than absorb it: a monotonic item-id or
+publication-time gap check that fails loudly beats a silently short feed. Adapter
+gate.
