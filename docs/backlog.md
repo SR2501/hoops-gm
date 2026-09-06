@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**83 done - 0 blocked - 114 pending - 197 total**
+**83 done - 0 blocked - 115 pending - 198 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4946,3 +4946,31 @@ believes. It is worse than no check, because it is quoted as evidence.
 files or refuses to report a clean result while they exist; and it asserts on
 the count and domain of what it scanned, so "scanned nothing" can never render
 as "found nothing".
+
+### `cli-entry-point-argv-contract` - Enforcing that every CLI entry point parses arguments before doing real work
+
+- [ ] **pending**
+- **Depends on:** `cli-help-no-side-effects`
+
+`cli-help-no-side-effects` fixed one module (`hoops_gm/__main__.py`). Measured
+on 2026-09-06, **20 modules under `backend/src` define `def main(`, and 19 of
+them remain unaudited** for the same defect class: a `main()` that never
+consults `sys.argv`, so `--help` performs the module's real work instead of
+describing it. This is the same night a second, independent instance of the
+same underlying absence was found in console-safety handling (see
+`cli-console-safety-sweep`) — two unrelated defect classes on the same set of
+entry points, in one night, is why this is a convention rather than a third
+one-off fix. See `docs/governance/OPEN-cli-entry-point-contract.md` for the
+architect's full reasoning on why this is one problem and not two, including
+why it does not yet warrant an ADR.
+
+**Acceptance:** one test that **enumerates** every module exposing `def main(`
+under `backend/src` (so module twenty-one cannot be added unaudited) and
+asserts, per module, that `--help` exits 0, prints usage, and reaches neither
+the network, the settings loader (`.env`, including Fantrax credentials), nor
+logging configuration — mirroring the negative control in
+`backend/tests/test_cli_help.py`, which proves the assertion is exercising the
+real parse path rather than passing regardless of it. An unrecognised flag
+should exit 2 rather than falling through to real work. A hand-maintained list
+of entry points is the previous shape of this exact failure and must not be
+repeated here.
