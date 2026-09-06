@@ -4,6 +4,10 @@
 evidence for the period before the NBA's per-game injury report exists. It does
 not infer an injury status or change a valuation.
 
+Risk R40 makes this adapter load-bearing for the 18 October 2026 auction: the
+official NBA injury report does not exist in the preseason, so this feed is the
+only implemented availability-news substitute on draft day.
+
 Code: `backend/src/hoops_gm/ingest/preseason_news/`
 
 Fixture: `backend/tests/fixtures/rotowire_nba_news.xml.gz`
@@ -22,9 +26,9 @@ RotoWire's `/rss/` page describes its XML feeds as usable in RSS readers and
 personal websites. No account, cookie, API key, paid subscription, browser
 automation, or Fantrax request is involved.
 
-The response observed on 2026-09-06 was HTTP 200 with
-`Content-Type: application/xml`. It was a 1,632-byte RSS 2.0 body containing two
-items, newest first. Each item carried:
+The response observed at `2026-09-06T05:16:04.639291Z` was HTTP 200 with
+`Content-Type: application/xml`. It was a 1,632-byte RSS 2.0 body containing
+two items, newest first. Each item carried:
 
 - a unique `guid` shaped `nba<news id>`;
 - a title shaped `<player name>: <headline>`;
@@ -85,6 +89,12 @@ most players and the existing crosswalk records it. It does **not** establish
 that Fantrax's visible player notes are the same RotoWire text. No Fantrax notes
 payload has been captured, and the adapter makes no such claim.
 
+The join inherits errors in Fantrax's `getPlayerIds.rotowireId` mapping. It also
+cannot resolve a player Fantrax has never listed, including a newly signed
+two-way, hardship, or late-camp player absent when the crosswalk was captured.
+Those cases remain explicit unresolved rows and make the CLI exit 2; they do not
+fall back to a name match.
+
 ---
 
 ## Operator path
@@ -135,7 +145,7 @@ requires its own evidence.
 
 ### Observed window and silent-loss bound
 
-The 2026-09-06 capture exposed **2 items**:
+The capture at `2026-09-06T05:16:04.639291Z` exposed **2 items**:
 
 | Published (source) | Published (UTC) |
 |---|---|
