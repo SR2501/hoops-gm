@@ -80,7 +80,73 @@ hedge in.
    of the four did not discriminate at all. A tie at 8/8 means "not separated by
    this instrument", not "equal".
 
-## What this table is not
+## The review comparison, the only controlled read this project has taken
+
+Every prior comparison here shares a defect: the *inputs differed*. Two runs of the
+same model on the same build task differed 59% on turns and 33% on cost, so
+comparing two models across two different tasks measures noise. Reviews escape
+this. Two reviewers on one frozen diff differ **only** by model, so the experiment
+rides on the review step, never the build step.
+
+**Run 2026-09-06 on PR #166 (`schedule-grid-contract`), identical diff, identical
+prompt, both as `code-review` sub-agents.**
+
+| | `gpt-5.6-sol` | `gpt-6-astra` |
+|---|---|---|
+| Findings | 2 | 2 |
+| Severities | Medium, Medium | Medium, Medium |
+| Found the material bug | **yes** | **yes** |
+| Wall clock | 543 s | **320 s** |
+| Evidence style | reasoned from `dict.__eq__` | **executed a reproduction** |
+
+**Both found the same material bug, independently: Python's `==` conflates scalar
+types, so `True == 1` and `False == 0` leave a wire-type change invisible to a
+contract gate built to catch exactly that.** Neither missed it. They differed only
+in how they reached and dressed it.
+
+- `gpt-5.6-sol` was **broader on the defect**: it cited *both* call sites (the
+  script and the backend test, so a partial fix is visible), and it caught the
+  third confusion `1 == 1.0` that GPT-6 did not mention.
+- `gpt-6-astra` was **stronger on evidence**: it did not argue the bug, it ran it —
+  *"Reproduced without modifying files: the generated value became `True`, the
+  recorded value remained `1`, their documents compared equal, and `main(['--check'])`
+  returned 0."* That is a claim stated so it can be disproved in one command.
+- Their second findings were the **same class, different instantiation** — a
+  handwritten frontend type pinned to one specimen. GPT-6 reached for
+  `game_label` widening to `str | None`; `gpt-5.6-sol` named the actual closed
+  domain (`""`, `"not_offered"`) and proposed an enum manifest, which is the more
+  actionable of the two.
+
+I sized the bug myself rather than accept either report: **16 int and 1 bool field
+in the fixture, 8 of them live today** because their value is exactly `0` or `1`,
+including `periods[0].is_playoff` and `counts[0].games`.
+
+### What this changes
+
+**Stop paying for dual review by default.** Both models found the finding that
+mattered, so one reviewer of either model would have caught it. Dual review bought
+a sharper *description* here, not a caught defect, and description is the cheap
+part. Reserve two reviewers for changes where a miss is expensive and irreversible
+— the write path, anything the owner acts on at the draft — and run one elsewhere.
+
+**This does not rank the models.** One diff, two findings each, complete overlap on
+what mattered. It says the instrument did not separate them on quality, which is
+the same verdict the judgment battery reached at 8/8, reached now by a second and
+independent route. Break the tie on cost and latency, both measured.
+
+### Cost is not attributable, and the instrument is why
+
+I tried to price the two reviews and **could not**. Sub-agent usage rolls up under
+the *parent* session's `session_id` in `assistant_usage_events`, and several agents
+of the same model ran concurrently tonight, so no grouping separates the review
+from the judgment battery sharing its model. The aggregate figures are real but
+answer a different question than the one asked.
+
+Wall clock is trustworthy because the agent runtime reports it per agent: GPT-6 was
+**1.7× faster** on identical input. Cost is not, and is recorded here as unknown
+rather than estimated. **Do not fill this gap by apportioning; measure it by running
+the two arms at different times, alone.** That is the change needed before this
+table can carry a cost column.
 
 **It is not a quality ranking.** All five arms — two fast-tier, one `gpt-5.6-sol`,
 one `claude-opus-4.8`, one `claude-sonnet-5` — scored **6/6 on the core mutation
