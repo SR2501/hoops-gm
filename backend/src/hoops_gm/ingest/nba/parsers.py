@@ -1034,9 +1034,15 @@ def parse_box_score_traditional_v3(
 #:
 #: The qualifier matters: NBA China preseason games have tipped as early as
 #: 7:00am ET, below this floor. This bound is safe only because every current
-#: caller (``backfill.py``, via ``LeagueGameFinder`` scoped to
-#: ``"Regular Season"``/``"Playoffs"``) never reaches a preseason game. Widen
-#: that scope before trusting this bound against preseason box scores.
+#: caller — ``backend/src/hoops_gm/ingest/backfill.py``, one package *above*
+#: this module, not a sibling ``ingest/nba/backfill.py``, which does not exist
+#: — reaches ``LeagueGameFinder`` only with a scope of ``"Regular Season"`` or
+#: ``"Playoffs"``, and so never reaches a preseason game. Two mechanisms there
+#: hold that precondition up, and both are worth checking before relying on
+#: it: the ``--season-type`` argument's ``choices`` tuple, which admits no
+#: third value, and ``_league_game_finder_season_type``, which raises on any
+#: other label rather than falling through to playoffs. Widen that scope
+#: before trusting this bound against preseason box scores.
 _EARLIEST_PLAUSIBLE_TIPOFF_HOUR: Final = 9
 _LATEST_PLAUSIBLE_TIPOFF_HOUR: Final = 23
 
