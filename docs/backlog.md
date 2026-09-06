@@ -6072,3 +6072,25 @@ worth stating plainly that the second failure mode survives the fix.
 **Owner-adjacent, not owner-only.** The condition being unenforceable was not something
 the owner was told when he authorised the arrangement, so he should know. The remedy
 itself is an ordinary engineering choice.
+**The gap is wider than "cannot be recorded", and the reviewed session named the wider
+version.** Nothing forces a reviewer to have executed anything. To a later reader, "I
+verified this independently" and "I read it and agreed" are the same artifact - a
+comment containing assertions. A header convention naming a verdict does not fix that;
+it records that a review was claimed.
+
+**What distinguishes them is cheap, needs no mechanism, and both sides of the #178
+review already did it.** A review that quotes a **re-derived quantity together with the
+method that produced it** can be checked by a third party in ninety seconds; a review
+that asserts cannot. In that exchange: the reviewer re-derived "317 `ADR-\d{3}` mentions
+across 89 `.py` files" from the stated method and got 317 and 89; hashed both blobs and
+found `docs/handoff.md` at 312 CRLF pairs and 2,546,416 bytes, exactly 6,856 more than
+its base; and the reviewed session measured `is_conflict_marker` directly, reporting
+`'=======' -> True` against `'=======\r' -> False`. Every one of those is falsifiable by
+someone who trusts neither party.
+
+**So the done-condition should be a property of the review, not a wrapper around it:** an
+independent review carries at least one quantity the reader can re-derive, with the
+command that produced it. That degrades gracefully, because a review containing no
+re-derivable quantity is visibly a review containing no re-derivable quantity, and no
+check has to be built to notice. It does not solve attribution - GitHub still shows one
+author - but attribution was never the part that mattered; **evidence was.**
