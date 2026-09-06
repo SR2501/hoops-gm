@@ -1383,6 +1383,64 @@ class TestBoxScoreV3:
         with pytest.raises(SourceContractError):
             parse_box_score_summary_v3({"meta": {}})
 
+    def test_a_gameet_disagreeing_with_gametimeutc_is_a_contract_error(self) -> None:
+        """The exact incident this item exists to prevent, reproduced directly.
+
+        Before this check existed, a corrupted ``gameEt`` that still parsed as
+        a well-formed timestamp would be believed outright: the function took
+        it, returned a date, and moved on. That is precisely what happened for
+        real, silently, for every game tipping after 7pm Eastern. Here the
+        payload is otherwise valid and internally well-formed — only
+        ``gameEt`` has been shifted a day off its sibling ``gameTimeUTC`` — so
+        a bound that merely re-parses ``gameEt`` more carefully would still
+        pass this payload. This one does not, because it checks ``gameEt``
+        against ``gameTimeUTC`` rather than trusting either in isolation.
+        """
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        body = payload["boxScoreSummary"]
+        # gameTimeUTC is 2024-12-01T20:30:00Z (Eastern date 2024-12-01, 15:30
+        # local). Shift gameEt one day later while keeping it well-formed.
+        assert body["gameEt"] == "2024-12-01T15:30:00Z"
+        body["gameEt"] = "2024-12-02T15:30:00Z"
+
+        with pytest.raises(SourceContractError, match="gameEt names 2024-12-02"):
+            parse_box_score_summary_v3(payload)
+
+    def test_a_gameet_hour_outside_the_nba_tipoff_window_is_a_contract_error(self) -> None:
+        """The plausibility bound: a fact the payload never states about itself.
+
+        A ``gameEt`` shifted to a 03:xx Eastern hour is a well-formed
+        timestamp naming a real calendar date — nothing about the payload in
+        isolation is malformed. It is implausible only against knowledge the
+        payload does not supply: the NBA has never tipped a game at 3am
+        Eastern. Removing ``gameTimeUTC`` here isolates this from the sibling
+        cross-check above, so this test fails only if the standalone
+        plausibility bound is doing real work.
+        """
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        body = payload["boxScoreSummary"]
+        body["gameEt"] = "2024-12-01T03:15:00Z"
+        del body["gameTimeUTC"]
+
+        with pytest.raises(SourceContractError, match="outside the plausible"):
+            parse_box_score_summary_v3(payload)
+
+    def test_a_gametimeutc_implying_an_implausible_eastern_hour_is_a_contract_error(self) -> None:
+        """The same bound, tripped from the other sibling field.
+
+        ``gameTimeUTC = 2024-12-02T07:00:00Z`` converts to 02:00 Eastern —
+        outside the plausible tip-off window — while remaining a well-formed
+        instant. ``gameEt`` is removed so this cannot be caught by the sibling
+        cross-check instead; it must be the plausibility bound doing the work.
+        """
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        body = payload["boxScoreSummary"]
+        del body["gameEt"]
+        body["gameTimeUTC"] = "2024-12-02T07:00:00Z"
+
+        with pytest.raises(SourceContractError, match="outside the plausible"):
+            parse_box_score_summary_v3(payload)
+
 
 # ==========================================================================
 # The fixtures themselves
