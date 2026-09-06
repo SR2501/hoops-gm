@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**83 done - 0 blocked - 118 pending - 201 total**
+**84 done - 0 blocked - 119 pending - 203 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -3672,7 +3672,7 @@ Three traps in it, all of which produced a wrong answer once. A file **added** i
 
 ### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `schedule-grid-early`, `schedule-grid-ui`
 
 **Precondition for the next frontend increment against this API**, not an
@@ -5076,3 +5076,51 @@ establish whether the main/PR duration gap is contention, cache behaviour, or a
 suite that grew when four PRs merged; a job that has quietly doubled in cost is a
 different problem from one that is merely unbounded, and the timeout must not be
 set so loosely that it hides the second. Code gate.
+
+### `schedule-contract-live-response` - Capture the schedule-grid specimen from a live response, not the model
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-contract-artefact`
+
+`scripts/capture_schedule_grid_contract.py` builds its specimen by constructing a
+`ScheduleGridResponse` directly, then serialising it. So the artefact proves the
+**model** has not drifted. It cannot prove the **response** has not drifted, because
+nothing between model construction and the wire is exercised: a handler that adds,
+drops or rewrites a field after constructing the model, a middleware that re-encodes
+the body, or a custom JSON encoder would all leave the specimen green while the
+browser receives something else.
+
+This is the gap the artefact was built to close, narrowed by one layer. The frontend
+test loads the same file the backend test compares, so both sides agree with each
+other and neither has spoken to the server.
+
+**Acceptance.** Capture the specimen from an actual HTTP response through the test
+client rather than from the model, and assert the two agree - the model-derived and
+response-derived documents should be identical today, so the initial diff is empty and
+the check is cheap. If they are *not* identical today, that difference is the finding
+and it should be reported before anything is changed to make them match. Code gate.
+
+### `schedule-contract-domain-manifest` - A single specimen cannot see a widened domain
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-contract-artefact`
+
+`_strict_equal` compares one recorded document against one generated document, so it
+catches a changed **value type** but is blind to a changed **allowed domain**. Two
+concrete cases, both disclosed by the lane that built it: widening a field from `str`
+to `str | None` while the specimen's chosen value stays a `str`, and adding a new
+member to an enum that the specimen does not happen to contain. Both are real contract
+changes that break a consumer, and both compare green forever.
+
+Related and smaller: object key order is deliberately treated as cosmetic, which is
+correct for JSON semantics, but it means a hand-edited reordering of
+`frontend/src/test/fixtures/schedule-grid.contract.json` compares green while a later
+`--write` produces a spurious diff. The script is the only supported producer; nothing
+mechanically enforces that.
+
+**Acceptance.** Emit a companion manifest recording each leaf's declared type and,
+where the annotation is an enum or union, its full member set - derived from the
+Pydantic model rather than from the specimen's values, since the point is to describe
+what is *allowed* rather than what happened to be chosen. Compare that manifest in CI
+alongside the specimen. Decide explicitly whether the fixture should be made read-only
+or carry a generated-file header; record the decision either way. Code gate.

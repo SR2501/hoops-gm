@@ -35994,3 +35994,46 @@ forms, a function the script already has.
   seen the evidence. I have not verified lane 2's or lane 1's diffs at all. The
   `b7ffd128` zero-job cancellation is still unexplained and I have stopped chasing
   it.
+
+## 2026-09-06 - backend - Schedule-grid cross-boundary contract artefact
+
+**Changed:** Added `scripts/capture_schedule_grid_contract.py`, which constructs and
+serialises a real `ScheduleGridResponse` into
+`frontend/src/test/fixtures/schedule-grid.contract.json`; backend tests compare that
+committed specimen to the current Pydantic model with recursive type-strict JSON
+equality, while `frontend/src/test/scheduleGridContract.test.ts` loads the same
+artefact through exact runtime key validation and bidirectional TypeScript contract
+equality. The existing 630-cell hand recording remains behaviour evidence rather than
+the drift boundary. Narrowed pending-game label types from nullable strings to the
+backend's actual non-null string contract and retained empty-string missing-label
+rendering.
+
+**Now true:** CI fails when schedule-grid fields are added, removed, renamed,
+structurally moved, or change scalar type - even Python-equivalent `false` to `0` and
+`1` to `1.0` changes - without failing for whitespace or object-key reordering.
+Mutation evidence: removing `teams[].name` made both the backend contract test and the
+frontend type-check red; changing the specimen's `is_playoff` from `False` to
+equal-valued `0` makes `--check` exit 1, with a negative control proving ordinary dict
+equality remains green. Enumerated by the lane: 16 int-valued leaves and 1 bool-valued
+leaf, of which 7 ints hold 0/1, giving 8 bool/int-equivalent leaves; all 16 ints were
+additionally vulnerable to int-to-equal-valued-float under ordinary dict equality.
+`_strict_equal` closes both classes. Exact head `1eb3ea9a` passed ruff check and
+format (366 files), strict mypy (253 source files), the full backend suite with this
+branch's source pinned, frontend lint and type-check, all 477 frontend tests, and
+every hosted check. Merged as `ba3fc3a7`.
+
+**Could not verify:** The specimen is generated from the response model, not a live
+HTTP response, so it cannot detect a handler or middleware reshaping the body after
+model construction. A single specimen also cannot detect an allowed-domain widening
+whose chosen value does not change (`str` to `str | None`) or a newly allowed enum
+member absent from the specimen. Key order is intentionally ignored as
+non-contractual; a human reorder compares green but a later `--write` may create a
+cosmetic diff. Local Postgres was not run; hosted PostgreSQL CI passed on `1eb3ea9a`.
+
+**Coordinator note.** I reviewed this from the diff and was wrong about the fix. I
+proposed reusing `_serialized`; the lane wrote an explicit recursive `_strict_equal`
+with a `type()` identity check instead. That is stronger, and the reason is worth
+keeping: serialisation detects type drift only as an accident of how `json.dumps`
+renders `true` versus `1`, so it would silently stop working for any type pair that
+renders identically. The lane's version states the invariant directly. Both follow-ups
+below come from its own disclosure rather than from review.
