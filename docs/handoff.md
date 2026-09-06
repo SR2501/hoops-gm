@@ -38548,3 +38548,46 @@ reading is that the observed rate is a lower bound. Whether `02f527e9` is the on
 commit on `main` lacking an attributable run; I checked it specifically because I
 pushed it, and did not audit the history. The CI conclusion for the head this
 lands on, which will queue behind whatever is running.
+
+
+## 2026-09-06 - architect (delivery) - correction: the lost CI signal renders as a green tick
+
+**Amends the Code-gate bullet I committed in `5d2a80f5`, twenty minutes earlier.**
+The bullet said commits can reach `main` with no CI record of their own. True, and
+too weak. Checking what a reader actually sees turned up the sharper fact.
+
+`gh api repos/SR2501/hoops-gm/commits/02f527e9/check-runs` returns **three check
+runs, all successful** - every one a CodeQL `Analyze` job. The cancelled CI run
+started **zero jobs**, and check runs are created per job, so it left **no trace on
+the commit at all**: no red, no skipped entry, nothing. The same query on
+`5bf3ffa7`, whose CI did run, returns **fourteen**. Both render as green. They
+differ only in a count nobody reads.
+
+**The signal is not merely missing; it is disguised as success.** That is a
+different and worse claim than the one I committed, and I only found it because
+the push output showed a `completed success` run against `02f527e9` and
+contradicted my own ruling. I went to check whether I had just written something
+false into a governance file. I had written something true and incomplete.
+
+**Two corrections to my earlier records, both mine:**
+
+1. **CodeQL exists and I said it did not.** A previous note of mine stated that
+   only two workflow files exist and there is no scheduled workflow. CodeQL here is
+   **default setup**, not a file - `gh api .../code-scanning/default-setup` reports
+   `configured`, on push and weekly. **Listing `.github/workflows/` under-counts
+   what runs**, which is exactly the failure mode of confirming a claim with the
+   tool that cannot see the counter-example. It also strengthens the contention
+   argument I used to reject option (b): the pool already carries two workflows per
+   push, not one.
+2. **My ruling named a flip condition with no way to observe it.** "The tip of
+   `main` is ever found without an attributable successful run" is decoration if
+   nobody can tell. The observation is cheap and now recorded in `gates.md`:
+   compare check-run names on the tip against the CI job set. CodeQL alone is
+   three; a real CI run is fourteen.
+
+**Could not verify.** Whether the three earlier commits the item says lost their
+runs also render green - I checked `02f527e9` because I pushed it, and did not
+audit the history; the mechanism says they would. Whether GitHub ever emits a
+check run for a pending-cancelled workflow under other conditions. Whether
+`copilot-setup-steps.yml` produces runs at all - it appeared in no listing here
+and I did not read its triggers.
