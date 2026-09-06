@@ -537,18 +537,44 @@ failure it produces looks like a real bug in your own change.
   environments are the structural fix and are not in place, which is why this trap has
   now recurred often enough to be documented three times and fixed once.
 - **A guard now exists, and its worth is entirely local.**
-  `backend/tests/test_import_provenance.py` reads the editable install's
-  `direct_url.json` and fails when it names a tree other than the one the test file
-  lives in. It deliberately does *not* check `hoops_gm.__file__`: `PYTHONPATH` masks
-  the hijack at import time, so a check on the resolved module passes cleanly while
-  the mis-pointed install waits underneath for the first command run without it - a
-  guard that passes because of how you invoked it is the can't-fail shape this file
-  already documents twice. Note carefully what it does **not** change: **CI still
-  cannot see the hijack**, and the new test is green there whatever the developer's
-  machine looks like, because CI installs from the checkout it is testing. It is a
-  test whose entire value is realised outside CI, which is unusual enough to say out
-  loud. Per-worktree virtual environments remain the structural fix; this only makes
-  the class **loud** instead of silent, and four mutants confirm it can fail.
+  `backend/tests/test_import_provenance.py` resolves the package **in a subprocess
+  with `PYTHONPATH` stripped** and fails when the answer is not the tree the test
+  file lives in. Both halves matter: a subprocess sees what a fresh command sees
+  rather than what an already-configured interpreter has, and stripping
+  `PYTHONPATH` removes the mask that hides the hijack from the very tests meant to
+  catch it - our own invocation pins it, so an in-process check passes through the
+  path entry while the mis-pointed install waits underneath. Proved against the
+  real condition rather than a simulated one: repointing the `.pth` at the sibling
+  worktree makes it fire and name both trees, and restores byte-identical. Six
+  mutants, six caught. What it does **not** change: **CI still cannot see the
+  hijack**, and the test is green there whatever the developer's machine looks
+  like, because CI installs from the checkout it is testing - a test whose entire
+  value is realised outside CI, which is unusual enough to say out loud.
+  Per-worktree virtual environments remain the structural fix; this only makes the
+  class **loud** instead of silent.
+- **The first version of that guard read `direct_url.json`, and was wrong within
+  the hour.** It is recorded here rather than quietly rewritten, because the
+  mistake is more instructive than the fix. `direct_url.json` is pip's record of
+  the last install's *intent*; the file that actually puts a directory on
+  `sys.path` is `_editable_impl_hoops_gm_backend.pth`. **They can disagree, and
+  here they did**: the metadata named the main checkout while the `.pth` named
+  `sr2501-bookish-barnacle`, an unmerged branch, because a stale `.pth` outlived a
+  later reinstall. So the main checkout was executing another branch's bytes while
+  a brand-new test asserting import provenance sat green beside it. This is
+  `AGENTS.md`'s *validation of form cannot catch errors of meaning* with a
+  different field: well-formed, accurate about what pip was told, and not an answer
+  to the question asked. **A declaration is not an effect.** Where a mechanism has
+  a record and a runtime artefact, test the artefact, and if you test the record,
+  test that the two agree - the disagreement is the bug's actual signature.
+- **The consequence reached a live session, and the correction was worse than the
+  error.** Warning the session regenerating #171's manifest, I offered
+  `hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` as the content probe, from
+  this file. It cannot discriminate here: the symbol is present on *both* candidate
+  trees, since both descend from the same #171 work. The probe would have returned
+  `True` and told a session running foreign bytes that it was fine. **A content
+  check is only decisive against the candidates that are actually in play**, and
+  the ones in play are whichever worktrees exist today, not the two the original
+  incident happened to involve.
 
 
 ### Ahead-of-origin is not a measure of unmerged work

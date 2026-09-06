@@ -37872,3 +37872,100 @@ Full suite green, `ruff` clean, `mypy` Success on 270 source files.
   condition matters. Only that session can check it from inside its worktree, and
   I have deliberately not gone and looked, because two agents fixing the same
   worktree's import path at once is how it gets repointed twice.
+
+## 2026-09-06 - architect - retracting the import guard I shipped an hour earlier
+
+The entry above this one is wrong in its central design claim, and the machine
+disproved it within the hour. Retracting it properly, because a wrong entry about
+a *guard* is worse than no guard: it is a reason not to look again.
+
+**The claim being retracted.** I wrote that the guard "reads the install's own
+`direct_url.json`, which `PYTHONPATH` cannot mask," and offered that as the
+design decision worth recording. It is true that `PYTHONPATH` cannot mask
+`direct_url.json`. It is irrelevant, because `direct_url.json` is not what puts a
+directory on `sys.path`. It is pip's record of **the last install's intent**. The
+file that decides the outcome is `_editable_impl_hoops_gm_backend.pth`.
+
+**They can disagree, and they did.** Fifteen minutes after pushing the guard I
+opened the `sr2501-symmetrical-lamp` worktree to check the #171 hazard from
+inside it, and `import hoops_gm` resolved to neither that worktree nor main: it
+resolved to **`sr2501-bookish-barnacle`**, the PR #171 lane, an unmerged branch
+whose CI is red. Then from **this checkout**, `PYTHONPATH` unset, the same
+answer. The `.pth` named bookish-barnacle; `direct_url.json` named main; a stale
+`.pth` had outlived a later reinstall. **`main` was executing an unmerged
+branch's bytes**, and the test I had just written to detect exactly that was
+green throughout, because it asked pip what it had been told rather than asking
+Python what it does.
+
+**So the previous entry's finding was wrong in its direction, not only its
+mechanism.** It reported all five worktrees mis-pointed *at main*. They were
+mis-pointed at bookish-barnacle, and so was main - which the entry does not
+mention, because reading only the metadata makes the main checkout the one place
+that cannot appear in the answer.
+
+This is `AGENTS.md`'s own rule - *validation of form cannot catch errors of
+meaning* - committed by the person who had been quoting it all week. The record
+was well-formed, accurate about what pip was told, and not an answer to the
+question. **A declaration is not an effect.**
+
+**Mutation testing passed the wrong guard 4/4.** Worth stating flatly, because I
+have been treating a clean mutation score as strong evidence. Every mutant
+attacked the parsing and the comparison; none could attack the *choice of
+signal*, because the harness mutates the code you wrote and has nothing to say
+about the code you should have written instead. It validates the check. It is
+silent on whether you checked the right thing.
+
+**What replaced it.** The guard now resolves the package in a **subprocess with
+`PYTHONPATH` stripped** - a fresh interpreter, not this configured one - and
+treats that measured answer as authoritative. `direct_url.json` is still read,
+demoted to asserting that intent and effect *agree*, since the disagreement is
+the bug's actual signature. Proved against the real condition rather than a
+simulated one: the harness writes the foreign path back into the `.pth`, confirms
+the test fires and names both trees, restores byte-identical, and re-asserts
+green. Six mutants, six caught, after two survivors forced a decoy importable
+package into the `PYTHONPATH` fixture and an extracted
+`disagreement_message()`.
+
+**The machine is repaired**, verified by content rather than by metadata: a
+branch-only symbol in `parsers.py` now reports `False` from main. Note the repair
+was `pip install -e` **from main**, and that is the only safe place to run it -
+the install is a singleton in user site-packages, so running it from a worktree
+repoints every checkout on the machine, including sessions executing at that
+moment.
+
+**I sent another session a probe that could not have found this.** Warning the
+#171 manifest session, I gave it
+`hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")`, lifted from `gates.md`:
+`True` on the branch, `False` on main. But `sr2501-symmetrical-lamp` and
+`sr2501-bookish-barnacle` both descend from the same #171 work, so **both carry
+the symbol**. The probe returns `True` under a hijack and `True` when clean. It
+would have returned "you are fine" to a session running foreign bytes, over my
+name. Correction sent. **A content probe is only decisive against the candidates
+actually in play**, and those are whichever worktrees exist today, not the two in
+the original incident.
+
+Full suite green at the corrected guard, `ruff` clean, `mypy` Success on 270
+source files. `gates.md` corrected in the same commit, with the v1 mistake kept
+as its own bullet rather than quietly overwritten.
+
+**Could not verify.**
+
+- **How long main was running bookish-barnacle's bytes, or what it produced while
+  it was.** The `.pth` carries no history and I did not think to record its
+  mtime before repairing it, which was careless - that timestamp was the only
+  cheap bound on the blast radius and I destroyed it. Any locally-run result
+  between the #171 lane's install and this repair is suspect and I cannot say
+  which. CI is unaffected; it installs from the checkout it tests.
+- **Whether the corrected `recorded / "src" == actual` comparison holds on
+  Linux.** v1's equivalent passed CI, but v2 compares differently, and the paths
+  it compares are constructed by pip. This is the commit's main risk and CI on
+  the new head is the test of it.
+- **Whether the #171 session's manifest was actually affected.** Still open from
+  the previous entry, and now with a worse prior: the condition was real on this
+  machine, not hypothetical, and the probe I sent could not have detected it.
+  Only that session can answer whether its tooling resolves sources by import or
+  by path.
+- **Whether any other machine-global singleton is in the same state.** I checked
+  the one that bit me. `pip`'s editable install is unlikely to be the only
+  artefact on this machine where a record and a runtime effect can drift apart,
+  and I have no inventory of the others.
