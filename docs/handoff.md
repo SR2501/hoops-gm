@@ -38402,3 +38402,149 @@ resolves and that the spine edges are deliberate, not that every edge in all 218
 items is still wanted. Whether `contingent-value` (10 items) has the over-tight
 shape; I did not read it. Why the credential manager began answering differently
 mid-session.
+
+## 2026-09-06 - architect (delivery) - the dependency graph overstates readiness exactly where the leverage is
+
+**What I computed.** For each of the 55 dependency-READY pending items, how many
+other pending items would become READY if it were finished (immediate), and how
+many would have their blocker set shrink at all (downstream). Script kept at
+`ready-leverage.py` in the session artifacts; it re-derives from `docs/backlog.md`
+and takes seconds.
+
+| READY item | immediate | downstream | genuinely actionable? |
+|---|---|---|---|
+| `preseason-news-ingest` | 3 | 4 | **yes** |
+| `participation-opportunity-coverage` | 2 | **49** | no - evidence gap |
+| `fantrax-auction-capture` | 1 | 21 | no - owner, live room |
+| `mock-ingestion` | 1 | 14 | no - owner-deferred to 13-20 Sept |
+| `blind-mocks` | 0 | 12 | no - owner-deferred to 13-20 Sept |
+| `contingent-value` | 0 | 10 | yes |
+
+**The finding is the pattern, not the table.** Four of the five highest-leverage
+items are READY *in the graph* and blocked *in reality* - by an evidence gap that
+no dependency edge expresses, by an owner action, and by an owner-directed hold.
+**Dependency-readiness is necessary and not sufficient**, and it fails hardest on
+precisely the items whose completion would matter most. Anyone planning a work
+period from the READY count alone will pick up something that cannot move, and
+the count is a derived number that looks authoritative.
+
+**Two consequences worth acting on.** `preseason-news-ingest` is the only item
+that is both high-leverage and genuinely actionable, and it is separately the
+**only deadline-bound item in the set** - R40 records that the official injury
+report covers nothing on 18 October, and the rehearsal window opens 5 October, so
+it must work *before* that window rather than during it. It was lane 1 of the
+overnight fan-out and was still building at 06:00. It is the clearest candidate
+for the next unit of work. Separately, **38 of the 55 READY items unblock nothing
+at all** - most available work is terminal, which is fine, but it means the
+backlog's ready count should not be read as momentum.
+
+**A belief of mine about CI was wrong, and it had been shaping decisions.** I have
+been recording that pushing twice in quick succession cancels the earlier run.
+`.github/workflows/ci.yml:39-41` says:
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+**On `main` that expression is false.** Runs on main queue; they do not cancel.
+Cancellation applies to branches. Observed today and consistent with that config:
+`5bf3ffa7` stayed `in_progress` while `02f527e9` sat pending and was then
+cancelled when `0ac1a681` was pushed - a newly queued run superseding an
+already-pending one, while the running one continued untouched. *(The config is
+read; the supersede-the-pending-run rule is inference consistent with the
+observation, not something I verified against GitHub's documentation.)*
+
+**Why it mattered.** A previous entry today records deliberately holding a push so
+an in-progress run could produce its first Linux result. On main that run was
+never at risk, so the hold bought nothing. The cost was small; the shape is the
+familiar one - a mechanism believed rather than exercised, then used to justify a
+decision. It also explains a symptom that reads as a hang: a run can sit `pending`
+for a quarter of an hour on main simply because an older commit's run is still
+going, which is queueing working correctly.
+
+**Could not verify.** Whether `contingent-value` - READY, 10 downstream, and its
+one dependency `absence-splits` is done - is genuinely startable or blocked on
+evidence the way the coverage item is; I read its description, which is a
+one-line summary, not its constraints. Whether `preseason-news-ingest` is closer
+to done than the backlog implies, given lane 1 was mid-build; I did not inspect
+that worktree. GitHub's documented concurrency semantics, as above.
+
+
+## 2026-09-06 - architect (delivery) - the CI-signal ruling, and the third time today the answer was already written down
+
+**Made the ruling `ci-main-signal-lost-in-queue` asked an architect for**, wrote a
+test that pins the behaviour, and stated the consequence where gate guarantees are
+claimed. Backlog item updated in place; `docs/governance/gates.md` Code gate gains
+one bullet; `backend/tests/test_ci_workflow.py` gains one test.
+
+**The ruling: accept per-commit signal loss on `main`, state it plainly, pin the
+rule.** The item offered three options. I rejected (b) - drop the concurrency
+group so every push to main gets its own run - on **contention, not cost**, and
+the distinction matters because the item argued the cost side and the item is
+wrong there. The repository is **public** (`gh repo view --json isPrivate` returns
+`false`), so Actions minutes on standard runners are free; "paying the duplicate
+compute" is not a real objection here. The real objection is runner saturation,
+and it is not hypothetical: `coordinator-register.md:2501` records a run evicted
+after sixteen minutes queued with ten jobs never assigned, which surfaces as a red
+that no diff explains. Multiplying main's demand by the push rate buys more of
+that. **The flip condition, so the decision can be revisited without re-arguing
+it: the tip of `main` is ever found without an attributable successful run.** That
+is the failure the concurrency group is currently trading against, and if it ever
+happens the trade has stopped paying.
+
+**What the ruling costs, said plainly:** bisect over CI history. "CI was green on
+commit X" is a sentence this repository cannot support for an arbitrary X - only
+for the tip. That is cheap for one developer and would be expensive for a team.
+
+**I mutation-checked the test before believing it**, per the Code gate's own rule
+that a guard needs a check reproducing what it guards against. Control passes on
+the real config; five plausible one-line edits - bare `true`, bare `false`, a
+group that is not per-ref, the block deleted, and an expression that stops
+distinguishing main - are all caught. 5/5. The harness is
+`mutate-concurrency-test.py` in the session artifacts. Without it the test proves
+only that PyYAML can read a file.
+
+### Correction to the entry immediately above this one
+
+**That entry presents the concurrency semantics as something I worked out from the
+config. `docs/backlog.md:5368-5370` already stated it** - in the very item I was
+ruling on, which I had already read once. I found the overlap by grepping *after*
+writing the entry up. Handoff is append-only, so this is a correction rather than
+an edit, and the entry above stands with this attached to it.
+
+The hedge in that entry - that the supersede-the-pending-run rule is inference
+rather than something checked against GitHub's documentation - remains accurate
+and is not what is being corrected.
+
+**This is the third time today the corrective for a claim I was about to make was
+already in this repository**, and the three have addresses:
+
+1. The availability-source claim - corrective at `docs/handoff.md:37185`, written
+   the same day. I appended fifteen entries past it without seeing it, and a
+   **peer session** caught it rather than me.
+2. The prohibition on using `source_games_played_assumptions` as a durability
+   number - `api/routes/projections.py:258-281`, which documents the mechanism
+   more precisely than my draft did and carries an amendment narrowing an earlier
+   overstatement of itself. **Caught by reading the file first.**
+3. This one - `docs/backlog.md:5368-5370`. Caught by grepping, after writing.
+
+**This is a discoverability problem, not a knowledge problem.** The repository
+already contained all three answers; the entire cost was in not finding them. The
+habit that caught two of the three is twenty seconds long - grep the repository
+for the claim before writing it up, not after - and the one that got through is
+the one where I did neither. I am not proposing a gate for this. A gate would run
+after the writing, and the whole value is in the twenty seconds before it.
+
+Worth noting what the sharpest line in the item being ruled on says, because it is
+the same shape: *"this behaviour was believed to be the opposite of what it is,
+and nothing detected that."* The test now detects it. Nothing detects the general
+case, and I do not think anything can.
+
+**Could not verify.** Whether GitHub's documented behaviour matches the observed
+supersede-the-pending-run rule; I have the observation and the config, not the
+documentation. Whether the three instances above are the only ones today - they
+are the three I noticed, and the first was noticed by someone else, so the honest
+reading is that the observed rate is a lower bound. Whether `02f527e9` is the only
+commit on `main` lacking an attributable run; I checked it specifically because I
+pushed it, and did not audit the history. The CI conclusion for the head this
+lands on, which will queue behind whatever is running.

@@ -5389,6 +5389,50 @@ gap cannot persist unnoticed. Whichever is chosen, assert it in
 `backend/tests/test_ci_workflow.py` - this behaviour was believed to be the
 opposite of what it is, and nothing detected that. Code gate.
 
+
+**Architect ruling 2026-09-06: (a), stated plainly, with the behaviour pinned by a
+test - and (c) named with its trigger rather than built now.**
+
+*The option costs are corrected first, because the choice should not turn on a
+wrong one.* This repository is **public** - `gh repo view` reports
+`"visibility":"PUBLIC"` - and GitHub Actions on standard runners is free for
+public repositories, so **(b)'s "paying the duplicate compute" is not a money cost
+here.** Its real cost is runner *contention*, and that is not hypothetical:
+`docs/governance/coordinator-register.md:2501` records a run evicted from a
+saturated pool after sixteen minutes queued, ten jobs never assigned a runner,
+producing an **evidence-free red**. Dropping the concurrency group multiplies
+main's runner demand by the push rate and makes that observed failure more likely.
+**(b) is rejected on contention. The item's own cost framing would have rejected
+it for the wrong reason.**
+
+**(c) is right about the risk and disproportionate to it today.** No scheduled
+workflow exists - `.github/workflows` holds only `ci.yml` and
+`copilot-setup-steps.yml` - so (c) means a new workflow, a schedule and a new
+failure path to maintain, for one developer 41 days from a fixed auction. What (c)
+actually buys is detection of the case where **the tip's own run is cancelled or
+evicted and nobody notices**. Under queueing the newest pending run survives, so
+the tip is verified in the ordinary case; what is lost is per-commit attribution,
+which matters for bisect and matters little here.
+
+**So: (a), and it must be stated rather than assumed.** Only the **tip** of main is
+verified. A green CI result is not a claim about any individual commit, and today
+supplies its own example: `02f527e9` reached main and its run was cancelled while
+pending, never starting a job, so that commit carries no CI record of its own.
+Anyone reasoning from *"commit X was green"* is reasoning from something this
+repository does not produce.
+
+**Pin the behaviour, because this item's sharpest sentence is that nobody detected
+the inversion.** The assertion in `backend/tests/test_ci_workflow.py` should read
+`ci.yml` and require both that the concurrency group exists **and** that
+`cancel-in-progress` is the ref-conditional expression rather than a bare `true`
+or `false`. That is what makes a silent flip in *either* direction fail loudly,
+which is the reason this item exists. Code gate.
+
+**The condition that flips this to (c):** the tip of main is ever found without a
+successful run attributable to it - that is, the failure (c) exists to catch
+actually happens once. Then build the scheduled re-verification and do not re-argue
+the cost.
+
 ### `append-only-guard-is-not-enforced` - The append-only contract is enforced by nobody
 
 - [ ] **pending**

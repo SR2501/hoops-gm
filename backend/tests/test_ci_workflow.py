@@ -168,6 +168,51 @@ def test_the_backlog_graph_job_writes_to_the_step_summary(jobs: dict[str, Any]) 
     assert "GITHUB_STEP_SUMMARY" in commands
 
 
+def test_the_main_concurrency_rule_cannot_invert_unnoticed(
+    workflow: dict[Any, Any],
+) -> None:
+    """Main queues, branches cancel — and this was believed to be the opposite.
+
+    ``ci-main-signal-lost-in-queue`` records three ``push``-to-main runs
+    concluding ``cancelled`` having never started a job, and its sharpest
+    sentence is that the behaviour "was believed to be the opposite of what it
+    is, and nothing detected that". Nothing still would. Both ways of breaking
+    it are one-line edits that leave CI green: a bare ``true`` cancels
+    superseded main runs mid-flight, and a bare ``false`` drops branch
+    cancellation and multiplies the runner contention already recorded in
+    ``coordinator-register.md``.
+
+    The architect ruling of 2026-09-06 accepted queue-on-main deliberately —
+    only the *tip* of main is verified, and a green result is not a claim about
+    any individual commit. That makes this a decision rather than an accident,
+    and a decision is the kind of thing that should fail loudly when someone
+    quietly reverses it.
+    """
+    concurrency = workflow.get("concurrency")
+    assert isinstance(concurrency, dict), (
+        "ci.yml must declare a concurrency group; without one every push to "
+        "main starts its own parallel run and the observed runner saturation "
+        "gets worse, not better"
+    )
+
+    group = str(concurrency.get("group", ""))
+    assert "github.ref" in group, (
+        f"the concurrency group must be per-ref, or every branch serialises "
+        f"behind main; found {group!r}"
+    )
+
+    cancel = concurrency.get("cancel-in-progress")
+    assert isinstance(cancel, str), (
+        "cancel-in-progress must be the ref-conditional expression, not a bare "
+        f"boolean; found {cancel!r}. A bare true cancels in-flight main runs, a "
+        "bare false lets branch runs pile up, and both read as harmless."
+    )
+    assert "github.ref" in cancel and "refs/heads/main" in cancel, (
+        "cancel-in-progress must distinguish main from branches, so that main "
+        f"queues and branches cancel; found {cancel!r}"
+    )
+
+
 # --- `scripts/` coverage --------------------------------------------------
 #
 # `scripts/` holds the tools this project uses to catch its own defects, and
