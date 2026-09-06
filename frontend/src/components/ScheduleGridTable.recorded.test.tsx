@@ -5,8 +5,8 @@
  * interfaces, which means it can only ever prove the code agrees with itself.
  * `schedule-grid-current.recorded.json` is a real 200 captured from the running
  * FastAPI service against the seeded demo database — 30 teams, 21 periods, 630
- * dense counts — so this file is the only place the frontend's assumptions meet
- * something the backend actually produced.
+ * dense counts. It remains behavior evidence; the smaller backend-generated
+ * `schedule-grid.contract.json` is the CI drift boundary for field shape.
  *
  * Re-captured for ADR-013, and the diff against the previous recording is the
  * evidence that only what ADR-013 moved has moved: teams, periods, all 630

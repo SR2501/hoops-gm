@@ -192,11 +192,11 @@ export interface SchedulePendingGame {
    */
   game_date: string | null
   /** e.g. "Emirates NBA Cup". */
-  game_label: string | null
+  game_label: string
   /** e.g. "Quarterfinal". */
-  game_sub_label: string | null
+  game_sub_label: string
   /** e.g. "in-season-knockout". */
-  game_subtype: string | null
+  game_subtype: string
   /** Empty string when `game_date` is present. See `DATE_ABSENCE_REASONS`. */
   date_absence_reason: string
 }

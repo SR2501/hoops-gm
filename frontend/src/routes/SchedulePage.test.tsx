@@ -1101,7 +1101,7 @@ describe('a season the source has not finished scheduling', () => {
     mockFetch({
       [GRID_PATH]: {
         body: withPendingGames([
-          pendingGame({ game_label: null, game_sub_label: null, game_subtype: null }),
+          pendingGame({ game_label: '', game_sub_label: '', game_subtype: '' }),
         ]),
       },
       '/health': { body: HEALTH },
