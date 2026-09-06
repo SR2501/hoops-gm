@@ -100,6 +100,33 @@ presented as pre-registered.
 - [`injury-status-conversion-preregistration.md`](injury-status-conversion-preregistration.md)
   — v2, frozen 2026-08-21. No model fitted; records that the committed
   2025-12-08..2026-01-04 cohort cannot satisfy the activation rule on arithmetic.
+- [`availability-model-preregistration-v1-PROPOSED.md`](availability-model-preregistration-v1-PROPOSED.md)
+  — v1. **Status: Accepted**, 2026-09-01 by the owner (*"Yes, lock those rules"*),
+  binding the exact protocol at PR #141 head `8f6514f0`. This is the controlling
+  protocol for the availability model. Acceptance left `FIT_VETOED_PREREQUISITES`
+  unchanged — it locks the rules, it does not authorise a fit.
+- [`injury-status-conversion-preregistration-v3-PROPOSED.md`](injury-status-conversion-preregistration-v3-PROPOSED.md)
+  — v3. **Status: Scoped acceptance**, 2026-08-29; the owner accepted part of it,
+  not all of it. Read the status block before relying on any clause.
+
+> **Two of the filenames above lie about their status.** Both end `-PROPOSED.md`
+> and neither is merely proposed: one is **Accepted** and one is **scoped
+> accepted**. The suffix records the state the file was *created* in and was never
+> updated, because renaming would break references from
+> `backend/src/hoops_gm/availability/injury_status_conversion.py`,
+> `backend/tests/model_evidence/injury_status_conversion_v1.json`,
+> `docs/adapters/nba-injury-report.md`, `ADR-018` and
+> `scripts/cohort_predictor_crosses.py`.
+>
+> **Read the `**Status:**` line inside the file; never infer status from the
+> filename.** This is a live trap, not a tidiness complaint — on 2026-09-06 it
+> caused a reviewer to begin filing a finding that an accepted, binding protocol
+> was unratified, on the basis of its name alone. The opposite mistake is worse:
+> treating a binding Model-gate protocol as optional.
+>
+> Renaming both files and updating the six references is a small, worthwhile
+> change. It is deliberately not done here because it touches an ADR and a
+> model-evidence fixture, and should be one reviewed commit rather than a drive-by.
 
 ## Prior-work reviews
 
