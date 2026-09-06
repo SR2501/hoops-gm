@@ -37214,3 +37214,115 @@ backend/frontend/bridge owning the live shortlist surfaces under their existing
 gates. Return only genuine owner choices to the decision thread. Preserve the
 current availability fit veto for that model; do not treat it as proof that every
 separately specified recommendation path is impossible.
+
+
+## 2026-09-06 - architect - main was red for six commits, and nobody was looking
+
+**The finding that matters more than anything else in this entry.**
+`origin/main` had been failing CI since `e50900cb`, through `cca04c86`,
+`a35f68ce`, `9dff8253`, `41563ab5` and `106e75a5`. Six commits, all mine or
+pushed by me, none of which I ran the full backend suite against before pushing.
+It was found only because I finally checked CI on the sixth. **The test was never
+wrong and nothing was flaky; the check worked perfectly for six commits while
+nobody read it.**
+
+Two compounding mistakes, worth separating because they have different fixes.
+The first was pushing without running `pytest backend/tests`; I ran `ruff`, the
+secret scan and the backlog-graph tests and treated a subset as the gate. The
+second was checking CI with `gh run list --limit 1`, which returned the **CodeQL**
+run - three green Analyze jobs - and looked like a pass. The CI workflow is a
+separate run with fourteen jobs. **A green run is not a green head when more than
+one workflow exists**, and the fix is to enumerate every run for the exact SHA
+and group the jobs, which is what the recovery used.
+
+**Root cause of the failure itself.**
+`test_evidence_citations_are_bound_to_the_exact_committed_files` pins
+`docs/backlog.md` lines 3508-3546 by digest. An in-place amendment to an item
+earlier in that file moved the cited block. The content was proven byte-identical
+at its new location by scanning every same-length window for the recorded digest
+and finding it exactly once at 3623-3661, shift +115 - **only that proof makes
+moving the pointer honest rather than laundering a changed citation.** Verified
+attributable afterwards: appending a marker to a line inside the range fails the
+assertion, and restoring the file byte-for-byte passes it.
+
+**A claim inside the artifact was disproven, not merely stale.** Its
+`line_range_stability` field said the range *"precedes the append point in
+docs/backlog.md, whose repository contract is append-only."* `docs/backlog.md`
+is **not** append-only in practice - items are amended and status markers flipped
+in place, and exactly that moved this range. The field now records that the line
+numbers are a pointer, the digest is the load-bearing check, and what disproved
+the old claim. Fixed in `b311f160`; the previously failing job is green on
+`f043a9df`.
+
+**Landed separately, `41563ab5`:** the injury-status-conversion v1 rows (1,934
+records) and preregistration JSON, restored unchanged from `3285e647`. Until then
+a card in `main` cited evidence that existed only on one unpushed local branch,
+so every v1 figure it states was uncheckable by any reader with only `origin`,
+for a model that is otherwise fully shipped. Privacy was verified against the
+contents rather than trusted from the file's own `contains_raw_names_reasons_or_source_urls:
+false` - eight fields, all NBA identifiers, dates, integers or controlled
+vocabulary, no names, no free text, no URLs. The branch was first preserved as a
+verified git bundle outside the repository and proven restorable by blob id.
+**The owner's own reaction, unprompted, was "I thought all of this data was
+public so I'm not seeing the problem with data."**
+
+**A citation check needs a discriminant, and the item as filed would have made
+the docs worse.** Broadening the scan to all 87 path-shaped strings across the 13
+model cards reported 11 unresolved; exactly one was real. Two of the false
+positives were paths a card names **because they are absent**, with the reason
+and the numeric consequence in the citing sentence; one was a `$env:HOOPS_GM_DATA`
+command-line argument in a shell block; seven were README entries for unwritten
+cards. `model-card-citation-resolution` now carries two Done criteria, including
+a negative control in which the deliberate citation passes and a mutation
+removing its disclosing sentence fails. Recorded in `gates.md` as the inverse of
+the vacuity family: a predicate that **fails without there being a fault**.
+
+**Owner requirement recorded, and a gap it exposes.** In a separate decision
+thread the owner said what must work on draft day is *"live suggestions on my
+pick that fit my current strategy. With health weight or load management weight
+somehow visible. Then I only have to do last second research on 3-5 options
+instead of overweighting one category by sorting in a hurry."* No active item
+covers it. `draft-recommender` is DEPRIORITISED and framed almost entirely in
+snake terms; the deprioritisation - correct in itself, since the league confirmed
+auction - **appears to have carried the auction live-pick case away with it**.
+`draft-day-synthesis` is a morning batch, not a suggestion at a pick. Filed as
+`draft-day-shortlist` in `e0e8ca2d`, with instructions to fold it back into
+`draft-recommender` if that item is revived for auction. Measured, not assumed:
+no code ranks players by value - every ordering in the draft path sorts by
+`sequence` or `team_slot`. Specified so the health column is a **slot**, filled
+by the shipped reliability evidence today and by `p(play)` later, because an item
+that cannot render until the availability veto clears turns a blocked model into
+a missed deadline. Gate boundary stated: the surface is Code, any fused score is
+Model - displaying two numbers side by side is Code, multiplying them is Model.
+
+**My first draft of that item cited three dependencies I had inferred rather than
+checked; two did not exist.** The backlog graph caught it. I had also nearly
+filed it as a wholly new need before finding `draft-recommender` already existed,
+which would have been a duplicate. Both are the same error as the six red
+commits: asserting from plausibility instead of running the check that was
+already there.
+
+**Could not verify.**
+- The Postgres matrix job on `f043a9df` was still in progress when this was
+  written, and no CI at all has been observed for `e0e8ca2d`. Main is *recovering*,
+  not confirmed green end to end.
+- Whether the five commits between `e50900cb` and `106e75a5` broke anything
+  **else** that the failing job masked. The job aborts at the first failure, so a
+  second defect behind it would look identical from outside. The full local suite
+  passes now, which is evidence but not proof about those intermediate heads.
+- I did not establish that `e50900cb` was red **before** I pushed it. It was
+  inherited, held locally, and pushed without the suite being run; the first red
+  measurement is at that commit, so I cannot distinguish "arrived broken" from
+  "broken by the act of landing it beside its predecessor".
+- The claim that the eleven citation-scan reports decompose one-real-to-ten-false
+  rests on my reading of each citing sentence, not on a test.
+- The bundle's restorability was proven for one blob, not for every object across
+  the branch's twelve commits.
+- `draft-day-shortlist`'s claim that no active item covers the requirement rests
+  on reading `draft-recommender`, `draft-day-synthesis` and
+  `live-draft-availability`. I did not read all 218 items.
+- Source suitability, pricing and coverage for a historical roster feed remain
+  unresolved, and the final behaviour of the games-played fallback - descriptive
+  history versus an explicit provisional price adjustment - is still open. No
+  purchase, no access change, no ADR acceptance and no model-gate waiver is
+  implied by anything here.
