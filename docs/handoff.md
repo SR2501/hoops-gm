@@ -35943,3 +35943,54 @@ forms, a function the script already has.
 - **What I deliberately did not do:** I counted played rows per player. I did **not**
   compute an at-risk denominator, an unknown count, or any unknown share, so nothing
   here is an input to the frozen preregistration and its prospectivity is intact.
+
+## 2026-09-06 - architect - the coverage veto is proven, and a digest that bound the wrong thing
+
+- **What changed:** filed `ci-job-timeout-ceiling` in `docs/backlog.md` (now 201
+  items, 83 done, 118 pending, recounted from its own status markers by
+  `scripts/backlog_graph.py`, zero defects). Reviewed and approved lane 3's
+  type-strict comparator fix and lane 7's vacuity guard. Diagnosed the CI failure
+  on PR #172 down to its cause rather than returning it to the lane.
+- **Closes a prior "could not verify".** My last entry said the Postgres suite on
+  `main` had not finished, so the concurrency fix was proven only as "no longer
+  cancelled". It has now finished: run `34017556556` on `a0b78d8` ran 06:50:53Z to
+  07:32:36Z and **passed**. The fix is verified in full - the run survived two
+  later pushes to `main` and completed green.
+- **That verification exposed a gap I created.** No job in `.github/workflows/ci.yml`
+  sets `timeout-minutes`; the only one in the repository is
+  `copilot-setup-steps.yml:23`. Cancellation was accidentally the mechanism that
+  cleared a hung `main` run, and I removed it. Measured: that Postgres job took
+  **41.7 minutes** against 18.4-24.6 minutes across six recent PR runs of the same
+  job. Filed, not fixed.
+- **A digest that bound the author's platform rather than the evidence.** PR #172's
+  evidence artifact records SHA-256 digests for the files it cites. Its digest for
+  `docs/backlog.md` is `407fb471...`, which is the **CRLF** hash of that file at the
+  lane's own commit; the LF hash - what a Linux runner checks out - is `7d83e193...`.
+  The suite therefore passed honestly on the author's Windows working tree and could
+  only ever fail in CI. This is the `gameEt` failure in new clothes: a value that is
+  well-formed, verifies cleanly, and binds something other than what it claims.
+  A second defect sits underneath it - the artifact hashes **whole files** while
+  citing **line ranges**, so an append anywhere in an append-only document breaks a
+  citation whose cited passage never changed. I appended to `docs/backlog.md` at
+  `619ef3e2` and would have broken it independently. Fix sent: normalise to LF and
+  digest the cited range, plus a regression asserting that two byte-sequences
+  differing only in line endings produce the same digest.
+- **Where I was wrong, recorded because the correction was cheap and the assumption
+  was not.** I began writing an apology for having broken #172 with my backlog
+  append. Computing the hashes instead showed the artifact matched neither the
+  pre-append nor the post-append file, which is what pointed at line endings. Had I
+  trusted the plausible story, the real defect would have shipped behind a
+  regenerated hash.
+- **Reviews where the lane was right and I was not.** I proposed fixing lane 3's
+  type-blind comparator by reusing `_serialized`. The lane wrote an explicit
+  recursive `_strict_equal` with a `type()` identity check instead, which is
+  stronger: serialisation catches type drift only as an accident of how `json.dumps`
+  renders `true` versus `1`, and would silently stop working for any type pair that
+  renders identically.
+- **Could not verify:** whether the main/PR CI duration gap is runner contention,
+  cache behaviour, or a suite that grew when four PRs merged - I measured the gap
+  and filed it without diagnosing it. PR #171's six failing checks remain
+  undiagnosed by me; I have the lane's word that it found something and have not
+  seen the evidence. I have not verified lane 2's or lane 1's diffs at all. The
+  `b7ffd128` zero-job cancellation is still unexplained and I have stopped chasing
+  it.
