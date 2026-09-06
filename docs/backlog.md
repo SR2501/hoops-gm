@@ -1372,7 +1372,7 @@ AUCTION CRITICAL (R37/R38). Once the corpus is large enough, measure each seed s
 - [ ] **pending**
 - **Depends on:** `blind-mocks`, `draft-format-abstraction`, `mock-ingestion`
 
-AUCTION CRITICAL (R37, track B). Every auction mock yields real clearing prices for real players. Aggregate into an AAV source in its own right - unlike published seeds it reflects THIS format and player pool. Also yields observed inflation curves, which is a separate quantity from baseline AAV and feeds auction-inflation directly.
+AUCTION CRITICAL (R37, track B). Every auction mock yields real clearing prices for real players. Aggregate into an AAV source in its own right - unlike published seeds it reflects THIS format and player pool. Also yields observed inflation curves, which is a separate quantity from baseline AAV and sharpens `auction-inflation`. Per ADR-017 (Accepted 2026-09-06) that is an **enhancement, not a prerequisite**: the dependency edge was removed on 2026-09-06 because live inflation is computable from money leaving the board against our own remaining values, and keeping the edge would have made the whole auction chain wait on a mock corpus again.
 
 ### `aav-source` - Sourcing and importing seed auction values
 
