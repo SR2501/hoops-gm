@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 126 pending - 210 total**
+**84 done - 0 blocked - 127 pending - 211 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5368,3 +5368,43 @@ and the pressure to relax it will arrive precisely when it blocks something.
 
 Gate: none directly. This is a document that must be written before the data is
 looked at again.
+
+
+### `secret-scan-counts-what-it-did-not-read`
+
+- [ ] **pending**
+- **Depends on:** none
+
+`scripts/check_no_secrets.py` ends with
+`print(f"No secrets found in {len(files)} tracked files.")` at line 222, where
+`files = tracked_files()` was assigned at line 187. Between those two lines sit five
+`continue` branches - tracked env file, allowlist or `SKIP_SUFFIXES` match, not a
+regular file, and `except (UnicodeDecodeError, OSError)` at line 204 - and **none of
+them decrements the count**. The headline number is therefore paths *enumerated*, not
+files *read*. The scanner's most confident sentence overstates its own coverage.
+
+This is not hypothetical, and the gap lands on the worst possible file class.
+Verified on 2026-09-06 against `main`: `.gz` is **not** in `SKIP_SUFFIXES`, and three
+tracked gzip fixtures - `nba_gleague_transactions.json.gz`,
+`nba_player_movement.json.gz` and `rotowire_nba_news.xml.gz` - are counted in the
+586-file headline while every one of them fails `read_text(encoding="utf-8")` and is
+silently skipped at line 204. These are recorded captures from external APIs, which
+is exactly where a session token or key would arrive if one ever did. A compressed
+Fantrax capture containing a credential would be counted as scanned and never read.
+
+**Do:** report enumerated, scanned, and skipped-by-reason as three separate numbers,
+so the difference is visible instead of absorbed. Decompress `.gz` and scan the
+contents, or add `.gz` to `SKIP_SUFFIXES` and account for it explicitly as skipped -
+either is defensible, silently counting it as scanned is not. Add a test that plants
+a credential inside a gzipped fixture and asserts the scanner finds it or names it as
+unscanned; a test asserting only the clean case cannot distinguish the two.
+
+This is the fourth instance recorded on 2026-09-06 of a check that observed a subset
+and reported on the whole, after the mutation harness that regex-matched nothing and
+printed SURVIVED, the `-k` selector that silently deselected its target, and
+`check_append_only.py` comparing HEAD against itself after a push. The pattern is
+now frequent enough to be worth naming in the gates: **a check must state the
+denominator it counted against.**
+
+Gate: Code. Found by the lane that hardened this scanner, while answering what it
+held that the repository did not - the answer that is almost never "nothing".
