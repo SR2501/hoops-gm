@@ -26,8 +26,14 @@ The current absence is checkable in under ninety seconds. As observed on 2026-09
 fields were `player_id`, `player_name`, `availability`, and `production`.
 `GET /openapi.json` exposed no roster endpoint. In the repository,
 `frontend/src/routes/ReliabilityPage.tsx:144-147` therefore renders
-“No roster fragility summary is shown” and refuses to infer either membership or
+"No roster fragility summary is shown" and refuses to infer either membership or
 math.
 
 Frontend work becomes actionable only when both contracts exist. A player-level
 cohort, draft holdings, or guessed aggregation is not a substitute for either one.
+
+## What would falsify this
+
+This blocker is disproved when the served store holds current fantasy-roster
+membership joinable by canonical `player_id` and Quant publishes a gated composite
+contract. An endpoint over empty tables does not disprove it.
