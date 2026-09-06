@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 123 pending - 207 total**
+**84 done - 0 blocked - 125 pending - 209 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5266,3 +5266,58 @@ that would break are in a file nobody is allowed to rewrite. Verify the table
 renders by posting it to `/markdown`, not by counting pipes: `R59` records two
 sessions hand-counting a malformed row and reaching different wrong answers.
 Code gate.
+
+### `preseason-news-honesty-repairs` - The news adapter overstates what it does
+
+- [ ] **pending**
+- **Depends on:** `preseason-news-ingest`
+
+PR #176 merged with four findings outstanding from a second independent review.
+Three are in scope here; the fourth is escalated to the owner as R40.
+
+**The false row is the urgent one.** `docs/adapters/preseason-news.md` records the
+second captured item as `Thu, 03 Sep 2026 1:50:00 PM PDT` / `2026-09-03T20:50:00Z`.
+Decompressing `backend/tests/fixtures/rotowire_nba_news.xml.gz` at `df6811c8` gives
+`Fri, 04 Sep 2026 7:15:00 AM PDT`, which is `2026-09-04T14:15:00Z`. The first row
+matches; the second does not. That table is the entire evidence base for the window
+characterisation R40 rests on.
+
+**Acceptance.** (1) Correct the row, and assert **every** fixture item's raw and
+parsed timestamp in the contract test - an unasserted evidence table is a comment.
+(2) Move a configurable freshness requirement out of the live smoke and into the
+command, so a structurally valid but stalled feed exits non-zero with its diagnostic
+report preserved; today it exits 0. (3) Stop implying a ten-minute poll exists: it is
+a cache lifetime on a single fetch, with no scheduler and no continuity check, so
+displaced items vanish without trace. Say that plainly rather than deleting the
+sentence. (4) Record the nine-id gap - both the live feed and the fixture carry
+exactly `532515` and `532524` - as an open anomaly with both explanations stated: a
+selective feed, or an id space shared across sports. **Do not assert either.** Prove
+each repair with a mutation.
+
+**Explicitly out of scope:** building a scheduler, and adding a second source.
+Adapter + Code gate.
+
+### `draft-day-news-source-decision` - Decide what carries availability news on 18 October
+
+- [ ] **pending**
+- **Depends on:** `preseason-news-ingest`
+
+R40's mitigation is now measured and insufficient. The RotoWire feed exposes two
+items with `<ttl>10</ttl>`, a ceiling of **0.2 items/minute** - twelve observable
+items an hour under perfect polling, and there is no poller. Confirmed twice: from
+the committed fixture and from an independent live fetch on 2026-09-06.
+
+That ceiling is arithmetic and does not depend on the unresolved selectivity
+question. Preseason news volume in the hours before an auction will exceed twelve
+items an hour, and everything above the ceiling is lost silently rather than loudly.
+
+**Options.** (a) Buy a complete NBA news feed - cost unknown, owner-only under
+decision #3. (b) Accept the ceiling and treat the adapter as a supplement to manual
+checking on the day. (c) Add a second free source and cross-check, which is real
+engineering time inside 41 days and may hit the same wall. **Recommendation: (b) now,
+and price (a) before 5 October** - the rehearsal window is the last point where (a)
+can be integrated without disturbing draft preparation.
+
+**If nothing is decided:** (b) happens by default, undeliberately, and the owner
+meets the ceiling on draft morning instead of choosing it now. No gate; this is a
+decision, not code.
