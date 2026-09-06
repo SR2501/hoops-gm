@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "freeze_id": "injury-status-conversion-v1-20260819T215900Z",
+  "frozen_at_utc": "2026-08-19T21:59:00Z",
+  "question": "How well does the latest canonical pre-tipoff NBA injury-report status predict whether that player plays in that game?",
+  "cohort": {
+    "manifest": "docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json",
+    "manifest_worktree_sha256": "5289e6e771f2644ace401c5c3925d750383fc917a364865b5909edd8f7e10ebb",
+    "canonical_observation_sha256": "9fe70210367d229f711b34bc5b99d779534172fd0e218a335ce67f79d406765d",
+    "joined_outcome_sha256": "b4dbf93d6b9163bb4370def1a1d425ae800d50da543fa6568170d1ee486ad27b",
+    "season": "2025-26",
+    "season_type": "regular",
+    "start_game_date": "2025-12-08",
+    "end_game_date": "2026-01-04"
+  },
+  "eligibility": {
+    "unit": "one canonical latest pre-tipoff observation per stable NBA game id and NBA player id",
+    "statuses": [
+      "out",
+      "doubtful",
+      "questionable",
+      "probable",
+      "available"
+    ],
+    "play_outcome": "played",
+    "direct_non_play_outcomes": [
+      "did_not_play",
+      "did_not_dress",
+      "not_with_team",
+      "inactive"
+    ],
+    "excluded": [
+      "unresolved canonical player identity",
+      "missing participation row",
+      "explicit unknown participation outcome",
+      "not_yet_submitted team marker",
+      "legacy injury evidence",
+      "post-tipoff report"
+    ],
+    "missing_or_unknown_is_never_non_play": true,
+    "dnp_reason_is_not_a_feature": true,
+    "production_projection_ranking_and_aav_are_not_inputs": true
+  },
+  "chronological_partitions": {
+    "development": {
+      "start": "2025-12-08",
+      "end": "2025-12-21"
+    },
+    "selection": {
+      "start": "2025-12-22",
+      "end": "2025-12-28"
+    },
+    "final_training": {
+      "start": "2025-12-08",
+      "end": "2025-12-28"
+    },
+    "held_out": {
+      "start": "2025-12-29",
+      "end": "2026-01-04"
+    }
+  },
+  "candidate_models": {
+    "global_jeffreys": {
+      "groups": {
+        "all": [
+          "out",
+          "doubtful",
+          "questionable",
+          "probable",
+          "available"
+        ]
+      },
+      "estimate": "(plays + 0.5) / (observations + 1)"
+    },
+    "three_band_jeffreys": {
+      "groups": {
+        "unlikely": [
+          "out",
+          "doubtful"
+        ],
+        "uncertain": [
+          "questionable"
+        ],
+        "likely": [
+          "probable",
+          "available"
+        ]
+      },
+      "estimate": "(group plays + 0.5) / (group observations + 1)"
+    },
+    "five_status_jeffreys": {
+      "groups": "one group per status",
+      "estimate": "(status plays + 0.5) / (status observations + 1)",
+      "eligibility": "at least 20 development observations for every status; otherwise this candidate is ineligible rather than emitting an unstable rate"
+    }
+  },
+  "selection_rule": {
+    "primary_metric": "Brier score on the chronological selection partition",
+    "minimum_improvement": 0.005,
+    "order": [
+      "global_jeffreys",
+      "three_band_jeffreys",
+      "five_status_jeffreys"
+    ],
+    "rule": "Advance to a more complex eligible candidate only if its Brier score is at least 0.005 lower than the current simpler candidate. Ties select the simpler candidate.",
+    "final_fit": "Refit the selected structure on development plus selection without changing groups, priors, thresholds, or metrics."
+  },
+  "held_out_evaluation": {
+    "primary_metric": "Brier score",
+    "secondary_metrics": [
+      "log loss",
+      "calibration in the large",
+      "paired Brier difference versus final-training global Jeffreys baseline"
+    ],
+    "calibration_table": "one row per distinct emitted probability, with predicted mean, observed play rate, count, plays, and Wilson 95% interval",
+    "status_table": "count, plays, observed play rate, and Wilson 95% interval for every status; descriptive even when statuses share a pooled prediction",
+    "uncertainty": {
+      "paired_bootstrap_resamples": 5000,
+      "seed": 250119,
+      "interval": [
+        0.025,
+        0.975
+      ]
+    }
+  },
+  "sensitivity": {
+    "unknown_outcome": "Report both all-play and all-non-play bounds for excluded joined unknown outcomes; neither scenario enters fitting or primary evaluation.",
+    "unresolved_identity": "Report all-play and all-non-play status-level bounds for unresolved canonical observations; neither scenario enters fitting or primary evaluation.",
+    "report_timing": "Report results by realized lead-time band if every reported band contains at least 10 eligible held-out observations; otherwise report counts only."
+  },
+  "activation_rule": {
+    "runtime_activation_default": "veto",
+    "all_required": [
+      "selected model is status-conditioned rather than global",
+      "upper endpoint of the paired-bootstrap 95% interval for held-out Brier difference versus the global baseline is below zero",
+      "absolute held-out calibration-in-the-large error is at most 0.10",
+      "every emitted held-out calibration bin contains at least 20 observations",
+      "every emitted probability lies inside its bin's Wilson 95% interval",
+      "held-out data includes at least 30 direct outcomes for every one of the five statuses",
+      "no monotonic reversal across unlikely, uncertain, and likely pooled bands",
+      "cohort fingerprint and every exclusion count reproduce exactly"
+    ],
+    "failure_effect": "Publish offline evidence and an activation veto; do not add runtime persistence, API, UI, or availability-model wiring."
+  },
+  "planned_outputs": [
+    "backend/tests/model_evidence/injury_status_conversion_v1.json",
+    "docs/models/injury-status-conversion.md",
+    "focused unit tests and model_backtest gate tests",
+    "append-only docs/handoff.md entry and accurate docs/backlog.md status"
+  ],
+  "stopping_rule": "Run the held-out evaluation once. Any post-unblind protocol change creates version 2 and leaves this freeze and version-1 result intact."
+}
