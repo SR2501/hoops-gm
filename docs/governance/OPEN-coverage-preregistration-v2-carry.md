@@ -66,12 +66,37 @@ day is a failure message naming the file, the range, the shifting mechanism and 
 to put content instead; it converts a mystifying hash diff into an instruction, but it
 does not remove the coupling.
 
-**And note this gate does not run on `main`.** Under the CI concurrency behaviour
-recorded separately, a push to `main` gets CodeQL and no backend suite, so the broken
-citation survived two pushes and was caught only by running the suite locally against
-the tip. A frozen-evidence gate that does not execute on the branch holding the
-evidence is not protecting it — which is a defect in the gating, not in v1's prose, and
-is filed here only because this is where someone will look next.
+**And note what CI does and does not measure on `main` — corrected, because the first
+version of this paragraph was wrong.** It claimed this gate does not run on `main`,
+that a push to `main` gets CodeQL and no backend suite, and that the broken citation
+was caught only by a local run. All three are false. Measured across the six
+consecutive `main` commits pushed on 2026-09-06:
+
+| Commit | Check runs | Backend suite |
+| --- | --- | --- |
+| `ddc82476` | 3 | not run |
+| `90ab3d83` | 14 | **failure** |
+| `431de99e` | 14 | success |
+| `8139df6d` | **0** | not run |
+| `9ac853fd` | 3 | not run |
+| `79dab9d0` | 14 | success |
+
+**CI caught the break.** `90ab3d83` records `Backend — lint, type-check, tests` and
+`Backend — the same suite against Postgres` both as `failure`. The local run found it
+first only because it finished first; the revert landed before anyone read the remote
+result, and the claim that CI had missed it was then asserted without checking. That is
+the same failure this document is about, committed in the paragraph describing it.
+
+**The real defect is erratic coverage, not absent coverage.** Concurrency cancellation
+means a commit superseded before a runner picks it up is measured partially or not at
+all — `8139df6d` has **zero** check runs of any kind. So history contains commits no
+gate ever evaluated. That breaks `git bisect` against any gate, and it makes "`main` was
+green at commit X" unfalsifiable for the commits it happens to skip. The tip is reliably
+measured; the path to it is not.
+
+The practical rule is unchanged and is worth keeping for a different reason than the one
+first given: run the suite locally before calling a `main` tip green, because the remote
+result for the commit you are standing on may not exist yet, or at all.
 
 ---
 

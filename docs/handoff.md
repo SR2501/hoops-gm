@@ -38665,3 +38665,116 @@ persistence is needed at all - I read the CLI, not `report.py`. Whether RotoWire
 terms permit a repeated automated fetch at a cadence faster than a human would use;
 the item assumes the existing adapter's throttling posture carries over and that is
 an assumption, not a check.
+## 2026-09-06 - architect (delivery) - three failure messages that only execute on failure, and my own fourth
+
+Prose inside a `raise` or an `assert` does not run while the suite is green. So a
+reviewer reads the diff and an operator reads different text, and nothing in CI
+compares them. Three instances turned up in one day, all in reviewed files, and then
+I committed a fourth myself.
+
+**Stale.** ADR-019's fingerprint gate message stated the superseded absolute rule
+after the 2026-09-06 amendment made the comparison differential. A lane obeyed the
+message, discarded a correct regeneration, and reported the discard as a finding.
+Fixed in `8240f6f9`.
+
+**False.** `ingest/nba/parsers.py:1057` raises `SourceContractError` saying the NBA
+"has never scheduled a game there". Its own comment twenty lines above already
+retracts that - #171 narrowed the comment to name the ~7:00am ET China preseason
+counterexample, and left the message alone. Filed as `boxscore-bound-message-overclaim`
+rather than fixed, because `parsers.py` is one of six files fingerprinted by the cohort
+manifest and touching the string costs an ADR-019 differential regeneration. Batch it
+with the schedule cross-check that `boxscore-date-plausibility-bound` is still missing
+and pay that once.
+
+**Absent.** The evidence-citation assertion in `test_opportunity_coverage_predicate.py`
+was bare: two hashes and nothing else. A lane hitting it learns that something moved,
+not which file, which range, or that the cause is an insertion above a cited block.
+Fixed in `8139df6d`, then forced to fire against a probe insertion so the rendered text
+was read rather than assumed.
+
+**Mine, four hours later.** My replacement message in `test_cohort_evidence.py` said to
+regenerate "from the data root, never from `backend/`, which empties
+`operational_artifacts`". Reading ADR-019's amendment at 196-200 rather than my summary
+of it: `operational_artifacts` honours an explicit `--report-dir`, and `backend/` with
+an absolute `--report-dir` reproduces the committed manifest exactly - it is the context
+the committed artefact came from. Differentially the requirement is only that both runs
+share a working directory and a `--report-dir`; which one is irrelevant, because shared
+drift cancels. Fixed in `ddc82476`, with a negative assertion that now refuses the
+phrase "never from backend/" so the overclaim cannot return silently.
+
+The pattern generalises badly: tests cannot catch it, because the tests pass. The only
+check is forcing the message to fire and reading it. Surface measured - 10 amended ADRs,
+roughly 120 references in code - and **not audited**.
+
+**Could not verify.** Whether the other amended-ADR messages are stale. I measured the
+surface and did not read them; ADR-013 (5 amendments, 19 references) and ADR-020 (4 and
+18) are the highest-risk pair by that count alone, which is a proxy, not evidence.
+
+## 2026-09-06 - architect (delivery) - a frozen citation binds docs/backlog.md by line position, and I broke it
+
+`docs/models/participation-opportunity-coverage-v1-evidence-gap.json` cites three
+ranges by hashing **line positions**, and one of them is `docs/backlog.md` 3623-3661.
+**Only the line count above 3623 matters. The content is irrelevant.**
+
+I appended 36 lines beside a backlog item at line 207, which shifted the cited block and
+broke the Model gate - `90ab3d83`. Proved rather than guessed: re-hashing the cited range
+against `git show 007d8fbb` matches the recorded digest and against `90ab3d83` does not.
+Reverted in `431de99e`, re-landed in `9ac853fd` at the end of the file. The pointer left
+at the original item and the header recount are both **equal-line-count in-place edits**,
+which is why they are safe, and the script asserted the citation hash before and after
+and refused to write if it would move.
+
+What follows from the mechanism: content below the cited range is always safe; equal
+length in-place edits above it are safe; `docs/handoff.md` is not cited by anything and
+is always safe. **Never adjust the recorded line numbers or hashes to follow a move** -
+the evidence file's own digest is pinned at `test_opportunity_coverage_predicate.py:30`,
+and the v2-carry document forbids retrofitting into frozen v1. Filed there as defect (d):
+cite content, or a stable anchor, not a position.
+
+**Could not verify.** Whether anything else in `docs/models/` cites by position. I read
+this one evidence file because it failed; I did not sweep the tree.
+
+## 2026-09-06 - architect (delivery) - the merge rule's independent review cannot be recorded, and a correction about CI
+
+Reviewed #178, which is another session's branch, because the autonomous-merge
+authorisation requires an independent review and the pull request had none. Requested
+changes on two findings, both verified by reading code rather than the pull request's
+own account of it: `gates.md` prescribes `newline=""` on four reads of
+`resolve_doc_conflicts.py`, but `is_conflict_marker` compares the separator with exact
+equality, so the retained `\r` makes that branch unreachable for every CRLF file in the
+tree and silently removes a marker class from the guard that refuses to let you stage;
+and `docs/handoff.md` describes `test_import_provenance.py` as reading `direct_url.json`
+only, when that file's docstring opens by saying its first version did exactly that and
+was wrong.
+
+**The review could not be recorded.** `gh pr review 178 --request-changes` fails with
+"Can not request changes on your own pull request". Every agent session in this project
+pushes as `SR2501`, so GitHub sees one author regardless of which agent, worktree or
+model produced the review. Measured across the recently merged pull requests: #166,
+#168, #171 and #175 each show **zero** recorded reviews. A merge performed with no
+review is therefore indistinguishable, in the repository's own record, from one
+performed after a review that found two blocking defects. Filed as
+`independent-review-unrecordable`.
+
+**Correction, and it is the same failure as the entry two above.** I claimed - in the
+v2-carry document, in a message to the #178 lane, and in my own notes - that a push to
+`main` gets CodeQL and no backend suite, and that CI missed the citation break. Measured
+across the six `main` commits I pushed today: `ddc82476` 3 checks, `90ab3d83` **14 with
+the backend suite failing**, `431de99e` 14 green, `8139df6d` **zero checks of any kind**,
+`9ac853fd` 3, `79dab9d0` 14 green. **CI caught the break.** My local run only found it
+first; I reverted before reading the remote result and then asserted CI had missed it,
+without looking. The committed paragraph is corrected.
+
+What is actually true is narrower and worse in a different way: coverage on `main` is
+erratic rather than absent. Concurrency cancellation leaves a superseded commit measured
+partially or not at all, so `main`'s history contains commits no gate ever evaluated.
+That breaks `git bisect` against any gate and makes "main was green at commit X"
+unfalsifiable for the commits it skips. The tip is reliably measured; the path to it is
+not. Keep running the suite locally before calling a tip green - for that reason, not
+the one I first gave.
+
+**Could not verify.** Whether `8139df6d`'s zero check runs are a race or a systematic
+skip; that is one observation and I did not look for a second. Whether a comment-header
+convention would be honoured by an agent that posts the header and reviews nothing - it
+would record that a review was claimed, which is more than today records, and less than
+it appears to record.

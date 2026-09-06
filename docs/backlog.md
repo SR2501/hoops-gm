@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 129 pending - 220 total**
+**91 done - 0 blocked - 130 pending - 221 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -6026,3 +6026,47 @@ this beside `boxscore-date-plausibility-bound` near the top of the file and brok
 gate: lines 3623-3661 here are cited by hash in frozen v1 coverage evidence, and a 36-line
 insertion above them shifted the cited block. Nothing above line 3623 may change this
 file's line count. The pointer at that item is an in-place edit for the same reason.
+### `independent-review-unrecordable` - The merge rule's independent review cannot be recorded
+
+- [ ] **pending**
+
+The owner authorised autonomous merge on 2026-08-18, re-confirmed 2026-09-05, on two
+conditions: gates green **and** an independent review approves. The second condition
+cannot be recorded in the mechanism that would normally hold it.
+
+**The mechanism.** Every agent session in this project pushes as the same GitHub
+identity, `SR2501`. GitHub refuses a review verdict from a pull request's own author, so
+`gh pr review <n> --request-changes` returns `Can not request changes on your own pull
+request (addPullRequestReview)`. Observed on #178 on 2026-09-06 while reviewing another
+session's branch. The reviewing session was a different agent, a different worktree and a
+different model; GitHub cannot see any of that, only the account.
+
+**What that costs.** `gh pr view <n> --json reviews` returns an empty list for every pull
+request in this repository, whether it was reviewed thoroughly or not reviewed at all. So
+a merge performed with no review is indistinguishable, in the repository's own record,
+from one performed after a review that found two blocking defects - which is what #178's
+review found. Branch protection requiring approvals cannot close this either, because the
+approval would have to come from the same account that opened the pull request.
+
+**This is not a hypothetical.** #171 merged with zero recorded reviews. That is not
+evidence it was unreviewed; it is evidence the record cannot tell us.
+
+**Done when** an independent review leaves an artifact that a later reader can find
+without being told it exists. The cheapest honest version is a convention plus a check: a
+review comment whose first line matches a fixed header naming the reviewing agent and one
+of a closed set of verdicts, and a check that refuses the merge when the head commit's
+pull request carries no such comment. `gh api repos/{owner}/{repo}/issues/{n}/comments`
+supplies the input.
+
+**Consider doing nothing, and say so out loud if that is the answer.** This is a
+governance mechanism guarding a governance mechanism, on a project with one human. The
+argument for building it is that autonomous merge is the one place where nobody is
+watching by construction, so an unfalsifiable claim there is worth more than elsewhere.
+The argument against is that the check is trivially satisfied by an agent that posts the
+header and reviews nothing - it records that a review was claimed, not that one happened.
+That is still strictly more than today, where even the claim leaves no trace, but it is
+worth stating plainly that the second failure mode survives the fix.
+
+**Owner-adjacent, not owner-only.** The condition being unenforceable was not something
+the owner was told when he authorised the arrangement, so he should know. The remedy
+itself is an ordinary engineering choice.
