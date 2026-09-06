@@ -36871,3 +36871,69 @@ deletion, and said so.
 redundant content, not ancestors of `origin/main`, and remain reachable only
 from its local branch until the worktree is cleaned up. I archived on its
 statement rather than inspecting the worktree myself.
+
+
+## 2026-09-06 - architect - closing the veto record and two vacuity findings
+
+Small unit, four findings, three of them caught in my own work rather than a
+lane's.
+
+**ADR-021 now cites its evidence.** The ADR is the pending owner decision that
+determines what ships on 18 October, and its central factual claim - that
+`unknown_share` is uncomputable rather than merely failing - was argued from
+reasoning about what admitted sources emit, because it was written before the
+measurement existed. PR #172 has since merged the machine-readable finding, so
+the ADR now names `docs/models/participation-opportunity-coverage-v1-evidence-gap.json`
+and the three fields that carry the decision. The load-bearing one is that
+`proceed_opportunity_coverage` is `null` and not `false`: a `false` would mean
+coverage was measured and came in too low, which better ingest could fix, while
+`null` means there is no denominator for it to be a share of. That distinction is
+the whole decision and it should not rest on a reader trusting my prose.
+
+**PR #171's green check is stale, and the reason is not the usual one.** Applying
+the merge-ref rule recorded earlier today: `refs/pull/171/merge` has parents
+`61f3dd72` and `65f5d5dc` while `origin/main` has moved to `de5762b7`. Five
+commits of drift, so the branch must be rebased before merge.
+
+The near-miss came next. I measured the drift as seven files, **all under
+`docs/`, zero executable or test files**, which normally settles it - no code
+moved, so no check outcome can change. That is true and it is not the question.
+One of the seven is `docs/decisions/ADR-019-cohort-fingerprint-boundary.md`,
+*the document defining the gate that blocks #171*. Main's drift changed the rule
+the pull request is judged against while changing nothing CI executes. Recorded
+in `gates.md`: separate *would re-running change the checks* from *would
+re-deriving change whether I may merge*, because in a project whose gates live in
+Markdown a docs-only diff is the diff most likely to move the second and leave
+the first alone.
+
+**Fifth vacuity instance, first at command level, and it was mine.** Checking
+whether #171 regenerates the cohort manifest, my shell check printed
+`NONE - manifest untouched`. PowerShell had parsed `$mb..origin/BRANCH` as a
+property access, so `git diff` never ran; `$hits` was empty because the command
+failed, not because the branch is clean. Re-run correctly the answer is the same
+- two files, zero manifest files - which is precisely what makes it dangerous: a
+wrong method agreeing with the truth teaches you to trust the method. The four
+earlier members were predicates satisfiable by absence; this one is a command
+whose failure is indistinguishable from its success. Fix is two assertions before
+the conditional: the command exited zero, and the *unfiltered* collection is
+non-empty. Never let absence of output be the success signal.
+
+**A worry I raised and then disproved.** I believed two sessions shared #171's
+branch and flagged a force-push race. They are one session with two identifiers -
+`e17a2609` is the Copilot session ID, `c2b9dc33` the project session ID of the
+same worktree. No race, and the branch head has not moved since certification.
+
+**What #171 actually does, verified from the diff rather than its report:** two
+files, `backend/src/hoops_gm/ingest/nba/parsers.py` and
+`backend/tests/test_adapter_contracts.py`. It does **not** touch the manifest,
+which is the correct behaviour and worth saying plainly - it changed a fingerprinted
+source and left the recorded fingerprint alone, producing an honest visible drift
+failure instead of silently refreshing the record to hide it. The gate did its job.
+
+**Could not verify.** The lane's own debrief reply is `NULL` in the session store;
+it went idle without recording an answer, so everything above about #171 is from
+the diff and from `quant`'s certification, not from the lane. I did not
+independently re-derive `quant`'s "exactly one permitted leaf" count - I verified
+only that the branch cannot have moved the manifest, which is the weaker claim
+that happens to be the one my worry needed. Whether the drift is one leaf or more
+still rests on `quant`.

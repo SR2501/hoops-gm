@@ -779,3 +779,42 @@ document moved. In a project whose gates live in Markdown, a docs-only diff is
 exactly the diff most likely to change the second answer while leaving the first
 untouched - and a reviewer who has learned to skim past `docs/` will see a green
 tick and a harmless diff and merge against a rule that changed underneath them.
+
+
+### A shell check that fails prints nothing, and nothing reads as clean
+
+**Recorded 2026-09-06. Fifth confirmed member of the vacuity family, and the
+first at command level rather than inside a predicate. It happened to me, inside
+the verification step, which is the worst available place for it.**
+
+I was checking whether PR #171 regenerates the cohort manifest - the one thing
+that would corrupt the evidence ADR-019 rides on. The check was:
+
+    $hits = git diff --name-only $mb..origin/BRANCH | Where-Object { ... }
+    if ($hits) { $hits } else { "NONE - manifest untouched by this branch" }
+
+It printed **`NONE - manifest untouched by this branch`**, and that is the answer
+I wanted. It was also meaningless. PowerShell parsed `$mb..origin/BRANCH` as a
+property access on `$mb`, so `git diff` received a malformed argument, printed
+its usage text to stderr and exited non-zero. `$hits` was empty because **the
+command never ran**, not because the branch is clean. Re-run correctly, the
+answer happens to be the same - two files, zero manifest files - which is exactly
+why this is dangerous: a wrong method that agrees with the truth teaches you to
+trust the method.
+
+**The four earlier members were predicates satisfiable by absence. This one is a
+command whose failure is indistinguishable from its success**, because both
+produce no output and the conditional only tests output. Every `if (-not $x)`,
+`if ($x.Count -eq 0)` and empty-list-means-clean shape in a verification step has
+this hole.
+
+**The fix is two assertions before the conditional, not a more careful pipeline.**
+Assert the command succeeded (`$LASTEXITCODE -eq 0`, and `throw` if not, because
+a failed check is not a passing check), then assert the *unfiltered* collection is
+non-empty, because a diff of a branch with commits on it cannot legitimately be
+empty. Only then is an empty *filtered* set evidence of anything. The rewritten
+form threw on both conditions and returned a count I could stand behind.
+
+**The general shape: never let the absence of output be the success signal.**
+Prove the instrument ran and saw something before you believe what it did not
+see.
