@@ -37099,3 +37099,49 @@ as a precondition, and nothing else. The lane also reported an uncommitted leaf
 enumeration - 16 integer leaves, one boolean, seven integers holding 0 or 1 - and
 correctly flagged it as not durable evidence. I have not rederived it and it is
 cited nowhere.
+
+
+## 2026-09-06 - architect - v1 evidence landed; a citation check given its discriminant
+
+**Commit `41563ab5`.** `backend/tests/model_evidence/injury_status_conversion_v1_rows.json`
+and `..._v1_preregistration.json` restored unchanged from `3285e647` and landed
+on `main`. Until now the preregistration card in `main` cited a 1,934-record
+evidence file that existed only on one unpushed local branch, so every v1 figure
+it states - the <=99.18% bound, the exclusion-by-status split, the held-out
+`doubtful` count of 4 - was uncheckable by any reader with only `origin`, for a
+model that is otherwise fully shipped.
+
+**Before landing, the branch was preserved independently**: a verified git bundle
+at `C:\Users\steverones\hoops-gm-private-evidence\injury-status-conversion-3285e647.bundle`,
+proven restorable by cloning from it and matching the blob id
+`d56a3b1c99ccbde45900d791452f190cb524ab86` at 594,951 bytes. The scratch clone
+was removed. The bundle is outside the repository and is not a substitute for the
+commit; it is insurance against the branch, not against `main`.
+
+**Privacy was checked, not assumed.** The file self-declares
+`contains_raw_names_reasons_or_source_urls: false`; that declaration is the kind
+of self-describing claim this project has already been burned by, so it was
+verified against the contents. Eight fields: `canonical_player_key` (an NBA
+player id - sampled `1626204`, `1627824`, none containing a space),
+`status` (five official injury-report values), `participation_outcome` (five
+values plus null), `exclusion_reason` (two values plus null), `game_date`,
+`nba_game_id`, `report_timestamp`, `lead_time_minutes`. All public-derived.
+
+**Two further findings, both in `gates.md`.** First, a citation check fails on
+*correct* documentation unless it can distinguish a path cited as evidence from
+one named as absent, local, or planned - the broadened scan's precision was 1
+real defect in 11 reports, and two of the false positives would have demanded a
+card stop disclosing an absence it was right to disclose. `model-card-citation-resolution`
+is amended with two Done criteria, including a negative control, so it cannot be
+built in the form that makes the docs worse. Second, the framing I had assembled
+for the owner decision - *"publishing destroys the blind"* - was disproved by
+reading the file, and was never written down; the entry says **caught**, not
+retracted, and names the grep that settles which word is honest.
+
+**Could not verify.** CI on `9dff8253` and on this commit is unchecked at the
+time of writing. The two remaining unresolved citations that are *not* false
+positives - `availability-model.md`, unwritten because the model is behind the
+opportunity-coverage veto - stay unresolved by design; nothing was done about
+them. The bundle's restorability was proven for one blob, not for every object
+in the branch's 12 commits. And the claim that the eleven scan reports decompose
+1/10 rests on my reading of each citing sentence, not on a test.

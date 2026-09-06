@@ -1061,3 +1061,64 @@ printed a reassuring number produced by an expression that never examined it.
 wrote the bytes.** Two minutes with an independent counter turned a suspected
 2.4 MB corruption into a typo. Do not fix the file until the second tool agrees
 that the file is broken.
+
+
+### A citation check fails on correct documentation unless it can tell absence from disclosure
+
+**Recorded 2026-09-06 while closing item 1 of `model-card-citation-resolution`.
+This is the inverse of the vacuity family and had never been looked for here.**
+
+Broadening the citation scan - every `.json`, `.md`, `.py` or `.csv`-shaped
+string across all 13 cards in `docs/models/`, 87 distinct paths - reported
+**11 unresolved**. Exactly **one** was a real defect: the v1 rows file, landed
+at `41563ab5`. The other ten were not defects, and two of them were the precise
+*opposite* of one:
+
+- `injury-status-conversion-literature.md` cites
+  `nba-injury-report-2025-26-status-census.json`, which is uncommitted **on
+  purpose**. The card says so in the same sentence that cites it, gives the
+  reason - publishing a second, disagreeing 2025-26 canonical count beside the
+  committed cohort file with no reconciliation would make the disagreement
+  permanent and undated - and then states the disagreement numerically so a
+  reader can check it. That is the honest-limitation house rule working.
+- The "unresolved" path in `injury-status-conversion.md` is
+  `$env:HOOPS_GM_DATA\cohort-merged-2025-26.db.merge-receipt.json`: a
+  command-line argument inside a recorded PowerShell block, naming a file in the
+  owner's local data directory. It was never a repository citation.
+- Seven more are `docs/models/README.md` index entries for cards not yet
+  written, and one, `-PROPOSED.md`, is a filename *fragment* the regex split.
+
+The scan's precision against real defects was **1 in 11**. Filing all eleven
+would have manufactured ten phantom items - and two of them would have demanded
+that a card **stop disclosing an absence it was right to disclose**. The check
+would have punished the exact behaviour it exists to encourage.
+
+**The rule: a resolution check must distinguish a path cited as evidence from
+one named as absent, named as local, or named as planned.** Requiring every
+filename-shaped string to resolve makes honest disclosure unrepresentable, which
+is a worse outcome than the gap it closes.
+
+Both failure directions cost the same hours. A predicate satisfiable without
+doing the work wastes them silently; a predicate that fails without a fault
+wastes them loudly, and additionally teaches whoever fixes it to write worse
+documentation. Only the first has had a name in this file until now.
+
+### A framing caught before it is written is not a retraction
+
+**Recorded 2026-09-06.** Preparing the owner decision on whether to land the v1
+rows, I had assembled the tradeoff as *"publishing preserves the evidence but
+permanently destroys the blind."* Reading the file and its preregistration
+disproved it: the rows carry no player name, no free-text reason and no source
+URL, the contamination is **already disclosed by the author**, and the
+preregistration's own words are that publishing is what lets a reader *discount*
+it. The claim was the rhetorical-convenience failure `AGENTS.md` names - reaching
+for the objection that sounds most serious rather than the one that can be
+evidenced.
+
+It was never committed. Searching `gates.md`, `handoff.md` and `backlog.md` for
+it returns nothing, which is why this entry says *caught*, not *retracted*.
+**The distinction is load-bearing and worth keeping straight**: claiming to have
+retracted something never written would itself be an unevidenced claim, and this
+file would then contain a false statement about how it came to contain a true
+one. The check that settles it is cheap - grep the three files before writing
+the word "retracted".

@@ -1588,6 +1588,38 @@ citations, 2 unresolved.
    unwritten - but a citation to an unwritten file and a citation to a deleted one
    are indistinguishable to a reader, which is the point.
 
+**Amended 2026-09-06.** Item 1 above is **closed**: both
+`injury_status_conversion_v1_rows.json` (594,951 bytes, 1,934 records) and
+`injury_status_conversion_v1_preregistration.json` were restored unchanged from
+`3285e647` and committed to `main` at `41563ab5`. The rows were inspected before
+landing - eight fields, every value an NBA player id, a date, an id, an integer,
+or a member of a controlled vocabulary; no name, no free text, no URL - and
+`scripts/check_no_secrets.py` passes on the new bytes.
+
+**The remaining work needs a discriminant, and building it without one makes the
+documentation worse.** A broadened scan over all 13 cards found 87 path-shaped
+strings and 11 unresolved, of which **one** was the real defect now closed. Two
+of the other ten were paths a card names *because they are absent*, with the
+reason and the numeric consequence stated in the citing sentence; one was a
+`$env:HOOPS_GM_DATA` command-line argument in a recorded shell block; seven were
+README index entries for unwritten cards; one was a regex fragment. A check that
+simply requires every filename-shaped string to resolve would fail all of them
+and would make honest disclosure of a withheld artifact unrepresentable.
+
+**Added Done criteria:**
+
+- [ ] The check distinguishes a path **cited as evidence** from one **named as
+      absent**, **named as local** (an environment-variable or data-directory
+      path), or **named as planned** (an index entry for an unwritten card).
+      Mechanism is the implementer's choice - an explicit marker, a fenced-block
+      exclusion, an allowlist with a stated reason per entry - but the choice is
+      recorded and the false-positive rate is measured against the 87 known
+      paths, not asserted.
+- [ ] A negative control: `injury-status-conversion-literature.md`'s deliberate
+      citation of the uncommitted census **passes**, and a mutation that removes
+      its disclosing sentence **fails**. Without this arm the check cannot be
+      shown to encourage disclosure rather than punish it.
+
 **Scope it as resolution, not correctness**, exactly as the ADR sibling is scoped:
 assert every cited path exists, and say plainly in the output that this is *not* a
 claim the citation is apt. A card can cite the right file and describe it wrongly;
