@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
@@ -61,6 +62,18 @@ SCHEMA = 1
 #: file exists to treat.
 TOTAL_KEY = "suite.test_time_ms"
 COUNT_KEY = "suite.tests"
+VITEST_CONFIG = Path(__file__).resolve().parents[1] / "frontend" / "vite.config.ts"
+VITEST_TIMEOUT_LOADER = """
+import { loadConfigFromFile } from 'vite'
+const loaded = await loadConfigFromFile(
+  { command: 'serve', mode: 'test', isSsrBuild: false, isPreview: false },
+  process.argv[1],
+)
+if (!loaded) {
+  throw new Error(`Vite did not load ${process.argv[1]}`)
+}
+process.stdout.write(JSON.stringify(loaded.config.test?.testTimeout))
+""".strip()
 
 
 @dataclass(frozen=True)
@@ -209,6 +222,44 @@ def _delta(previous: float | None, current: float, unit: str) -> str:
     return f"{sign}{difference:,.1f}{percent}"
 
 
+def read_vitest_timeout(config: Path | None = None) -> float:
+    """Ask Vite for the resolved timeout instead of parsing TypeScript source."""
+    config = config or VITEST_CONFIG
+    try:
+        completed = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "--eval",
+                VITEST_TIMEOUT_LOADER,
+                str(config.resolve()),
+            ],
+            cwd=config.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            f"Vite timed out while resolving test.testTimeout from {config}"
+        ) from error
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"node exited {completed.returncode}"
+        raise ValueError(f"Vite could not resolve test.testTimeout from {config}: {detail}")
+    try:
+        resolved = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Vite returned an unreadable test.testTimeout for {config}") from error
+    if isinstance(resolved, bool) or not isinstance(resolved, int | float) or resolved <= 0:
+        raise ValueError(
+            f"Vite resolved test.testTimeout as {resolved!r} for {config}; "
+            "expected a positive number"
+        )
+    timeout = float(resolved)
+    return timeout
+
+
 def render_report(
     label: str,
     current: dict[str, Metric],
@@ -217,6 +268,7 @@ def render_report(
     top: int,
     current_source: str = "unknown",
     baseline_source: str = "unknown",
+    test_timeout_ms: float | None = None,
 ) -> str:
     out: list[str] = [f"## Run metrics - {label}", ""]
 
@@ -232,6 +284,13 @@ def render_report(
             f"Current run `{current_source}` against baseline `{baseline_source}`. "
             "The base a delta is measured from is an input to the delta, so it is "
             "named here rather than assumed to be the previous commit."
+        )
+        out.append("")
+
+    if test_timeout_ms is not None:
+        out.append(
+            f"Vitest timeout: {_format(test_timeout_ms, 'ms')} ms. Current individual "
+            "durations below include their share of that configured limit."
         )
         out.append("")
 
@@ -265,13 +324,25 @@ def render_report(
         out.append(f"### Individual tests that moved most (top {top})")
         out.append("")
         if moved:
-            out.append("| test | previous | current | delta |")
-            out.append("| --- | --- | --- | --- |")
+            timeout_heading = (
+                f" | current / {_format(test_timeout_ms, 'ms')} ms timeout"
+                if test_timeout_ms is not None
+                else ""
+            )
+            out.append(f"| test | previous | current{timeout_heading} | delta |")
+            out.append(
+                f"| --- | --- | ---{' | ---' if test_timeout_ms is not None else ''} | --- |"
+            )
             for key in moved:
+                timeout_cell = (
+                    f" | {tests[key].value / test_timeout_ms:.1%}"
+                    if test_timeout_ms is not None
+                    else ""
+                )
                 out.append(
                     f"| `{key.removeprefix('test.')}` | {_format(base_tests[key].value, 'ms')}"
                     f" | {_format(tests[key].value, 'ms')}"
-                    f" | {_delta(base_tests[key].value, tests[key].value, 'ms')} |"
+                    f"{timeout_cell} | {_delta(base_tests[key].value, tests[key].value, 'ms')} |"
                 )
         else:
             out.append("No test shared with the baseline changed duration.")
@@ -334,13 +405,23 @@ def _cmd_report(args: argparse.Namespace) -> int:
             print(f"note: ignoring unusable baseline {args.baseline}: {error}", file=sys.stderr)
             baseline = None
 
+    report_label = label or args.label
+    test_timeout_ms: float | None = None
+    if report_label == "frontend":
+        try:
+            test_timeout_ms = read_vitest_timeout()
+        except (OSError, ValueError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
     report = render_report(
-        label or args.label,
+        report_label,
         current,
         baseline,
         top=args.top,
         current_source=current_source,
         baseline_source=baseline_source,
+        test_timeout_ms=test_timeout_ms,
     )
     print(report)
     sys.stdout.flush()

@@ -387,6 +387,89 @@ def test_the_climb_that_motivated_this_is_visible_as_one_number(
     assert "+3,204.0" in printed
 
 
+def test_frontend_durations_show_their_share_of_the_configured_timeout(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "vite.config.ts"
+
+    def resolved_timeout(*args: Any, **kwargs: Any) -> Any:
+        return metrics.subprocess.CompletedProcess(args, 0, stdout="10000", stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", resolved_timeout)
+    timeout = metrics.read_vitest_timeout(config)
+    baseline = {"test.a::b": metrics.Metric("test.a::b", 1000.0, "ms")}
+    current = {"test.a::b": metrics.Metric("test.a::b", 7500.0, "ms")}
+
+    report = metrics.render_report(
+        "frontend",
+        current,
+        baseline,
+        top=5,
+        test_timeout_ms=timeout,
+    )
+
+    assert "Vitest timeout: 10,000.0 ms" in report
+    assert "| 7,500.0 | 75.0% |" in report
+
+
+@pytest.mark.parametrize("resolved", ["null", "true", "0", '"10000"', "not-json"])
+def test_vitest_timeout_reader_refuses_an_unbound_or_non_positive_value(
+    metrics: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resolved: str,
+) -> None:
+    config = tmp_path / "vite.config.ts"
+
+    def invalid_timeout(*args: Any, **kwargs: Any) -> Any:
+        return metrics.subprocess.CompletedProcess(args, 0, stdout=resolved, stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", invalid_timeout)
+
+    with pytest.raises(ValueError, match=r"test\.testTimeout"):
+        metrics.read_vitest_timeout(config)
+
+
+def test_vitest_timeout_reader_uses_vites_resolved_config(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "vite.config.ts"
+    seen: dict[str, Any] = {}
+
+    def capture_command(*args: Any, **kwargs: Any) -> Any:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return metrics.subprocess.CompletedProcess(args, 0, stdout="10000", stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", capture_command)
+
+    assert metrics.read_vitest_timeout(config) == 10_000
+    command = seen["args"][0]
+    assert "loadConfigFromFile" in command[3]
+    assert command[4] == str(config.resolve())
+    assert seen["kwargs"]["cwd"] == config.parent
+
+
+def test_frontend_report_refuses_to_claim_a_fraction_without_its_configured_limit(
+    metrics: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "frontend", [metrics.Metric("test.a::b", 100.0, "ms")])
+    config = tmp_path / "vite.config.ts"
+    monkeypatch.setattr(metrics, "VITEST_CONFIG", config)
+
+    def missing_timeout(*args: Any, **kwargs: Any) -> Any:
+        return metrics.subprocess.CompletedProcess(args, 0, stdout="", stderr="missing timeout")
+
+    monkeypatch.setattr(metrics.subprocess, "run", missing_timeout)
+
+    assert metrics.main(["report", "--current", str(current)]) == 1
+    assert "test.testTimeout" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("multiplier", [1.1, 2.0, 10.0, 100.0, 1000.0])
 def test_no_magnitude_of_growth_makes_the_report_fail(
     metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], multiplier: float
