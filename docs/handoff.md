@@ -37063,3 +37063,39 @@ the change, not re-derived by me from the diff. I re-derived one - that
 attributed. The enumerated-versus-read gap in the secret scanner is the one I
 would check first, because it is the only one that describes a live gate on
 `main` still printing a reassuring number today.
+
+
+## 2026-09-06 - architect - the fifth debrief, and the one that changed a consumer
+
+**What I did.** Asked the lane behind PR #166 what it held that the repository
+does not. It is the fifth lane debriefed today and the first whose answer changes
+what someone should build next, so it is recorded separately from the other four.
+
+**The finding.** The schedule-grid contract artefact validates **the domain its
+specimen chose, not the domain the response model allows**. Widen
+`game_label: str` to `str | None` and the specimen keeps choosing a string, so
+the bytes are unchanged, the backend check stays green, and the handwritten
+TypeScript equality stays green as well - it describes the chosen domain too. The
+frontend meets its first `null` in a browser, which is precisely the failure the
+artefact was built to prevent. A new enum member behaves identically. Filed as
+`schedule-grid-contract-domain-coverage` and generalised in `gates.md`.
+
+**Two scoping facts the next consumer would otherwise get wrong.** The artefact
+never drives HTTP, so a bare-dict route or body-reshaping middleware leaves
+model-to-fixture agreement green. And the specimen is one cell, so it proves
+shape and not production density; the 630-cell recording remains separate
+evidence.
+
+**Second independent confirmation of two traps already recorded** - a bare
+`python -m pytest` importing `hoops_gm` from a sibling worktree, and
+`gh pr merge --delete-branch` exiting nonzero after the server-side merge had
+already succeeded. Two lanes hitting the same two traps independently is the
+argument for keeping the environment list where a new lane reads it, not in a
+chat.
+
+**Could not verify.** Every claim above is the author's, not re-derived by me
+from the diff; I read `docs/backlog.md:3756-3781` to confirm #166's stated role
+as a precondition, and nothing else. The lane also reported an uncommitted leaf
+enumeration - 16 integer leaves, one boolean, seven integers holding 0 or 1 - and
+correctly flagged it as not durable evidence. I have not rederived it and it is
+cited nowhere.

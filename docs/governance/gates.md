@@ -1009,3 +1009,55 @@ retrying.** The failure mode is a two-phase command that succeeds remotely and
 fails locally, where the error text describes only the half that failed. The same
 call requested remote-branch deletion: the flag was passed, the deletion was
 never observed, and those are different facts.
+
+
+### A specimen validates the domain it chose, not the domain the model allows
+
+The schedule-grid contract artefact serialises one hardcoded
+`ScheduleGridResponse` and compares it with a recursive `_strict_equal` that
+requires `type(recorded) is type(actual)`. That is a real improvement over
+ordinary equality, which would have accepted `false -> 0` and `1 -> 1.0` silently
+because `False == 0` and dict equality delegates recursively - the same
+`bool`-is-an-`int` hazard recorded above, arriving this time through `==` rather
+than through `isinstance`.
+
+**What a specimen cannot see is a widening.** Change `game_label: str` to
+`str | None` and the specimen still chooses a string, so the bytes are identical
+and the check stays green. The handwritten TypeScript equality stays green too,
+because it describes the domain the specimen *chose*, not the domain the model
+now *allows*. The frontend meets its first `null` in a browser - which is the
+exact failure the artefact was built to prevent. Adding an enum member the
+specimen does not carry behaves the same way: green until it is emitted live.
+
+Two further limits, worth stating because a consumer will assume otherwise. The
+artefact never drives HTTP, so a route returning a bare dict, or middleware
+reshaping the body after the response model is constructed, leaves
+model-to-fixture agreement green. And no shape artefact can catch a semantic
+change that preserves type - `games` beginning to mean *remaining* games rather
+than *scheduled* games stays an integer, and stays green.
+
+**Rule: a fixture-based contract test's coverage is its specimen's value set, not
+its model's type domain, and the two drift apart silently.** Derive the specimen
+from the model - both branches of every optional, every member of every enum -
+and fail when the model declares something the specimen never exercises. Filed as
+`schedule-grid-contract-domain-coverage`.
+
+
+### The assertion can be right while the sentence reporting it is wrong
+
+Recording the findings above, my own script printed `CRLF=0` for a file that had
+1,043 of them and `CR 312 -> 11` for a file whose CR count had not moved. Both
+numbers came from `b'\\r\\n'` inside an f-string - a four-byte literal
+backslash-r-backslash-n, not a line ending. The *assertions* in the same script
+used correct escapes and passed, so the file was never in danger. The
+human-readable output was simply lying, and it lied in the direction of alarm.
+
+This is the seventh member of the vacuity family and the first where the check
+succeeded and the *report* failed. It is more dangerous than it looks in both
+directions: had the escapes broken the other way, a corrupted file would have
+printed a reassuring number produced by an expression that never examined it.
+
+**Rule: a byte-level claim must be confirmed by a tool other than the one that
+wrote the bytes.** Two minutes with an independent counter turned a suspected
+2.4 MB corruption into a typo. Do not fix the file until the second tool agrees
+that the file is broken.

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 125 pending - 216 total**
+**91 done - 0 blocked - 126 pending - 217 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -3779,6 +3779,48 @@ Deferred from 2026-08-20 by the coordinator with the mechanism stated: building
 it while backend PR #38 was in final review would have restarted the review
 clock on an otherwise-ready head, and the risk it mitigates has no active source
 until the next increment is scheduled against this contract.
+
+### `schedule-grid-contract-domain-coverage` - Covering the model's domain, not one point in it
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-contract-artefact`
+
+Found on 2026-09-06 by debriefing the lane that built #166 before archiving it.
+The artefact's reach was not written down anywhere its next consumer would read
+it, and #166 is explicitly a **precondition for the next frontend increment**.
+
+`scripts/capture_schedule_grid_contract.py` serialises **one hardcoded
+`ScheduleGridResponse`**: one team, one period, one count, one dated pending game
+with labels, one undated pending game with empty labels and `not_offered`.
+`_strict_equal` compares it type-strictly, so `false -> 0` and `1 -> 1.0` do
+fail. That part is sound and was a review catch - ordinary equality would have
+accepted both.
+
+**It cannot see a widening.** Verified against the implementation by its author:
+
+- Backend widens `game_label: str` to `str | None`. The specimen still chooses a
+  string, the serialized bytes are unchanged, and the backend check stays green.
+  The handwritten TypeScript equality stays green too, because it describes the
+  domain the specimen *chose*, not the domain Pydantic now *allows*. The frontend
+  meets its first `null` at runtime, in a browser - the exact failure this
+  artefact exists to prevent.
+- A new `date_absence_reason` member is added. The specimen carries only `""` and
+  `"not_offered"`, so everything stays green until the value is emitted live.
+
+**Do:** derive the specimen's coverage from the response model instead of
+hand-picking it. Emit both branches of every optional and every member of every
+enumerated field, and **fail the check when the model declares a field or member
+the specimen does not exercise**. That last assertion is the load-bearing one;
+without it this item recreates the same hole one widening later.
+
+**Two scoping facts to carry rather than fix here.** The artefact never drives
+HTTP, so a route returning a bare dict - or middleware reshaping the body after
+`ScheduleGridResponse` is constructed - leaves model-to-fixture agreement green.
+And the specimen is a single cell, so it establishes shape, not production
+density; `schedule-grid-current.recorded.json` remains the separate density
+evidence, and the comment saying so was corrected during #166.
+
+Gate: Code.
 
 ### `schedule-grid-refusal-discriminant` - Distinguishing nine conditions that share one refusal code
 
