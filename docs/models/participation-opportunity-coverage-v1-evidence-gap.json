@@ -25,10 +25,10 @@
     },
     {
       "path": "docs/backlog.md",
-      "start_line": 3508,
-      "end_line": 3546,
+      "start_line": 3623,
+      "end_line": 3661,
       "sha256_lf_normalized_cited_lines": "ac91860437dbb4ef60c99c55d0552784f2c7b84d221b30c5eb96cd99da8f07ba",
-      "line_range_stability": "This range precedes the append point in docs/backlog.md, whose repository contract is append-only.",
+      "line_range_stability": "Pointer only; the sha256 above is the load-bearing check. The previous justification here - that the range precedes an append-only file's append point - was disproven on 2026-09-06, when an in-place amendment to an item earlier in docs/backlog.md moved this range by +115 lines while leaving its bytes identical. docs/backlog.md is not append-only in practice: items are amended and status markers flipped in place. Any edit above this range invalidates these line numbers, and the digest is what detects it.",
       "finding": "The backlog records that no complete independent denominator or unknown share can be calculated from the admitted evidence."
     },
     {

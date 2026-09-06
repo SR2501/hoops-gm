@@ -27,7 +27,7 @@ REPORT_ONLY_COUNT_FIELDS = (
     "unclassified_opportunities",
     "missing_required_provenance_fields",
 )
-EXPECTED_EVIDENCE_SHA256 = "ec92c3253cbbe38ad4f62e8175dfba46c0b640782f7f81d3c87a690a2ad6473d"
+EXPECTED_EVIDENCE_SHA256 = "57b2ca9636513e09706d5d59e5333ad1197fd3b62624e5cfe3c7be585d1053ad"
 
 
 def _evidence() -> dict[str, Any]:
