@@ -36336,3 +36336,65 @@ holdings are still outside the repository.
 backlog items when someone wants them closed; none is urgent. The editable-install trap is
 the one worth fixing structurally rather than documenting, since documentation has not
 stopped it recurring three times in one night.
+
+## 2026-09-06 — architect — PR #171 diagnosed from CI, and a preseason gap it exposed
+
+Lane 4 went quiet without answering either question I put to it, so I derived
+both from CI and the diff rather than leaving them open.
+
+**The failure count I had been carrying was wrong.** `gh pr checks 171` reports
+six failures; that is **one test**, failing in three workflows, each counted
+twice. The test is
+`test_cohort_evidence.py::TestTheCommittedManifestStillDescribesThisCode::test_every_recorded_source_fingerprint_matches_the_file_today`.
+The Postgres `ERROR:` lines in that log are negative-path test noise, not
+failures — the same run reports `1 failed, 2601 passed`. Anyone reading the
+check count alone would size this three to six times too large.
+
+**Cause and remedy.** The lane edited `ingest/nba/parsers.py`, which a live
+cohort manifest fingerprints (`721e0238…` → `49e4ec50…`). The test states its
+own remedy and its own merge gate: regenerate the manifest in the same commit,
+attach `scripts/manifest_leaf_diff.py` output, and **if any leaf outside
+`operator.source_fingerprints` and `operator.commands` moved, it stops for
+`quant`, pre-unblind.** Reading the diff, the change is purely additive
+validation — it raises on implausible tip-off hours and does not alter
+`game_date` for valid data — so I expect no cohort number to move and this to be
+a mechanical regeneration. **That is inference from the diff, not a regeneration
+I ran; it must be confirmed by the leaf diff, not by me.**
+
+**Was the 09:00–23:59 ET bound measured or reasoned?** Reasoned, and the lane
+says so plainly: it comes from league scheduling practice, not from anything the
+payload claims about itself. Better, it names its own falsifier — NBA China
+preseason games have tipped at 7:00am ET, below its floor — and rests safety on
+a caller-scope precondition. I verified that precondition holds
+(`ingest/backfill.py:561-562` constrains to Regular Season/Playoffs, with a raise
+at 508-513), but **the docstring cites `ingest/nba/backfill.py`, which does not
+exist**. The one citation a reader would follow to re-check the bound leads
+nowhere.
+
+**The finding worth keeping — R69.** Chasing that precondition surfaced
+something no single lane could see. The auction is 18 October, which is
+preseason; R40 already says the official injury report covers nothing then.
+Three independent modules refuse preseason, each for a good local reason. And
+`injury_report/backfill.py:748-755` records that preseason **already slipped
+through once**: a mapping collapsed `PRESEASON` into `"Playoffs"`, returned an
+empty slate, and an empty `expected` sequence **passed
+`enforce_expected_game_coverage` vacuously**. The fail-closed gate did not fail;
+it compared nothing and reported success — the same shape as `check_append_only`
+comparing a file to itself after a push, which I proved vacuous the same night.
+The preseason failure mode here is a green check over an empty denominator, in
+the exact season phase the deadline falls in.
+
+**Verified this session, closing a lane's could-not-verify.** Lane 7 declined to
+assert the 596-scorecard store from repository evidence and wrote a truthful
+scope sentence instead; that was the right call. I confirmed it from the running
+service at `/api/v1/reliability/scorecards` (my earlier 404 was a wrong guessed
+path, not a missing store): 596 scorecards, 2,460 scheduled team-games, 1,230
+final, 26,651 player game logs, 43,037 participation rows, recomputed 10:47.
+**This is runtime evidence from one machine, not reproducible in CI** — it
+confirms the number without making it durable.
+
+**Could not verify.** That no cohort number moves under #171's regeneration
+(inferred from the diff; the leaf diff decides it). Whether the other three
+preseason refusals have negative controls proving they reject an empty slate —
+only the injury-report one is documented as having been exercised, by failing.
+Why lane 4 and lane 1 both went quiet.
