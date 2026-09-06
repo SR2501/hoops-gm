@@ -38331,3 +38331,74 @@ measured the composed demo only, and the running store is a different database, 
 the zero intersection is a fact about `seed_demo` and not about the product.
 Whether `scoring-profiles` being `done` while the demo seeds no profile is a gap in
 the seeder or an intended split - I did not read that item.
+
+## 2026-09-06 - architect (delivery) - I went looking for a second over-tight edge and did not find one
+
+**Why I looked.** Retargeting `draft-day-shortlist` earlier today turned the
+owner's headline deliverable from un-startable to READY by removing one edge that
+need not have existed. The obvious next move is to assume there are more. So I
+checked, because assuming would have been the same mistake in a new place.
+
+**Structure, recounted from the file rather than from its header.** 218 items, 91
+done, 127 pending, zero dangling dependency refs. **55 of the 127 pending items
+are dependency-READY.** Of the 72 that are blocked, the concentration is extreme:
+
+| Root blocker | Pending items it holds up | Owner-blocked? |
+|---|---|---|
+| `participation-opportunity-coverage` | **49** | no - blocked on evidence |
+| `fantrax-auction-capture` | 21 | **yes**, live NBA auction room |
+| `mock-ingestion` | 14 | owner-deferred to 13-20 Sept |
+| `blind-mocks` | 12 | owner-deferred to 13-20 Sept |
+| `contingent-value` | 10 | no |
+| `preseason-news-ingest` | 4 | no - deadline-bound, 5 Oct |
+
+**And the big one is correct architecture, not an accident.** The path from
+`auction-values` back to the root is
+`risk-adjusted-valuation` -> `gscore-engine` -> `zscore-engine` -> `expected-games`
+-> `availability-model` -> `participation-opportunity-coverage`. That is the spine
+ADR-007 specifies, in the order it specifies, with availability preceding
+valuation *because it is an input to it*. Retargeting any edge in it is the
+"build valuation first and retrofit availability" rewrite the architect brief
+exists to refuse. **No retarget is available here and none should be attempted.**
+
+**The two edges that looked wrong were read, and they are right.** `schedule-ui`
+depends on `availability-model` and I suspected a UI hostage to a blocked model -
+the exact `draft-day-shortlist` shape. Its description says the deliverable is a
+grid of *"availability-adjusted expected games (scheduled games x p(play))"*. The
+adjusted number **is** the item; without it there is no item. `bridge-overlay`
+reaches the root through `punt-builds` -> the full valuation chain, which is the
+same legitimate spine. Suspicion was cheap, reading was cheaper than a retarget
+would have been, and both survived.
+
+**So the useful finding is a negative one.** The shortlist edge was an outlier, not
+the first of a class. One more retarget is not sitting there waiting to be found,
+and the 49-item concentration is the spine working as designed while its root is
+genuinely blocked on evidence the ingested sources have never been asked for -
+this item's own text establishes that no NBA-side roster-interval or transaction
+table exists anywhere in the schema. **That is not startable as ordinary work**,
+and I have corrected my own task list, which described it as though it were.
+
+**Where the leverage actually is, then:** the 55 READY items, and the fixture gap
+recorded in the entry above, which is Code-gated and blocks the owner's headline
+surface.
+
+**Environment trap, recorded because the symptom misleads.** `git push origin main`
+failed partway through this session with
+`403 ... Permission to SR2501/hoops-gm.git denied to steverones_microsoft`, after
+earlier pushes in the same session had succeeded. It is **not** a permissions
+change: two credentials exist on the machine, the Windows credential manager
+answers first with the wrong account, and `gh` is authenticated as `SR2501` with
+`repo` scope. Selecting the right one per-invocation, leaving no global state
+behind:
+
+    git -c credential.helper= -c credential.helper="!gh auth git-credential" push origin main
+
+Worth knowing because a 403 reads like revoked access and invites an escalation to
+the owner that the situation does not warrant.
+
+**Could not verify.** Whether the 49-item count is stable against items whose
+dependency lines are stale in the other direction - I verified every reference
+resolves and that the spine edges are deliberate, not that every edge in all 218
+items is still wanted. Whether `contingent-value` (10 items) has the over-tight
+shape; I did not read it. Why the credential manager began answering differently
+mid-session.
