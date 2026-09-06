@@ -38136,3 +38136,74 @@ Filed rather than fixed.
   I read the one that was in question. `capture_schedule_grid_contract.py` and
   `capture_openapi.py` are named in `gates.md` as carrying the same blast radius
   and I have not opened either.
+
+## 2026-09-06 — architect (delivery) — the corrective was already in this file, and I did not read it
+
+**Changed:** `docs/governance/gates.md` only, +57 lines inside *What gates cannot
+catch*, recording a failure pattern and one measurement. No code, no ADR status, no
+model protocol, no backlog edit, no owner question.
+
+**What happened.** I reported to the decision thread that an evidence artifact
+proved buying a data feed was the only route to a calibrated availability forecast,
+and that such work could not finish before 18 October. It proves neither. It shows
+that admitted sources cannot construct *the current protocol's* denominator. The
+decision thread corrected me on that, on proposing a visible "uncalibrated" label as
+though it discharged the Model gate, and on putting a false binary — show a labelled
+number or hide useful advice — when scenario, evidence and later-learned forecasts
+are distinct live options and quant's actual proposal was availability sensitivity
+at fixed production, peer assumptions and valuation scale. **All three corrections
+are accepted here without qualification**, and none of the three claims should be
+repeated from this file.
+
+**The part worth keeping.** The corrective was already written down. `docs/handoff.md:37185`
+states that neither "nobody gives that away free" nor "a calibrated model cannot be
+ready by draft day" was established, and `:37215` warns against treating the
+availability veto as proof every other path is impossible. It was written the same
+day, by the thread that owns owner intent, in the file `AGENTS.md` tells every agent
+to read. I had appended **fifteen entries after that line** without reading it.
+
+**Measured rather than asserted:** this file is **38,139 lines, 473 entries across 20
+dates, 41 of them dated 2026-09-06**. `AGENTS.md` says to read it. That instruction is
+not followable as literally written, so what everyone does instead is read the tail —
+and the tail is not where the ruling on your particular claim lives. **Writing it
+down and reading it are now separate problems and only the first has a rule.** The
+house rule "nothing important lives only in a chat" is holding; discoverability is
+what failed.
+
+**Two mechanisms, both cheap.** First, the index already exists: `grep -n '^## 2026-'
+docs/handoff.md` is 473 subject lines, derived, unable to go stale, eighty times
+smaller than the file. Grep it for your subject *before* asserting something the
+project may already have ruled on. Second, it will not tell you *who* ruled — two
+sessions currently write entries headed `— architect —`, interleaved, so I have
+labelled this one `architect (delivery)` going forward. **I did not rewrite the 473
+existing headings**; attribution is recoverable from the prose and the diff would be
+larger than the problem.
+
+**The rule failed inside its own statement, which is the honest part.** The first
+version of that gates.md paragraph said `grep '^## '` returns 473. Running it returns
+**477** — this file opens with a two-line format template, and two entries at `:31509`
+and `:31537` use `##` for an internal subheading, breaking the one-heading-per-entry
+invariant the count rests on. I asserted a number about a command without running the
+command, in the paragraph warning against exactly that, and caught it only because I
+went back to check the paragraph above it. That is the fifth instance in one day of a
+single move: **reaching for the artefact or assertion that is easiest to name or
+sounds most serious over the one actually in play.**
+
+**Why this cannot become a gate.** Of the five, three were claims about bytes and were
+caught by a machine or by re-reading bytes. The one that reached the owner-facing
+thread was unfalsifiable by any test in this repository and was caught by a peer
+session reading the argument. That asymmetry is the argument for the separate decision
+thread existing, and against adding a fifth gate to catch it.
+
+**Verified:** 63 doc/governance tests pass, exit 0. `gates.md` asserted uniformly CRLF
+after both edits (1,340 lines); the insertion guard refused the first attempt because
+the new block was bare-LF, which is the guard working. This file's prefix is
+byte-identical and CR is unchanged.
+
+**Could not verify:** CI for `cefa313a` was still `in_progress` when this was written,
+so the corrected import-provenance guard has not yet had a green Linux run — it
+compares `recorded / "src" == actual`, and that equality is a Windows-derived
+assumption. I have not checked whether any *other* claim I pushed today rests on a ref
+or artefact chosen because its name matched, which is the failure mode above and I have
+found it twice already. I have not audited the two entries with stray `##` subheadings
+to see whether anything else depends on the one-heading-per-entry invariant.

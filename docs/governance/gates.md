@@ -452,6 +452,63 @@ from inside the document, which is why the fix feels finished. Correcting one of
 sites would have left two; after any correction, grep the distinctive phrase or numeral across
 `docs/` and fix every copy or say why one differs.
 
+**Rhetorical convenience has no gate, and on 2026-09-06 one agent made the same move four
+times in one day.** The shape is constant: *reach for the artefact or the assertion that is
+easiest to name, or that sounds most serious, rather than the one actually in play.* (1)
+`direct_url.json` was made the authoritative signal for an editable install because pip
+documents it — when `_editable_impl_*.pth` is what actually mutates `sys.path`, and a stale
+one had been serving another worktree's bytes underneath a green guard. (2) A counterfactual
+sha256 was published as proof that a manifest generator resolves by path; the hex came from a
+local ref named `pr171`, a stale fetch, while the branch actually on disk produced the
+manifest's own value — so there was no counterfactual, only a ref chosen because its name
+matched the pull request. (3) An evidence artifact showing that admitted sources cannot
+construct *one protocol's* denominator was reported as proof that purchasing a feed was the
+only route to a calibrated forecast, and that such work could not finish before 18 October.
+It addresses neither question.
+
+**Note which of those a machine caught.** The first was caught by the live environment and the
+second by its author eleven minutes after pushing; both were claims about bytes, and bytes can
+be re-read. The third was unfalsifiable by any test in this repository and was caught by a peer
+session reading the argument. That asymmetry is the case for a separate review thread existing
+at all, and it is why this section cannot be replaced by a fifth gate: the failures that reach
+the owner are the ones no runner can execute.
+
+**And precision is not evidence.** What carried the second one past its author's own review was
+a full sha256. An exact value signals that *something* was measured without saying what, and it
+reads as more rigorous than the hedge it displaced — the hedge being, in that case, correct.
+Treat an unexplained exact number inside an argument as an unsupported claim wearing a lab coat,
+and ask which command produced it before crediting it.
+
+**The fourth instance is the one with a mechanism behind it, because the corrective already
+existed and went unread.** `docs/handoff.md:37185` — written the same day, by the thread that
+owns owner intent — records that neither *"nobody gives that away free"* nor *"a calibrated
+model cannot be ready by draft day"* was established, and `:37215` warns specifically against
+treating the availability veto as proof that every other path is impossible. Instance (3)
+asserted both, hours later. Its author had read the file's tail and appended **fifteen further
+entries after that line** without ever reading it. `AGENTS.md` instructs every agent to read
+`docs/handoff.md`; the file is **38,139 lines and 473 entries across 20 dates, 41 of them dated
+2026-09-06 alone**. That instruction is not followable as literally written, so what everyone
+actually does is read the tail — and the tail is not where the ruling on your particular claim
+lives. Writing it down and reading it have become separate problems, and only the first has a
+rule.
+
+**The index already exists and nothing points at it.** `grep -n '^## 2026-' docs/handoff.md`
+returns 473 subject lines, eighty times smaller than the file, needing no new artifact and unable
+to go stale because it is derived rather than maintained. Grep it for your subject *before*
+asserting something the project may already have ruled on — the same move as the correction-grep
+above, run before the claim instead of after it. **That sentence was wrong when first written,
+which makes five.** It said `'^## '` and 473, asserted rather than run; the loose pattern returns
+**477**, because the file opens with a two-line format template and two entries use `##` for an
+internal subheading, breaking the one-heading-per-entry invariant the count depends on. It was
+caught by running the command while checking the paragraph three lines above it, which is the
+only reason this one cost nothing. **A number inside an argument is worth exactly the command
+that produced it, and if you cannot name that command you are quoting your own expectation.** **What it will not tell you is who ruled.** Two
+sessions currently write entries headed `- architect -`, interleaved in one file (`:37331`,
+`:37362`, `:37384`, `:37457` are the decision thread's; `:37876` onward are the delivery
+thread's), so a heading fixes date and subject but not authority. Add the role to new headings
+if that matters; do not rewrite 473 existing ones to backfill it, because the attribution is
+recoverable from the prose and the diff would be larger than the problem.
+
 **Which makes this the least reliable section in the repository, and it should say so.** It is
 the one part with nothing executable underneath it, and the class it documents is *believing
 that having written something down changes behaviour*. If a rule here matters, the useful next
