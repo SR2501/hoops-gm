@@ -695,9 +695,14 @@ class TestTheCommittedManifestStillDescribesThisCode:
             "regenerated next. Only a leaf that moves UNDER YOUR EDIT stops for "
             "quant, pre-unblind. Two traps that otherwise fake a movement you did "
             "not cause: hold the --out path fixed across both runs, because "
-            "operator.commands echoes it; and regenerate from the data root, "
-            "never from backend/, which empties operational_artifacts and "
-            "re-nulls trusted_entry_cascade. Note what a green here "
+            "operator.commands echoes it; and run BOTH regenerations from the "
+            "same working directory with the same --report-dir. Either CWD is "
+            "fine differentially - they must simply match. The cascade loader "
+            "resolves data/reports CWD-relative and hard-coded, so a CWD that "
+            "differs between the runs moves trusted_entry_cascade on its own; "
+            "operational_artifacts, which honours an explicit --report-dir, "
+            "does not. ADR-019 records backend/ with an absolute --report-dir "
+            "reproducing the committed manifest exactly. Note what a green here "
             "does NOT say: it compares the manifest against the tree that produced "
             "it, so it is green for whoever ran it. It attests that the bytes agree, "
             "never that the run was authorised."
@@ -714,6 +719,13 @@ class TestTheCommittedManifestStillDescribesThisCode:
         an assert is not executed until it fails, so a superseded instruction can sit
         in a green suite indefinitely.
 
+        The first version of this very message, written the same day, then made a
+        weaker form of the same error: it forbade regenerating from backend/ and
+        said that context "empties operational_artifacts", when ADR-019 records
+        that flag being honoured there and that backend/ reproduces the committed
+        manifest exactly. An instruction whose stated guarantee exceeds what was
+        verified, inside the fix for an instruction that had gone stale.
+
         Pinned here so the message cannot drift from the ADR silently. If the
         amendment is withdrawn - the ADR names an immutable per-cohort store as the
         condition that would flip it - this test fails, and the message must be
@@ -727,11 +739,20 @@ class TestTheCommittedManifestStillDescribesThisCode:
             "which measures an edit against the committed manifest and so charges it "
             "for environment drift it did not cause"
         )
+        assert "never from backend/" not in source, (
+            "the message has reverted to forbidding backend/. ADR-019 records that "
+            "backend/ with an absolute --report-dir reproduces the committed manifest "
+            "exactly, and operational_artifacts honours that flag; differentially the "
+            "requirement is that both runs share a CWD, not that a particular one is used"
+        )
         for required, why in (
             ("DIFFERENTIALLY", "the comparison mode must be named, not implied"),
             ("BETWEEN THOSE TWO", "the baseline is the no-edit control regeneration"),
             ("UNDER YOUR EDIT", "what stops for quant must be scoped to the edit"),
-            ("data root", "regenerating from backend/ silently re-nulls the cascade"),
+            (
+                "same working directory",
+                "a CWD that differs between the two runs fakes cascade movement",
+            ),
         ):
             assert required in source, (
                 f"the fingerprint failure message no longer says {required!r}: {why}"
