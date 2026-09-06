@@ -536,6 +536,19 @@ failure it produces looks like a real bug in your own change.
   `PYTHONPATH` protects a command; it does not protect a machine. Per-worktree virtual
   environments are the structural fix and are not in place, which is why this trap has
   now recurred often enough to be documented three times and fixed once.
+- **A guard now exists, and its worth is entirely local.**
+  `backend/tests/test_import_provenance.py` reads the editable install's
+  `direct_url.json` and fails when it names a tree other than the one the test file
+  lives in. It deliberately does *not* check `hoops_gm.__file__`: `PYTHONPATH` masks
+  the hijack at import time, so a check on the resolved module passes cleanly while
+  the mis-pointed install waits underneath for the first command run without it - a
+  guard that passes because of how you invoked it is the can't-fail shape this file
+  already documents twice. Note carefully what it does **not** change: **CI still
+  cannot see the hijack**, and the new test is green there whatever the developer's
+  machine looks like, because CI installs from the checkout it is testing. It is a
+  test whose entire value is realised outside CI, which is unusual enough to say out
+  loud. Per-worktree virtual environments remain the structural fix; this only makes
+  the class **loud** instead of silent, and four mutants confirm it can fail.
 
 
 ### Ahead-of-origin is not a measure of unmerged work

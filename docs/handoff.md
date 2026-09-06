@@ -37794,3 +37794,81 @@ Also landed: the stranded 2026-08-17 quant design entry recovered from
 - **Whether any *other* model-assignment premise in the plan is similarly
   unchecked.** I checked the one the plan flagged. It flagged one; that is not
   evidence it was the only one.
+
+## 2026-09-06 - architect - making the editable-install hijack loud, and a mutant that caught me
+
+`gates.md` documents *"The import you got is not the tree you are in"* three
+times and had fixed it once: a machine-global editable install is a singleton, so
+whichever checkout last ran `pip install -e` owns `import hoops_gm` for every
+checkout on the machine. It caused three false diagnoses in one night, one of
+which rewrote working `alembic` code before being withdrawn. The recorded
+structural fix - per-worktree virtual environments - is not in place and is
+currently blocked behind worktree cleanup, which is itself blocked on the owner.
+
+So I built the cheaper half instead: `backend/tests/test_import_provenance.py`,
+which fails when the editable install points somewhere other than the tree the
+test lives in.
+
+**The design decision worth recording is what it reads.** The obvious check is
+`hoops_gm.__file__`, and it would have been worthless here, because our local
+test invocation pins `PYTHONPATH` - the import resolves correctly through the
+path entry while the hijacked install sits underneath it, undetected, waiting for
+the first command run without it. So the guard reads the install's own
+`direct_url.json`, which `PYTHONPATH` cannot mask. **A check that passes because
+of how you invoked it is not a check**, and that is the third time this week the
+same shape has turned up.
+
+**A mutant caught me doing exactly what I had just warned against.** My first
+version asserted `source == expected` inline, and `assert source == source`
+**survived** - I had unit-tested the *helper* that computes the path and never
+the comparison that uses it, so the assertion's operands were only ever exercised
+in an environment where they agree. Extracting `hijack_message(source, expected)`
+made the comparison testable; 4/4 mutants now caught, harness restores the file
+byte-identical. Writing the mutation harness was worth more than writing the
+test.
+
+**What it does not do.** CI still cannot see this, and the new test is green
+there regardless of the machine, because CI installs from the checkout it is
+testing. Its entire value is local. It makes the class loud rather than absent;
+per-worktree venvs remain the real fix.
+
+**Then I ran the check I had just written down as unverified, and it found
+something.** `direct_url.json` names `C:/Users/steverones/hoops-gm/backend`, so
+**all five live worktrees are mis-pointed at the main checkout right now** -
+`sr2501-bookish-barnacle`, `-didactic-robot`, `-miniature-umbrella`,
+`-supreme-waddle`, `-symmetrical-lamp`. Any Python run inside them without a
+pinned `PYTHONPATH` is executing main's bytes.
+
+One of those is not idle. `sr2501-symmetrical-lamp` holds the session
+regenerating the **#171 cohort fingerprint manifest**, and the file that manifest
+fingerprints is `ingest/nba/parsers.py` - precisely the file that branch edits. If
+the regeneration locates sources through the imported package rather than by path
+from the repo root, it would fingerprint main's `parsers.py` and commit it as the
+branch's: well-formed, locally green, and wrong, as the reference every later
+comparison is made against. That is the *"blast radius is evidence, not only
+tests"* bullet in `gates.md`, arriving live rather than as a lesson. I sent that
+session the content-probe from gates.md
+(`hasattr(parsers, "_EARLIEST_PLAUSIBLE_TIPOFF_HOUR")` - `True` on the branch,
+`False` on main) and told it to pin `PYTHONPATH` rather than reinstall, because
+`pip install -e .` from a worktree repoints the singleton at itself and hijacks
+everyone else, including sessions running at that moment.
+
+Full suite green, `ruff` clean, `mypy` Success on 270 source files.
+
+**Could not verify.**
+
+- **That the guard fires in a genuine hijack**, as opposed to a simulated one. I
+  proved it fails against a synthetic foreign path and against four mutants; I
+  did not run `pip install -e .` from a sibling worktree to re-create the real
+  condition, because doing so would hijack this machine's imports on purpose
+  while other sessions are running against it.
+- **That `direct_url.json` is always present.** It is a standard pip artefact and
+  it is present here, but the test skips when it is absent, and a skip is a
+  non-answer. If a future install method omits it, this guard goes quiet rather
+  than loud - the failure mode I would least like it to have.
+- **Whether the #171 session was actually harmed.** I established the *condition*
+  and warned it; I did not establish that its manifest tooling resolves sources
+  by import rather than by path, which is the step that decides whether the
+  condition matters. Only that session can check it from inside its worktree, and
+  I have deliberately not gone and looked, because two agents fixing the same
+  worktree's import path at once is how it gets repointed twice.
