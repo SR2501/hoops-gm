@@ -1293,9 +1293,7 @@
     "A report observation with no participation row stays unknown. The authoritative ledger can be silent for a full absence, and silence is never converted into an outcome.",
     "Reachability is bounded by the candidate anchors documented in docs/adapters/nba-injury-report.md: a report published far from an anchor instant is not recovered and is not claimed to be.",
     "Raw PDFs and JSON captures, the checkpoint, the coverage and expected-game reports and the SQLite database remain gitignored operational state. This manifest is the repository-safe evidence derived from them.",
-    "Capture timestamps in source_capture_summary record when requests were made. They are provenance, not reproducible values: a fresh live sweep necessarily produces different ones.",
-    "UNVERIFIED, NOT ZERO: stages 1-2 (official expected slate, and games missing from ingest) are null because the expected-game-slate report persisted for this season was computed against a different date range, and range-mismatched evidence is discarded rather than presented as if it answered this question. The numbers that ARE reported here do not depend on it. Populating it requires a backfill run over this exact range, which re-probes every candidate timestamp that previously returned 404 -- those are not cached, so it is not free.",
-    "UNVERIFIED, NOT ZERO: stages 5-8 (candidate report timestamps attempted, quarantined, forbidden and not-yet-published) are null because the coverage report persisted for this season was computed against a different date range, and range-mismatched evidence is discarded rather than presented as if it answered this question. The numbers that ARE reported here do not depend on it. Populating it requires a backfill run over this exact range, which re-probes every candidate timestamp that previously returned 404 -- those are not cached, so it is not free."
+    "Capture timestamps in source_capture_summary record when requests were made. They are provenance, not reproducible values: a fresh live sweep necessarily produces different ones."
   ],
   "operational_artifacts": {
     "directory_present": true,
@@ -1334,7 +1332,7 @@
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "e76efdf339298ed9e8012f6cf799c13acfd120c2be2a62669719490fba606a8c",
       "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "9338478da4cae2fd25332219204c4de5fd6616422f55e32f58b191b76040d91d",
       "backend/src/hoops_gm/ingest/injury_report/merge_stores.py": "075c1b2d396446d9018d7f5f94cd46cea5fa37184685f48eae590faec7198f22",
-      "backend/src/hoops_gm/ingest/nba/parsers.py": "721e0238a8d63e8cbfd8c2f058c243d4bbf2aef166015fd137657e0602c1bb49"
+      "backend/src/hoops_gm/ingest/nba/parsers.py": "79cd1b9332a181fb633583403d47fd8897a8a6e573fc42a440d5823ddf85d8a7"
     }
   },
   "participation_join": {
@@ -1429,7 +1427,7 @@
   "schema_version": 2,
   "scope": {
     "end_game_date": "2026-04-12",
-    "expected_games": null,
+    "expected_games": 1230,
     "game_dates": 164,
     "games_in_scope": 1230,
     "games_missing_tipoff": 3,
@@ -1449,44 +1447,44 @@
       "total_uncompressed_bytes": 48032938
     },
     "nba_stats/BoxScoreSummaryV3": {
-      "captures": 1227,
-      "distinct_content_sha256": 1227,
+      "captures": 4917,
+      "distinct_content_sha256": 4917,
       "first_fetched_at": "2026-08-22T05:22:44.432448+00:00",
-      "last_fetched_at": "2026-08-22T06:09:37.735132+00:00",
-      "sha256_sorted_capture_identity": "c67fdb58a8f3f2ad792fd3b755d1694b4fd696f88a98cc3f4b838ae426e27ec2",
-      "total_uncompressed_bytes": 21421055
+      "last_fetched_at": "2026-09-02T04:48:37.537245+00:00",
+      "sha256_sorted_capture_identity": "2bb8740382ab51558388c3392a2db037ab7d1d3d76f9846aba15a116d260ca54",
+      "total_uncompressed_bytes": 85922009
     },
     "nba_stats/BoxScoreTraditionalV3": {
-      "captures": 1230,
-      "distinct_content_sha256": 1230,
+      "captures": 4920,
+      "distinct_content_sha256": 4920,
       "first_fetched_at": "2026-08-22T05:22:44.187640+00:00",
-      "last_fetched_at": "2026-08-22T06:09:36.696466+00:00",
-      "sha256_sorted_capture_identity": "d3b3a26b3144ab035f65717afefddc1cf2ace9ff9e3abd00f5e63409efcd074a",
-      "total_uncompressed_bytes": 24352565
+      "last_fetched_at": "2026-09-02T04:48:36.428452+00:00",
+      "sha256_sorted_capture_identity": "b039d3eefca6a8bbe933b69832a03bf45899abe2acae25c82afc8900b07df3d6",
+      "total_uncompressed_bytes": 97342625
     },
     "nba_stats/CommonAllPlayers": {
-      "captures": 1,
-      "distinct_content_sha256": 1,
+      "captures": 5,
+      "distinct_content_sha256": 5,
       "first_fetched_at": "2026-08-22T00:24:01.620777+00:00",
-      "last_fetched_at": "2026-08-22T00:24:01.620777+00:00",
-      "sha256_sorted_capture_identity": "85738d5e3df90fa3a2a984ac29d3a8d05f38a62f9dfb1fad3d5eeaf4a293770f",
-      "total_uncompressed_bytes": 723120
+      "last_fetched_at": "2026-09-02T04:52:26.626965+00:00",
+      "sha256_sorted_capture_identity": "c775acf952ce05bb5af9bf1be9e97637d29990bb1dd895d4bc246e3b08dcf631",
+      "total_uncompressed_bytes": 3618636
     },
     "nba_stats/LeagueGameFinder": {
-      "captures": 1,
-      "distinct_content_sha256": 1,
+      "captures": 5,
+      "distinct_content_sha256": 5,
       "first_fetched_at": "2026-08-22T00:24:23.739802+00:00",
-      "last_fetched_at": "2026-08-22T00:24:23.739802+00:00",
-      "sha256_sorted_capture_identity": "e59a6e1a3b2caf5c4a65fca539c96868ec6f1afa06f760a71e226416b0e2a2d0",
-      "total_uncompressed_bytes": 461424
+      "last_fetched_at": "2026-09-02T04:03:20.564682+00:00",
+      "sha256_sorted_capture_identity": "70cd7be331be989de72dfaac09130f7fd1a9fc1c59aadbd441d01604dbe2764e",
+      "total_uncompressed_bytes": 2304768
     },
     "nba_stats/PlayerGameLogs": {
-      "captures": 1,
-      "distinct_content_sha256": 1,
+      "captures": 5,
+      "distinct_content_sha256": 5,
       "first_fetched_at": "2026-08-22T00:24:25.971366+00:00",
-      "last_fetched_at": "2026-08-22T00:24:25.971366+00:00",
-      "sha256_sorted_capture_identity": "3c6175fc7116f2abe596139ba689503807a1c05c117fbf0357c514b0d064e4ed",
-      "total_uncompressed_bytes": 11844159
+      "last_fetched_at": "2026-09-02T04:03:21.306290+00:00",
+      "sha256_sorted_capture_identity": "af62f6d5310cb609decbff8948dd4e38db2580156c3b38c67caa71e6c9bc523f",
+      "total_uncompressed_bytes": 58929954
     },
     "nba_stats/ScheduleLeagueV2": {
       "captures": 1,
@@ -1573,10 +1571,10 @@
     "reason": "The LeagueGameFinder parser behind the invalidated cohort built a game only when both reciprocal team rows were recognised, and assigned both rows to one side when they repeated the canonical MATCHUP string, so an unpaired entry was silently dropped. Every figure in the invalidated manifest was recomputed here from corrected sources rather than carried forward."
   },
   "trusted_entry_cascade": {
-    "candidate_forbidden_403": null,
-    "candidate_not_available_404": null,
-    "candidate_quarantined_unscoped": null,
-    "candidates_attempted": null,
+    "candidate_forbidden_403": 0,
+    "candidate_not_available_404": 0,
+    "candidate_quarantined_unscoped": 0,
+    "candidates_attempted": 643,
     "canonical_player_games": 13789,
     "canonical_player_games_player_resolved": 13654,
     "entries_in_scope": 69917,
@@ -1585,12 +1583,12 @@
     "entries_resolved_game_id": 69659,
     "entries_resolved_player_id": 63438,
     "entries_with_listed_status": 63929,
-    "expected_games": null,
+    "expected_games": 1230,
     "games_legacy_excluded": 0,
     "games_observed": 1227,
     "games_unresolved_evidence": 0,
-    "mastheads_recovered": null,
-    "missing_from_ingest": null,
+    "mastheads_recovered": 582,
+    "missing_from_ingest": 0,
     "unresolved_game_id_sample": [
       [
         "2026-01-08",

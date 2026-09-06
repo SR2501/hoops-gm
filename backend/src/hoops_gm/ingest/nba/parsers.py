@@ -1022,7 +1022,69 @@ def parse_box_score_traditional_v3(
     return box_scores, participation
 
 
-def _local_game_date(body: dict[str, Any], tipoff: datetime | None, *, endpoint: str) -> date:
+#: No **regular-season or playoff** NBA game has ever tipped off outside this
+#: Eastern local window — not even the earliest Christmas Day slate (noon ET)
+#: or the latest West Coast game (10:30pm ET for a 7:30pm Pacific tip). This
+#: is knowledge the box-score payload does not itself supply: it comes from
+#: the league's own scheduling practice, not from anything ``gameEt`` or
+#: ``gameTimeUTC`` claims about themselves. An hour outside this range means
+#: one of those fields has been corrupted in a way that is internally
+#: consistent and therefore invisible to any check that only compares the
+#: payload against itself.
+#:
+#: The qualifier matters: NBA China preseason games have tipped as early as
+#: 7:00am ET, below this floor. This bound is safe only because every current
+#: caller — ``backend/src/hoops_gm/ingest/backfill.py``, one package *above*
+#: this module, not a sibling ``ingest/nba/backfill.py``, which does not exist
+#: — reaches ``LeagueGameFinder`` only with a scope of ``"Regular Season"`` or
+#: ``"Playoffs"``, and so never reaches a preseason game. Two mechanisms there
+#: hold that precondition up, and both are worth checking before relying on
+#: it: the ``--season-type`` argument's ``choices`` tuple, which admits no
+#: third value, and ``_league_game_finder_season_type``, which raises on any
+#: other label rather than falling through to playoffs. Widen that scope
+#: before trusting this bound against preseason box scores.
+_EARLIEST_PLAUSIBLE_TIPOFF_HOUR: Final = 9
+_LATEST_PLAUSIBLE_TIPOFF_HOUR: Final = 23
+
+
+def _assert_plausible_tipoff_hour(
+    hour: int, *, source_field: str, game_id: str, endpoint: str
+) -> None:
+    if not (_EARLIEST_PLAUSIBLE_TIPOFF_HOUR <= hour <= _LATEST_PLAUSIBLE_TIPOFF_HOUR):
+        raise SourceContractError(
+            f"{source_field} implies a {hour:02d}:xx Eastern tip-off for game {game_id}, "
+            f"outside the plausible {_EARLIEST_PLAUSIBLE_TIPOFF_HOUR:02d}:00-"
+            f"{_LATEST_PLAUSIBLE_TIPOFF_HOUR:02d}:59 window; the NBA has never scheduled a "
+            "game there, so this is treated as a corrupted field rather than a real game",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+
+def _mislabelled_local_hour(value: Any) -> int | None:
+    """Read the hour ``gameEt`` claims, without believing its false ``Z`` marker.
+
+    ``gameEt`` is Eastern wall-clock time wearing a UTC suffix — the hour it
+    states is the real local hour even though the zone label lying about it.
+    Read as text, the same way :func:`as_date` reads the date, rather than
+    through an aware-UTC parse that would take the lie at face value and shift
+    the hour along with the zone.
+    """
+    if isinstance(value, datetime):
+        return value.hour
+    text = str(value or "").strip()
+    if "T" not in text:
+        return None
+    time_part = text.split("T", 1)[1]
+    try:
+        return int(time_part[:2])
+    except ValueError:
+        return None
+
+
+def _local_game_date(
+    body: dict[str, Any], tipoff: datetime | None, *, endpoint: str, game_id: str
+) -> date:
     """The date the game belongs to, which is its **local** date, not its UTC one.
 
     ``nba_games.game_date`` means the local calendar date, because fantasy days
@@ -1043,19 +1105,61 @@ def _local_game_date(body: dict[str, Any], tipoff: datetime | None, *, endpoint:
     :func:`as_utc_datetime`, which would take the ``Z`` at face value and
     produce an instant five hours wrong.
 
+    That earlier bug is now caught even if it recurs, by two checks that do
+    not just re-parse the same field more carefully — a self-consistency
+    check inside one payload cannot catch a payload that is internally
+    consistent and wrong:
+
+    * **Plausibility bound.** Whichever of ``gameEt`` and ``gameTimeUTC``
+      offers a time is checked against the Eastern tip-off window the NBA
+      actually schedules within — a fact the payload itself never states.
+    * **Sibling cross-check.** When both fields are present they describe the
+      same instant and must therefore name the same Eastern calendar date;
+      disagreement is a contract error, not a tie-break in favour of either
+      field.
+
     Falls back to the tip-off instant **converted to Eastern** only when
     ``gameEt`` is absent — never to its raw UTC date, which is the bug this
     function exists to prevent.
     """
     local = body.get("gameEt")
+    et_date: date | None = None
+    et_hour: int | None = None
     if local:
-        return as_date(local, endpoint=endpoint)
+        et_date = as_date(local, endpoint=endpoint)
+        et_hour = _mislabelled_local_hour(local)
+
+    tipoff_local_date: date | None = None
+    tipoff_local_hour: int | None = None
     if tipoff is not None:
-        # Last resort, and still converted rather than truncated: the UTC date
-        # of a 7:30pm Eastern tip-off is the following day. `ZoneInfo` rather
-        # than a fixed -5 offset, because the NBA season crosses a daylight
-        # saving boundary in March.
-        return tipoff.astimezone(NBA_LOCAL_TIMEZONE).date()
+        # `ZoneInfo` rather than a fixed -5 offset, because the NBA season
+        # crosses a daylight saving boundary in March.
+        tipoff_local = tipoff.astimezone(NBA_LOCAL_TIMEZONE)
+        tipoff_local_date = tipoff_local.date()
+        tipoff_local_hour = tipoff_local.hour
+
+    if et_hour is not None:
+        _assert_plausible_tipoff_hour(
+            et_hour, source_field="gameEt", game_id=game_id, endpoint=endpoint
+        )
+    if tipoff_local_hour is not None:
+        _assert_plausible_tipoff_hour(
+            tipoff_local_hour, source_field="gameTimeUTC", game_id=game_id, endpoint=endpoint
+        )
+
+    if et_date is not None and tipoff_local_date is not None and et_date != tipoff_local_date:
+        raise SourceContractError(
+            f"gameEt names {et_date.isoformat()} but gameTimeUTC's Eastern date is "
+            f"{tipoff_local_date.isoformat()} for game {game_id}; these describe the same "
+            "tip-off instant and must agree, so neither is preferred over the other",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+    if et_date is not None:
+        return et_date
+    if tipoff_local_date is not None:
+        return tipoff_local_date
     raise SourceContractError(
         "no gameEt and no gameTimeUTC, so the game has no date",
         source=SOURCE,
@@ -1149,7 +1253,7 @@ def parse_box_score_summary_v3(payload: Any) -> tuple[NbaGameRecord | None, Game
             nba_game_id=game_id,
             season="",
             season_type="regular",
-            game_date=_local_game_date(body, tipoff, endpoint=endpoint),
+            game_date=_local_game_date(body, tipoff, endpoint=endpoint, game_id=game_id),
             home_team_id=home_id,
             away_team_id=away_id,
             home_score=as_int(home_team.get("score")),
