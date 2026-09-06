@@ -27,15 +27,28 @@ REPORT_ONLY_COUNT_FIELDS = (
     "unclassified_opportunities",
     "missing_required_provenance_fields",
 )
-EXPECTED_EVIDENCE_SHA256 = "f8e6cfd104f3c3b561b17ddc804c12339ea40f8588b2b4f418ce6c29bb2a3ff3"
+EXPECTED_EVIDENCE_SHA256 = "ec92c3253cbbe38ad4f62e8175dfba46c0b640782f7f81d3c87a690a2ad6473d"
 
 
 def _evidence() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(EVIDENCE.read_text(encoding="utf-8")))
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _lf_normalized(content: bytes) -> bytes:
+    return content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _lf_sha256(path: Path) -> str:
+    return hashlib.sha256(_lf_normalized(path.read_bytes())).hexdigest()
+
+
+def _cited_lines_sha256(path: Path, *, start_line: int, end_line: int) -> str:
+    if start_line < 1 or end_line < start_line:
+        raise ValueError("cited line range must be positive and ascending")
+    lines = _lf_normalized(path.read_bytes()).splitlines(keepends=True)
+    if end_line > len(lines):
+        raise ValueError(f"cited line {end_line} exceeds {path}'s {len(lines)} lines")
+    return hashlib.sha256(b"".join(lines[start_line - 1 : end_line])).hexdigest()
 
 
 def _calculable_report(*, unknowns: tuple[int, int, int, int] = (5, 5, 5, 5)) -> dict[str, Any]:
@@ -204,11 +217,42 @@ def test_report_shape_and_exact_shares_are_part_of_the_predicate() -> None:
 def test_evidence_citations_are_bound_to_the_exact_committed_files() -> None:
     evidence = _evidence()
 
-    assert _sha256(EVIDENCE) == EXPECTED_EVIDENCE_SHA256
+    assert _lf_sha256(EVIDENCE) == EXPECTED_EVIDENCE_SHA256
     for citation in evidence["evidence"]:
-        assert _sha256(REPO_ROOT / citation["path"]) == citation["sha256"]
+        assert (
+            _cited_lines_sha256(
+                REPO_ROOT / citation["path"],
+                start_line=citation["start_line"],
+                end_line=citation["end_line"],
+            )
+            == citation["sha256_lf_normalized_cited_lines"]
+        )
     for census in evidence["direct_censuses"].values():
-        assert _sha256(REPO_ROOT / census["path"]) == census["sha256"]
+        assert _lf_sha256(REPO_ROOT / census["path"]) == census["sha256_lf_normalized"]
+
+
+def test_cited_line_digest_is_independent_of_checkout_line_endings(tmp_path: Path) -> None:
+    lf = tmp_path / "lf.md"
+    crlf = tmp_path / "crlf.md"
+    text = "before\ncited one\ncited two\nafter\n"
+    lf.write_bytes(text.encode("utf-8"))
+    crlf.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+    assert _cited_lines_sha256(lf, start_line=2, end_line=3) == _cited_lines_sha256(
+        crlf, start_line=2, end_line=3
+    )
+
+
+def test_cited_line_digest_ignores_appends_after_the_range(tmp_path: Path) -> None:
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text("before\ncited\n", encoding="utf-8")
+    before = _cited_lines_sha256(backlog, start_line=2, end_line=2)
+
+    # This stability is safe for the real backlog citation only because backlog.md
+    # is append-only and the cited passage precedes its append point.
+    backlog.write_text("before\ncited\nlater append\n", encoding="utf-8")
+
+    assert _cited_lines_sha256(backlog, start_line=2, end_line=2) == before
 
 
 def test_mutating_a_required_preclassification_flag_cannot_proceed() -> None:

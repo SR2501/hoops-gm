@@ -18,20 +18,24 @@
   "evidence": [
     {
       "path": "docs/adapters/nba-official-transactions.md",
-      "sha256": "5e08dd49d1b289ff45442cd162ae14632e2a0588b44a302ee57f7e89a4f0a269",
-      "lines": "120-207",
+      "start_line": 120,
+      "end_line": 207,
+      "sha256_lf_normalized_cited_lines": "ee24e338255446b3462cbbe7380531faaafc92f332e30a0b561efcc474ff5ab0",
       "finding": "The admitted archives emit transaction evidence only, omit required event classes and effective instants, and cannot establish a complete player-game denominator."
     },
     {
       "path": "docs/backlog.md",
-      "sha256": "407fb4712b0189df3971b7126d03adc2ec40eb95cd1884116d7e8e4c53ee27b8",
-      "lines": "3508-3546",
+      "start_line": 3508,
+      "end_line": 3546,
+      "sha256_lf_normalized_cited_lines": "ac91860437dbb4ef60c99c55d0552784f2c7b84d221b30c5eb96cd99da8f07ba",
+      "line_range_stability": "This range precedes the append point in docs/backlog.md, whose repository contract is append-only.",
       "finding": "The backlog records that no complete independent denominator or unknown share can be calculated from the admitted evidence."
     },
     {
       "path": "docs/models/participation-opportunity-coverage-preregistration.md",
-      "sha256": "23120e43c232940257293e0a76efbf97e50e99e12a706dbcee3f5a9aa7185fcd",
-      "lines": "76-151",
+      "start_line": 76,
+      "end_line": 151,
+      "sha256_lf_normalized_cited_lines": "1371c928dc20f6bf81154d538ba741e9f1c9a375766e7cea89a61335471bfe92",
       "finding": "Classification is forbidden until the source registry, reconstruction contract, roster manifest, and schedule manifest are frozen and independently reproduced."
     }
   ],
@@ -60,19 +64,19 @@
   "direct_censuses": {
     "2022-23": {
       "path": "docs/adapters/participation-ledger-2022-23-coverage.json",
-      "sha256": "9f6151a271e9c2c17381cdd19aab167b55cc13024944d5082e77288f95940bf8"
+      "sha256_lf_normalized": "476221fcab4053832d0a62beeecbfec8b445082bb6baa9a238cba7ee363db070"
     },
     "2023-24": {
       "path": "docs/adapters/participation-ledger-2023-24-coverage.json",
-      "sha256": "13dd2e9773210cd92d7da3ade3059810899dcf85fd4168cf6fac5512e0ccb6e0"
+      "sha256_lf_normalized": "b158eec09b6b16df9ef044bd25a22271871ccb79a8c783c2fe563239fb8beb5a"
     },
     "2024-25": {
       "path": "docs/adapters/participation-ledger-2024-25-coverage.json",
-      "sha256": "f8455eeb4b4834f7776f66bd98368389079bcc46e2fc370091b4b9692178eb69"
+      "sha256_lf_normalized": "111a6694e247895857e9f80dfd2e6cedcf4b2205017cd91857c17ab3d12a40cd"
     },
     "2025-26": {
       "path": "docs/adapters/participation-ledger-2025-26-direct-coverage.json",
-      "sha256": "4314b732b7ec3c827d6d9897042866f5f2cc980653d70095ede216f246841441"
+      "sha256_lf_normalized": "86b0533d31e9e1e8639127be4ced995a72382a41de069ac3581b7596592d339c"
     }
   },
   "total_opportunities": null,
