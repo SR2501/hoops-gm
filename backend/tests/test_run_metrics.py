@@ -352,7 +352,9 @@ def test_collect_then_report_round_trips(
 
 
 def test_the_climb_that_motivated_this_is_visible_as_one_number(
-    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The actual failure: 1,094 ms -> 4,298 ms, invisible one run at a time."""
     baseline = tmp_path / "baseline.json"
@@ -377,6 +379,7 @@ def test_the_climb_that_motivated_this_is_visible_as_one_number(
             metric(metrics.TOTAL_KEY, 5643.0, "ms"),
             metric(metrics.COUNT_KEY, 194.0, "count"),
         ],
+        test_timeout_ms=10_000,
     )
 
     assert metrics.main(["report", "--current", str(current), "--baseline", str(baseline)]) == 0
@@ -387,9 +390,207 @@ def test_the_climb_that_motivated_this_is_visible_as_one_number(
     assert "+3,204.0" in printed
 
 
+def test_frontend_durations_show_their_share_of_the_configured_timeout(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "vite.config.ts"
+
+    def resolved_timeout(*args: Any, **kwargs: Any) -> Any:
+        return metrics.subprocess.CompletedProcess(args, 0, stdout="10000", stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", resolved_timeout)
+    timeout = metrics.read_vitest_timeout(config)
+    baseline = {"test.a::b": metrics.Metric("test.a::b", 1000.0, "ms")}
+    current = {"test.a::b": metrics.Metric("test.a::b", 7500.0, "ms")}
+
+    report = metrics.render_report(
+        "frontend",
+        current,
+        baseline,
+        top=5,
+        test_timeout_ms=timeout,
+    )
+
+    assert "Vitest timeout: 10,000.0 ms" in report
+    assert "| 7,500.0 | 75.0% |" in report
+
+
+@pytest.mark.parametrize("resolved", ["null", "true", "0", '"10000"', "not-json"])
+def test_vitest_timeout_reader_refuses_an_unbound_or_non_positive_value(
+    metrics: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resolved: str,
+) -> None:
+    config = tmp_path / "vite.config.ts"
+
+    def invalid_timeout(*args: Any, **kwargs: Any) -> Any:
+        return metrics.subprocess.CompletedProcess(args, 0, stdout=resolved, stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", invalid_timeout)
+
+    with pytest.raises(ValueError, match=r"test\.testTimeout"):
+        metrics.read_vitest_timeout(config)
+
+
+def test_vitest_timeout_reader_uses_vites_resolved_config(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "vite.config.ts"
+    seen: dict[str, Any] = {}
+
+    def capture_command(*args: Any, **kwargs: Any) -> Any:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return metrics.subprocess.CompletedProcess(args, 0, stdout="10000", stderr="")
+
+    monkeypatch.setattr(metrics.subprocess, "run", capture_command)
+
+    assert metrics.read_vitest_timeout(config) == 10_000
+    command = seen["args"][0]
+    assert "loadConfigFromFile" in command[3]
+    assert command[4] == str(config.resolve())
+    assert seen["kwargs"]["cwd"] == config.parent
+
+
+def test_frontend_report_refuses_to_claim_a_fraction_without_its_configured_limit(
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "frontend", [metrics.Metric("test.a::b", 100.0, "ms")])
+
+    assert metrics.main(["report", "--current", str(current)]) == 1
+    assert "has no resolved test_timeout_ms" in capsys.readouterr().err
+
+
+def test_frontend_report_needs_no_node_toolchain_when_artifact_carries_timeout(
+    metrics: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(
+        current,
+        "frontend",
+        [metrics.Metric("test.a::b", 100.0, "ms")],
+        test_timeout_ms=10_000,
+    )
+
+    def node_must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("report attempted to resolve Vite instead of reading the artifact")
+
+    monkeypatch.setattr(metrics, "read_vitest_timeout", node_must_not_run)
+
+    assert metrics.main(["report", "--current", str(current)]) == 0
+    assert "Vitest timeout: 10,000.0 ms" in capsys.readouterr().out
+
+
+def test_frontend_collect_fails_loudly_when_vite_cannot_resolve_the_timeout(
+    metrics: ModuleType,
+    vitest_report: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "metrics.json"
+
+    def missing_vite(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("Vite could not resolve test.testTimeout")
+
+    monkeypatch.setattr(metrics, "read_vitest_timeout", missing_vite)
+
+    assert (
+        metrics.main(
+            [
+                "collect",
+                "--label",
+                "frontend",
+                "--vitest",
+                str(vitest_report),
+                "--root",
+                str(vitest_report.parent),
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert not out.exists()
+    assert "Vite could not resolve test.testTimeout" in capsys.readouterr().err
+
+
+def test_backend_report_refuses_a_vitest_timeout(
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(
+        current,
+        "backend",
+        [metrics.Metric("test.a::b", 100.0, "ms")],
+        test_timeout_ms=10_000,
+    )
+
+    assert metrics.main(["report", "--current", str(current)]) == 1
+    assert "unexpectedly carries test_timeout_ms" in capsys.readouterr().err
+
+
+def test_report_refuses_an_unrecognised_label_instead_of_silently_omitting_headroom(
+    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "front-end", [metrics.Metric("test.a::b", 100.0, "ms")])
+
+    assert metrics.main(["report", "--current", str(current)]) == 1
+    assert "unrecognised report label 'front-end'" in capsys.readouterr().err
+
+
+def test_collect_refuses_an_unrecognised_label_without_writing_an_artifact(
+    metrics: ModuleType,
+    vitest_report: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "metrics.json"
+
+    assert (
+        metrics.main(
+            [
+                "collect",
+                "--label",
+                "front-end",
+                "--vitest",
+                str(vitest_report),
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    assert "unrecognised report label 'front-end'" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_backend_report_does_not_claim_the_frontend_vitest_timeout(
+    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    current = tmp_path / "current.json"
+    metrics.write_metrics(current, "backend", [metrics.Metric("test.a::b", 100.0, "ms")])
+
+    assert metrics.main(["report", "--current", str(current)]) == 0
+    assert "Vitest timeout" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("multiplier", [1.1, 2.0, 10.0, 100.0, 1000.0])
 def test_no_magnitude_of_growth_makes_the_report_fail(
-    metrics: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], multiplier: float
+    metrics: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    multiplier: float,
 ) -> None:
     """The binding constraint of this unit, asserted behaviourally.
 
@@ -417,6 +618,7 @@ def test_no_magnitude_of_growth_makes_the_report_fail(
             metric(key, 100.0 * multiplier, "ms"),
             metric(metrics.TOTAL_KEY, 100.0 * multiplier, "ms"),
         ],
+        test_timeout_ms=10_000,
     )
 
     assert metrics.main(["report", "--current", str(current), "--baseline", str(baseline)]) == 0
@@ -490,10 +692,14 @@ def test_added_and_removed_tests_are_counted(
     baseline = tmp_path / "baseline.json"
     current = tmp_path / "current.json"
     metrics.write_metrics(
-        baseline, "f", [metric("test.a::x", 1.0, "ms"), metric("test.gone::y", 1.0, "ms")]
+        baseline,
+        "backend",
+        [metric("test.a::x", 1.0, "ms"), metric("test.gone::y", 1.0, "ms")],
     )
     metrics.write_metrics(
-        current, "f", [metric("test.a::x", 1.0, "ms"), metric("test.new::z", 1.0, "ms")]
+        current,
+        "backend",
+        [metric("test.a::x", 1.0, "ms"), metric("test.new::z", 1.0, "ms")],
     )
 
     metrics.main(["report", "--current", str(current), "--baseline", str(baseline)])
@@ -520,7 +726,10 @@ def test_the_summary_file_is_appended_to_never_truncated(
 
 
 def test_a_non_ascii_test_name_survives_the_round_trip(
-    metrics: ModuleType, vitest_report: Path, tmp_path: Path
+    metrics: ModuleType,
+    vitest_report: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One real frontend test name contains a multiplication sign.
 
@@ -528,6 +737,7 @@ def test_a_non_ascii_test_name_survives_the_round_trip(
     character exactly; only the console rendering is allowed to degrade.
     """
     out = tmp_path / "metrics.json"
+    monkeypatch.setattr(metrics, "read_vitest_timeout", lambda: 10_000.0)
     metrics.main(
         [
             "collect",
@@ -542,7 +752,8 @@ def test_a_non_ascii_test_name_survives_the_round_trip(
         ]
     )
 
-    _, _, loaded = metrics.read_metrics(out)
+    _, _, timeout, loaded = metrics.read_metrics(out)
+    assert timeout == 10_000
     assert any("\u00d7" in key for key in loaded), "the multiplication sign was lost"
 
 
@@ -556,9 +767,12 @@ def test_a_metrics_file_records_the_run_that_produced_it(
 
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["source"] == "abcdef1", payload
+    assert "test_timeout_ms" in payload
+    assert payload["test_timeout_ms"] is None
 
-    _, source, loaded = metrics.read_metrics(out)
+    _, source, timeout, loaded = metrics.read_metrics(out)
     assert source == "abcdef1"
+    assert timeout is None
     assert loaded, "the metrics themselves must survive the added field"
 
 
@@ -596,9 +810,10 @@ def test_a_baseline_with_no_source_is_unknown_not_this_run(
         encoding="utf-8",
     )
 
-    label, source, loaded = metrics.read_metrics(out)
+    label, source, timeout, loaded = metrics.read_metrics(out)
     assert label == "backend"
     assert source == "unknown", "a file with no source must not borrow this run's sha"
+    assert timeout is None
     assert loaded, "an older file must still be usable as a baseline"
 
 

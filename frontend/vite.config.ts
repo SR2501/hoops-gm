@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 
+// Ten seconds still catches a hung interaction while leaving deliberate room
+// above the five-second default that has flaked under a fully parallel suite.
+export const TEST_TIMEOUT_MS = 10_000
+
 // ADR-001 is a host-binding rule, not a container rule. The dev server binds
 // loopback by default; DEV_SERVER_HOST is overridden to 0.0.0.0 only inside a
 // container, where the published port is what restricts access (see
@@ -37,6 +41,7 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./src/test/setup.ts'],
+      testTimeout: TEST_TIMEOUT_MS,
       css: false,
       include: ['src/**/*.{test,spec}.{ts,tsx}'],
     },

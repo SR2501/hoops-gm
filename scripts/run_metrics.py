@@ -45,7 +45,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
@@ -61,6 +63,19 @@ SCHEMA = 1
 #: file exists to treat.
 TOTAL_KEY = "suite.test_time_ms"
 COUNT_KEY = "suite.tests"
+REPORT_LABELS = frozenset({"backend", "frontend"})
+VITEST_CONFIG = Path(__file__).resolve().parents[1] / "frontend" / "vite.config.ts"
+VITEST_TIMEOUT_LOADER = """
+import { loadConfigFromFile } from 'vite'
+const loaded = await loadConfigFromFile(
+  { command: 'serve', mode: 'test', isSsrBuild: false, isPreview: false },
+  process.argv[1],
+)
+if (!loaded) {
+  throw new Error(`Vite did not load ${process.argv[1]}`)
+}
+process.stdout.write(JSON.stringify(loaded.config.test?.testTimeout))
+""".strip()
 
 
 @dataclass(frozen=True)
@@ -144,12 +159,30 @@ def collect_junit(report: Path) -> list[Metric]:
     return _summarise(observed)
 
 
-def write_metrics(path: Path, label: str, metrics: Sequence[Metric]) -> None:
+def _test_timeout(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"test_timeout_ms must be a positive number or null, got {value!r}")
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"test_timeout_ms must be a positive number or null, got {value!r}")
+    return timeout
+
+
+def write_metrics(
+    path: Path,
+    label: str,
+    metrics: Sequence[Metric],
+    *,
+    test_timeout_ms: float | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": SCHEMA,
         "label": label,
         "source": _source_id(),
+        "test_timeout_ms": _test_timeout(test_timeout_ms),
         "metrics": [asdict(metric) for metric in metrics],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -175,7 +208,7 @@ def _source_id() -> str:
     return sha[:7] if sha else "local"
 
 
-def read_metrics(path: Path) -> tuple[str, str, dict[str, Metric]]:
+def read_metrics(path: Path) -> tuple[str, str, float | None, dict[str, Metric]]:
     payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     schema = payload.get("schema")
     if schema != SCHEMA:
@@ -189,7 +222,12 @@ def read_metrics(path: Path) -> tuple[str, str, dict[str, Metric]]:
     }
     # An older file with no source is reported as unknown rather than silently
     # attributed to this run, which would be the parameter-for-state swap again.
-    return str(payload.get("label", "")), str(payload.get("source") or "unknown"), metrics
+    return (
+        str(payload.get("label", "")),
+        str(payload.get("source") or "unknown"),
+        _test_timeout(payload.get("test_timeout_ms")),
+        metrics,
+    )
 
 
 def _format(value: float, unit: str) -> str:
@@ -209,6 +247,44 @@ def _delta(previous: float | None, current: float, unit: str) -> str:
     return f"{sign}{difference:,.1f}{percent}"
 
 
+def read_vitest_timeout(config: Path | None = None) -> float:
+    """Ask Vite for the resolved timeout instead of parsing TypeScript source."""
+    config = config or VITEST_CONFIG
+    try:
+        completed = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "--eval",
+                VITEST_TIMEOUT_LOADER,
+                str(config.resolve()),
+            ],
+            cwd=config.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            f"Vite timed out while resolving test.testTimeout from {config}"
+        ) from error
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"node exited {completed.returncode}"
+        raise ValueError(f"Vite could not resolve test.testTimeout from {config}: {detail}")
+    try:
+        resolved = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Vite returned an unreadable test.testTimeout for {config}") from error
+    if isinstance(resolved, bool) or not isinstance(resolved, int | float) or resolved <= 0:
+        raise ValueError(
+            f"Vite resolved test.testTimeout as {resolved!r} for {config}; "
+            "expected a positive number"
+        )
+    timeout = float(resolved)
+    return timeout
+
+
 def render_report(
     label: str,
     current: dict[str, Metric],
@@ -217,6 +293,7 @@ def render_report(
     top: int,
     current_source: str = "unknown",
     baseline_source: str = "unknown",
+    test_timeout_ms: float | None = None,
 ) -> str:
     out: list[str] = [f"## Run metrics - {label}", ""]
 
@@ -232,6 +309,13 @@ def render_report(
             f"Current run `{current_source}` against baseline `{baseline_source}`. "
             "The base a delta is measured from is an input to the delta, so it is "
             "named here rather than assumed to be the previous commit."
+        )
+        out.append("")
+
+    if test_timeout_ms is not None:
+        out.append(
+            f"Vitest timeout: {_format(test_timeout_ms, 'ms')} ms. Current individual "
+            "durations below include their share of that configured limit."
         )
         out.append("")
 
@@ -265,13 +349,25 @@ def render_report(
         out.append(f"### Individual tests that moved most (top {top})")
         out.append("")
         if moved:
-            out.append("| test | previous | current | delta |")
-            out.append("| --- | --- | --- | --- |")
+            timeout_heading = (
+                f" | current / {_format(test_timeout_ms, 'ms')} ms timeout"
+                if test_timeout_ms is not None
+                else ""
+            )
+            out.append(f"| test | previous | current{timeout_heading} | delta |")
+            out.append(
+                f"| --- | --- | ---{' | ---' if test_timeout_ms is not None else ''} | --- |"
+            )
             for key in moved:
+                timeout_cell = (
+                    f" | {tests[key].value / test_timeout_ms:.1%}"
+                    if test_timeout_ms is not None
+                    else ""
+                )
                 out.append(
                     f"| `{key.removeprefix('test.')}` | {_format(base_tests[key].value, 'ms')}"
                     f" | {_format(tests[key].value, 'ms')}"
-                    f" | {_delta(base_tests[key].value, tests[key].value, 'ms')} |"
+                    f"{timeout_cell} | {_delta(base_tests[key].value, tests[key].value, 'ms')} |"
                 )
         else:
             out.append("No test shared with the baseline changed duration.")
@@ -290,7 +386,20 @@ def render_report(
     return "\n".join(out)
 
 
+def _recognise_report_label(label: str) -> bool:
+    if label in REPORT_LABELS:
+        return True
+    print(
+        f"error: unrecognised report label {label!r}; expected one of {sorted(REPORT_LABELS)}",
+        file=sys.stderr,
+    )
+    return False
+
+
 def _cmd_collect(args: argparse.Namespace) -> int:
+    if not _recognise_report_label(args.label):
+        return 1
+
     if args.vitest:
         source: Path = args.vitest
         metrics = collect_vitest(source, args.root or source.parent)
@@ -308,7 +417,15 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         )
         return 1
 
-    write_metrics(args.out, args.label, metrics)
+    test_timeout_ms: float | None = None
+    if args.label == "frontend":
+        try:
+            test_timeout_ms = read_vitest_timeout()
+        except (OSError, ValueError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    write_metrics(args.out, args.label, metrics, test_timeout_ms=test_timeout_ms)
     print(f"{args.label}: collected {len(cases)} test durations from {source} -> {args.out}")
     return 0
 
@@ -318,7 +435,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"error: {args.current} does not exist", file=sys.stderr)
         return 1
 
-    label, current_source, current = read_metrics(args.current)
+    label, current_source, test_timeout_ms, current = read_metrics(args.current)
     if not current:
         print(f"error: {args.current} holds no metrics", file=sys.stderr)
         return 1
@@ -327,20 +444,40 @@ def _cmd_report(args: argparse.Namespace) -> int:
     baseline_source = "unknown"
     if args.baseline and args.baseline.is_file():
         try:
-            _, baseline_source, baseline = read_metrics(args.baseline)
+            _, baseline_source, _, baseline = read_metrics(args.baseline)
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             # An unreadable baseline is a missing baseline. It must never be the
             # reason a build goes red: this whole unit is print-only.
             print(f"note: ignoring unusable baseline {args.baseline}: {error}", file=sys.stderr)
             baseline = None
 
+    report_label = label or args.label
+    if not _recognise_report_label(report_label):
+        return 1
+
+    if report_label == "frontend" and test_timeout_ms is None:
+        print(
+            f"error: frontend metrics artifact {args.current} has no resolved test_timeout_ms",
+            file=sys.stderr,
+        )
+        return 1
+    if report_label == "backend" and test_timeout_ms is not None:
+        print(
+            f"error: backend metrics artifact {args.current} unexpectedly carries test_timeout_ms",
+            file=sys.stderr,
+        )
+        return 1
+    # Backend durations come from pytest's JUnit report, not Vitest, so the
+    # frontend's configured timeout does not apply to them.
+
     report = render_report(
-        label or args.label,
+        report_label,
         current,
         baseline,
         top=args.top,
         current_source=current_source,
         baseline_source=baseline_source,
+        test_timeout_ms=test_timeout_ms,
     )
     print(report)
     sys.stdout.flush()
