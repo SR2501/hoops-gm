@@ -1423,6 +1423,7 @@ class TestFixtureManifest:
         fixture_paths = (
             list(FIXTURES.glob("*.json"))
             + list(FIXTURES.glob("*.json.gz"))
+            + list(FIXTURES.glob("*.xml.gz"))
             + list(FIXTURES.glob("*.pdf"))
         )
         on_disk = {p.name for p in fixture_paths} - {"manifest.json"}

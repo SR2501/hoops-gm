@@ -832,6 +832,36 @@ def record_official_transactions() -> None:
         )
 
 
+def record_preseason_news() -> None:
+    """Record the complete public NBA news RSS body without re-serialization."""
+    from hoops_gm.ingest.preseason_news import ENDPOINT, RSS_URL, SOURCE, PreseasonNewsClient
+    from hoops_gm.ingest.rawstore import RawPayloadStore
+
+    print("preseason_news:")
+    store = RawPayloadStore(Path("data/raw"))
+    client = PreseasonNewsClient(store=store)
+    client.latest(max_age=_never())
+    params = {"url": RSS_URL}
+    capture = store.latest(source=SOURCE, endpoint=ENDPOINT, params=params)
+    if capture is None:
+        raise RuntimeError(f"{ENDPOINT} response was not captured")
+    _write_raw_gzip(
+        "rotowire_nba_news.xml.gz",
+        capture.read_bytes(),
+        captured_at=capture.fetched_at,
+        meta={
+            "source": SOURCE,
+            "endpoint": ENDPOINT,
+            "params": params,
+            "trimmed": False,
+            "note": (
+                "Complete public RSS response body, losslessly compressed without parsing "
+                "or re-serialization. The feed held two latest NBA player-news items."
+            ),
+        },
+    )
+
+
 def _never() -> Any:
     from datetime import timedelta
 
@@ -844,9 +874,16 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "fantrax-league-settings": record_fantrax_league_settings,
     "nba": record_nba,
     "nba-transactions": record_official_transactions,
+    "preseason-news": record_preseason_news,
     "injury_report": record_injury_report,
 }
-ALL_COMMANDS = ("fantrax", "nba", "nba-transactions", "cohort-reconciliation")
+ALL_COMMANDS = (
+    "fantrax",
+    "nba",
+    "nba-transactions",
+    "preseason-news",
+    "cohort-reconciliation",
+)
 
 
 def main(argv: list[str] | None = None) -> int:

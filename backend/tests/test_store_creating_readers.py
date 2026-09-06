@@ -79,6 +79,9 @@ ENGINE_CALL_SITES: dict[str, str] = {
     # inherited — see `backfill.STORE_REPORTING_COMMANDS`.
     "ingest/injury_report/backfill.py": "reports",
     "ingest/injury_report/cohort_evidence.py": "reports",
+    # Fetches live evidence and reports its identity resolution without writing
+    # database rows. It refuses an absent local store before opening the engine.
+    "ingest/preseason_news/cli.py": "reports",
     "ingest/projections/import_csv.py": "writes",
     # Already correct before this audit: the engine is built only inside the
     # non-dry-run branch, so the read-only path never opens a store at all.
