@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**84 done - 0 blocked - 125 pending - 209 total**
+**84 done - 0 blocked - 126 pending - 210 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -5321,3 +5321,50 @@ can be integrated without disturbing draft preparation.
 **If nothing is decided:** (b) happens by default, undeliberately, and the owner
 meets the ceiling on draft morning instead of choosing it now. No gate; this is a
 decision, not code.
+
+
+### `coverage-preregistration-v2-evaluability-states`
+
+- [ ] **pending**
+- **Depends on:** `participation-opportunity-coverage`
+
+The frozen v1 preregistration cannot express the outcome that actually occurred, and
+two lanes found this independently from opposite directions on 2026-09-06.
+
+Section 4's canonical predicate requires `all_counts_are_nonnegative_integers(...)`,
+positive totals and computable shares. Section 5 orders failures so that any
+non-exempt false conjunct is treated as an **invalid report - repair the generator**
+before reaching the **genuine evidence failure** branch it also defines. An honest
+report with `total_opportunities = null`, because no admissible source supplies the
+roster denominator, fails the count-domain conjunct too. Read literally, v1 routes
+*we cannot define what to count* into *your generator is broken*.
+
+The author of the preregistration identified this unprompted when asked what they
+would write differently, naming section 4 and section 5. The implementing lane hit
+the same wall from the other side and recorded a "v1 section-4/section-5
+specification gap" in
+`docs/models/participation-opportunity-coverage-v1-evidence-gap.json`, then worked
+around it by raising `CoveragePredicateNotEvaluable` rather than returning a verdict.
+Two independent observations of one defect; neither author saw the other's finding.
+
+**v1 is not to be amended.** Freezing it before the result was the entire point, and
+editing it now would destroy the property it exists to have. This item is for a
+genuinely future v2, written before *its* result is known.
+
+**What v2 must do:** make evaluability a short-circuit precondition rather than a
+conjunct - `DENOMINATOR_EVALUABLE` = frozen inputs valid AND independent reproduction
+passes AND `roster_interval_coverage_complete` AND `schedule_coverage_complete` AND
+all required direct censuses present; and only then evaluate counts, provenance and
+the unknown ceilings. The report contract should permit `null` counts and shares
+**only** when `DENOMINATOR_EVALUABLE` is false, yielding an explicit
+`NOT_EVALUABLE_DENOMINATOR` verdict distinct from both `INVALID_REPORT` and a
+measured fail. Once evaluable, a null count is invalid.
+
+**Carried forward unchanged:** the 5% ceiling, the four-season window, the whole
+at-risk cohort, the ancestry requirements and the negative-result discipline. The 5%
+is **inherited from the owner-accepted availability protocol, not chosen by an
+agent** - relaxing it is replacing an accepted protocol, which is an owner decision,
+and the pressure to relax it will arrive precisely when it blocks something.
+
+Gate: none directly. This is a document that must be written before the data is
+looked at again.
