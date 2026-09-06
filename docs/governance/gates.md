@@ -1356,3 +1356,261 @@ whether or not it still holds, exactly like the `gameEt` field that is
 timezone-correct and wrong. **Before citing a caveat as a live blocker, check
 what has landed since it was written.** For a `done` item that means reading the
 ADRs and captures dated after it, not the item.
+
+### A test whose two possible answers are the same value has not been run
+
+**Recorded 2026-09-06.** Asked to establish whether the cohort manifest resolves
+its fingerprint sources by path or through the imported package - the step that
+decides whether an editable-install hijack corrupts the artefact - I forced
+imports into a sibling worktree, set `--repo-root` to my own, and got my own
+tree's hash back. I nearly reported it as the disproof. It establishes nothing:
+the sibling was `sr2501-bookish-barnacle`, whose `parsers.py` is **byte-identical
+to mine**, so "resolved by path" and "resolved by import" predict the *same*
+hash. The test would have produced that value whichever mechanism was in force.
+
+**The fix is to establish the discriminant before the test, not after.** Repeated
+against `main` *as it stood before #171 merged*, whose copy then differed
+(`721e0238…` against `79cd1b93…`), the two outcomes are finally distinguishable,
+and the answer is unambiguous: imports resolved to `main`, the fingerprint
+computed was the repo-root tree's. Resolution is by path, via
+`repo_root / relative`, so **the editable-install hijack cannot reach the
+fingerprints**. It does not follow that nothing can: the `cwd` residual recorded
+in the *"The import you got is not the tree you are in"* bullets above is a
+different mechanism reaching the same artefact, since `--repo-root` defaults to
+a relative `Path("..")` and a wrong working directory fingerprints a sibling
+worktree with `sys.path` entirely correct. Import resolution is answered here;
+root resolution is not.
+
+That anchor is load-bearing, because a discriminant named by a moving ref decays.
+The merge has since put the byte-identical file on `main`, so re-running the same
+comparison against `main` *today* is vacuous again, in precisely the way this
+entry warns about. Name the two byte-states you are separating, not the two
+branch names that happened to carry them.
+
+This is the same family as **"Before any of that, prove a test reaches the code
+at all"**, in the Code gate list near the top of this file, arriving from the
+other side: there the branch was never entered, here it was entered but both
+branches return the same answer. **State what result would falsify the claim, and
+confirm the candidates actually differ, before running anything.** A green whose
+greenness is guaranteed regardless of the mechanism under test is not evidence
+about the mechanism.
+
+### `git checkout <ref> -- <path>` stages the file, and the result reads as ordinary
+
+**Recorded 2026-09-06.** Running a control regeneration meant briefly swapping in
+`main`'s copy of the file under edit. `git checkout origin/main -- <path>`
+restores the working tree **and writes the index**, so after restoring my own copy
+the file sat at `MM`: index holding `main`'s bytes, working tree holding mine. A
+commit at that moment would have silently recorded `main`'s version of the file I
+was actively editing, with the diff looking plausible and every gate green.
+
+Reproduced deliberately in a scratch repository rather than recalled:
+
+```
+git checkout main -- file.txt        -> status 'M ', worktree = MAIN VERSION
+(restore my copy to the working tree) -> status 'MM'
+git show :file.txt                   -> MAIN VERSION   <- what a commit records
+git reset -q HEAD -- file.txt        -> status clean, worktree edit intact
+```
+
+**Two things make it worse than a normal footgun.** The tell is `MM`, which is
+one column away from the `M` of an ordinary dirty file and invisible to anyone
+scanning `git status` quickly - only `git show :<path>` reveals the divergence.
+And the obvious recovery is the wrong one: `git reset --hard` discards the working
+tree, verified here to destroy an uncommitted edit outright. Use `git reset HEAD
+-- <path>` or `git restore --staged <path>`, both of which touch only the index,
+then confirm the working tree survived by content rather than by `git status`.
+
+### Hashing a fingerprinted file by hand on Windows disagrees with the manifest, and the symptom points at the wrong culprit
+
+**Recorded 2026-09-06.** `source_file_sha256` hashes **LF-canonical** bytes -
+`read_bytes().replace(b"\r\n", b"\n")` - deliberately, so that `core.autocrlf=true`
+cannot make a fingerprint depend on a checkout's newline configuration. A Windows
+working tree materialises CRLF, so `Get-FileHash` and `sha256sum` on the same file
+return a different digest: `f2b85835…` against the manifest's `79cd1b93…`.
+
+**The hazard is not the mismatch, it is what the mismatch resembles.** Spot-check
+a fingerprint by hand while an editable-install hijack is suspected and the
+disagreement reads exactly like the hijack - wrong tree, stale manifest, another
+branch's bytes - and sends the reader after a fault that is not there. It is a
+false positive shaped like the true positive being hunted for at that moment.
+
+Compare against `git cat-file blob <rev>:<path> | sha256sum`, which agrees by
+construction, or hash the blob and normalise in the same step. The stronger form
+verifies a committed manifest **without importing `hoops_gm` at all**: read every
+recorded path with `git show <ref>:<path>`, hash it locally, compare. That check
+is import-independent by construction, so it cannot be fooled by whatever tree
+`import` resolves to - which is the property you want when the import path is
+precisely what is in doubt. Run against `origin/main` after #171 merged, all six
+recorded fingerprints matched.
+
+### `resolve_doc_conflicts.py` destroys every CRLF in the file it is run on, and its own guard cannot see it
+
+**Recorded 2026-09-06.** The tool lanes are told to run on a `docs/handoff.md`
+conflict strips **all 312 CRLF pairs** from the file. Observed while rebasing a
+docs-only PR onto `cefa313a`: an append that should have been `+159 / -0` became
+`+456 / -312`, and the byte-prefix check went `CONTAINMENT False`. That is the
+signature of a catastrophic append-only breach, produced by the tool run to
+resolve the append - the same line-ending hazard recorded in *"Hashing a
+fingerprinted file by hand on Windows disagrees with the manifest"* above, which
+concerns how CRLF is treated when a file is **read for hashing**, now arriving
+from the read that precedes a **write**.
+
+**The mechanism is the read, not the write.** The writes are already defended:
+`write_text(..., newline="\n")` in both `resolve_append_only` and
+`resolve_backlog` (lines 258 and 459 today) carries a comment calling that
+keyword load-bearing, and it is. But the reads are plain
+`read_text(encoding="utf-8")` - one in `resolve_append_only`, one in
+`resolve_backlog`, one in `surviving_markers`, one in `main`'s handoff scan
+(212, 265, 480 and 565 today) - and Python's default text mode is **universal
+newlines**, which translates `\r\n` to `\n` on the way *in*. The CR is gone
+before the defended write ever sees it, and the write then faithfully commits
+the loss. Measured directly: `read_text()` yields a string with no `\r`;
+`read_text(newline="")` yields one that keeps it. **The line numbers here are a
+convenience and the symbol names are the citation** - `scripts/` has no
+edits-above contract, so per the rule earlier in this file a bare range into it
+would go stale silently.
+
+**Git is not the culprit, which is worth stating because `core.autocrlf=true` is
+set here and makes it look guilty.** Reproduced in a scratch repository with
+`autocrlf=true`: a blob committed with CRLF still had exactly its CRLF in the
+working tree immediately after a conflicted `git rebase`, before any helper ran.
+The merge machinery preserves them; the helper removes them.
+
+**The existing guard is vacuous in this direction.**
+`test_writes_preserve_lf_and_do_not_flip_the_file_to_crlf` asserts on bytes,
+which is right, and asserts `count(b"\r\n") == 0` after the call - but its
+fixture *starts* at zero CRLF, asserted as a precondition on the line above. A
+fixture with no CRLF cannot show CRLF being destroyed, so "preserves LF" and
+"strips every CR" predict the identical `0`. It guards LF-to-CRLF and is blind
+to CRLF-to-LF. **This is the same-value-both-branches shape from the first entry
+in this section, sitting inside the guard for this very bug class** - the fix
+and its test were built facing one direction, and the mirror image walked in
+behind them.
+
+**The fix is `newline=""` on the two reads that feed a write - 212 and 265 - and
+not on the other two.** I originally wrote "those four reads", which ships a
+regression; `architect` caught it and I have since measured it. Lines 480 and 565
+feed `surviving_markers()`, the tree-wide refusal to stage while any conflict
+marker remains, and its `is_conflict_marker` (line 183) tests three markers with
+`startswith` but the separator with **exact equality** - `line ==
+CONFLICT_SEPARATOR`, where the constant is `"======="` (line 59). Under
+`newline=""` every line retains its `\r`, so the separator arrives as
+`"=======\r"` and compares unequal. Measured: the three `startswith` markers
+still match, and `is_conflict_marker("=======\r")` returns **False**. With
+`core.autocrlf=true` and `.gitattributes` pinning only one frontend fixture,
+that is effectively every file in the tree, so the one-liner would silently
+remove a quarter of what the guard detects. The same equality appears at 114 and
+at 231, where `mode` never advances past `base`, so a CRLF conflict block instead
+dies at the `sys.exit("unterminated conflict block; refusing to write")` on 249 -
+fail-safe rather than silent, but still broken. **So the reads at 480 and 565
+must not change until those three comparisons are made ending-agnostic, or the
+marker scan is done on bytes.**
+
+That correction is an instance of *"A failure message is the least-exercised line
+in a green suite"*, the last entry in this section: this entry catches a read
+that silently drops `\r`, and the fix it first prescribed silently dropped a
+marker class. A test that would catch the original defect needs a fixture
+containing CRLF, since that is the discriminant the current one lacks. Filed, not
+fixed: `scripts/` is not `data-engineer`'s to change unilaterally, and the
+prescription above is now two changes rather than one.
+
+### A refused `git rebase --continue` leaves you detached, and `push HEAD:branch` hides it completely
+
+**Recorded 2026-09-06.** `git rebase` detaches HEAD onto its target before
+replaying anything. If `--continue` then **refuses** - it does that when the
+resolved file is not staged, printing *"You must edit all merge conflicts and
+then mark them as resolved"* - you are left sitting on a detached HEAD with the
+conflict apparently resolved. Committing from there is the natural next move and
+it is wrong: the commit lands off the branch entirely, and **the branch ref does
+not move.** Reproduced in a scratch repository: branch at `015d05e` before,
+`015d05e` after, HEAD at `48cd02e`.
+
+**What makes it survive is the push.** `git push origin HEAD:branch` pushes the
+commit rather than the branch ref, so it succeeds, the remote branch advances,
+and the pull request updates and reads entirely normal. Every downstream signal
+is correct. The only thing wrong is the *local* branch ref, which now silently
+lags the remote - so `git checkout <branch>` hands back the superseded commit and
+looks like an ordinary checkout while doing it. This went unnoticed here across
+two pushes and one full gate run, and surfaced only because a later rebase
+reported *"Successfully rebased and updated detached HEAD"* - a success message,
+naming the defect in its last two words.
+
+**A second copy of the same failure was still on disk from it.** The abandoned
+rebase left `.git/worktrees/<name>/rebase-merge`, which makes the *next* rebase
+refuse outright with *"I am stopping in case you still have something valuable
+there."* That refusal is correct and it is the only loud symptom the whole
+sequence produces. Check `stopped-sha` and `orig-head` in that directory against
+your pushed head before deleting it; here both were the superseded commit, so
+nothing was lost.
+
+**Check `git rev-parse --abbrev-ref HEAD` after any rebase that did not end
+cleanly, and compare the branch ref to `HEAD` and to the remote.** A green gate
+run proves the *tree* is right and says nothing about which ref points at it.
+
+### A failure message is the least-exercised line in a green suite and the most trusted line in a red one
+
+**Recorded 2026-09-06.** `architect` observed this after a lane discarded a
+*correct* manifest regeneration: the fingerprint test's failure message still
+instructed ADR-019's superseded absolute rule - *"any other moved leaf stops for
+quant, pre-unblind"* - so the lane, having regenerated properly from the data
+root, read the 35 environment leaves that `quant` had already certified as not
+its own, concluded it was in the stop case, and threw away good work. The
+message was wrong for a day and the suite was green for all of it.
+
+**The mechanism is that Python never evaluates a passing assert's message.**
+Verified here, and it is stronger than "nobody read it": `assert True, marker()`
+does not call `marker`, and `assert True, undefined_name_here` **passes** - a
+message referencing a name that does not exist is green indefinitely and raises
+`NameError` only at the moment of failure, replacing the diagnostic you needed
+with a crash. Confirmed under pytest's assertion rewriting as well as bare
+Python, since the rewriting is where one might reasonably expect different
+behaviour.
+
+**That combination is what makes it worse than an ordinary stale comment.** A
+stale comment is read by someone browsing, in a neutral state, free to doubt it.
+A failure message has exactly one reader: a person who has just been stopped by
+a gate, is in the worst position to evaluate what they are told, and is reading
+prose that carries the authority of the test itself. It is the repository's most
+persuasive text and its least tested. The lane did not fail to think - it
+correctly followed an instruction that had been superseded underneath it.
+
+**The fix is to pin the message with a test that fails when the rule changes**,
+which `architect` did in `8240f6f9`
+(`test_the_fingerprint_failure_message_instructs_the_current_rule`,
+mutation-checked).
+
+**This trap caught me while I was writing this entry, which is the best evidence
+in it.** I read the corrected message out of `origin/main` without fetching
+first, and described it as current. It was already superseded: `ddc82476`
+replaced its CWD clause, because *"regenerate from the data root, never from
+`backend/`"* was itself an overclaim - `operational_artifacts` honours an
+explicit `--report-dir`, and ADR-019 records `backend/` with an absolute
+`--report-dir` reproducing the committed manifest exactly. Differentially the
+requirement is that **both runs share a working directory**, not that a
+particular one is used. So the first repair of a stale instruction introduced a
+weaker form of the same fault, and my summary of that repair inherited it -
+three generations of the error in one day. **Fetch before quoting a ref, and
+cite the commit you actually read rather than the branch name**; `origin/main`
+names no byte-state and was four commits stale in my working copy at the moment
+I quoted it.
+
+**What was checked here and what was not.** `ADR-\d{3}` appears **317 times
+across 89 `.py` files** under `backend/src`, `backend/tests` and `scripts/`
+(regex `ADR-\d{3}` over `rglob("*.py")` in those three roots, counted
+2026-09-06). I first wrote "145 ADR citations", which was reproducible by no
+counting method `architect` or I could construct, and named no command - the
+defect this file objects to earlier under the citation rule. The only other
+rule-bearing ADR-019 claim reachable from code is the published closure count of
+*34 files*, recounted by `scripts/fingerprint_closure.py`; run today it reports
+34, so that one has not drifted. **But that script's own docstring says it
+"Reports; does not gate"**, so a future drift there would sit green in exactly
+the same way. The remaining mentions were not audited for staleness, and no
+general guard exists - this is one pinned message and one unpinned reporter, not
+a solved class.
+
+This is the sibling of *"a test whose two possible answers are the same value"*
+above. There, a green is guaranteed regardless of the mechanism under test; here,
+a green is guaranteed regardless of whether the prose is true. **Both are places
+where the suite is green because nothing was asked, not because something was
+answered.**
