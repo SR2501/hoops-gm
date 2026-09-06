@@ -16,7 +16,7 @@ that reason**. That refusal was correct and is the reason this file exists.
 
 ---
 
-## 1. Three defects for v2 to fix
+## 1. Four defects for v2 to fix
 
 **a. The document cannot express its own precommitted failure state.** Section 4
 types the counts as nonnegative integers with exact division, while section 5
@@ -39,6 +39,39 @@ and schedule manifests, independent reproduction, ancestry and cohort-key digest
 are not report ornamentation — they are the mechanism that makes the counted thing
 a reproducible at-risk cohort rather than a denominator inferred from
 participation silence. The backlog wording should be corrected to match.
+
+**d. The evidence cites by line range into a living file, which freezes that file
+above the range.** `participation-opportunity-coverage-v1-evidence-gap.json` cites
+`docs/backlog.md` lines 3623-3661 by hashing those exact line *positions*, and
+`test_evidence_citations_are_bound_to_the_exact_committed_files` re-hashes them. So
+any insertion above line 3623 shifts the block and breaks a Model gate while leaving
+the quoted prose completely untouched — and `docs/backlog.md` is the most-edited
+document in the repository, the one every lane appends an item to.
+
+Demonstrated rather than predicted, on 2026-09-06: a 36-line append beside an item
+near the top of the file broke the citation, was reverted in `431de99e`, and re-landed
+below the cited range in `9ac853fd`. Only the line *count* above the range matters, so
+in-place edits of equal length are safe — the pointer left at the original item and the
+header recount are both same-line-count rewrites for that reason. That is a subtle
+rule to have to know, and nothing states it at the point of edit.
+
+The evidence must not be re-recorded to follow such a move: it is frozen, and this
+document forbids retrofitting into v1. So the constraint is real for v1's lifetime and
+the remedy is placement, not adjustment.
+
+**v2 should cite content, not position** — copy the quoted text into the evidence file
+and hash that, or address it by a stable anchor such as the item heading. Either
+decouples an unrelated edit from a Model gate. The interim mitigation added the same
+day is a failure message naming the file, the range, the shifting mechanism and where
+to put content instead; it converts a mystifying hash diff into an instruction, but it
+does not remove the coupling.
+
+**And note this gate does not run on `main`.** Under the CI concurrency behaviour
+recorded separately, a push to `main` gets CodeQL and no backend suite, so the broken
+citation survived two pushes and was caught only by running the suite locally against
+the tip. A frozen-evidence gate that does not execute on the branch holding the
+evidence is not protecting it — which is a defect in the gating, not in v1's prose, and
+is filed here only because this is where someone will look next.
 
 ---
 
