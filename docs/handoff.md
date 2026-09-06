@@ -35874,3 +35874,72 @@ tagged `trial/adr-index-*` and verified by script byte-size (7683, 9576, 16560, 
   line-wrapped past my grep; and a scorecards endpoint that returned `1` because I
   counted the response envelope rather than its array — it serves 596. Each would have
   cost a lane a wasted round.
+
+## 2026-09-06 — architect — the spine is one input away, not two
+
+**I reported yesterday that two of the four required seasonal censuses held zero
+protocol-eligible observations. That was wrong, and the correction is the most
+consequential thing in this entry.** All four have landed.
+`docs/adapters/participation-ledger-2022-23-coverage.json` carries a
+`protocol_support` block that names `required_direct_census_seasons` as 2022-23,
+2023-24, 2024-25 and 2025-26, assigns them the roles
+`historical_marcel_support_only`, `development`, `selection` and `held_out`, and
+reports **170,856 direct rows** in `participation-ledger-direct-2022-26.db` at
+revision `0016`. Game coverage is 1230/1230 for the first three seasons and
+1227/1230 for 2025-26, the three unobserved games all on 2025-11-19.
+
+I found it because I stopped reasoning about the blocker and queried the store.
+Note the store I queried first, `participation-ledger-direct-2023-26.db`, is the
+**superseded three-season one**; the four-season store sits beside it with a nearly
+identical name. Anyone re-deriving this should read the `store.local_path` in the
+census rather than globbing the data directory.
+
+**So `PROCEED_COMMON` has exactly one unmet conjunct, not two.** The remaining one
+is `unknown_share <= 0.05`, uncomputable because no admitted source supplies roster
+intervals. That is now a filed item, `roster-interval-source`, which states the five
+properties a source must supply, names a deliberately hostile test set (the Conley
+and Wiseman stints that the obvious `CommonTeamRoster` fallback provably misses),
+and blesses a negative result as *closing* it — which converts an open engineering
+question into a clean owner decision about paying for one.
+
+**The asymmetry that makes draft day survivable, which no document had stated.**
+The veto is on the *denominator*. The numerator — games observed played — is
+directly observed and needs no roster intervals at all. So ADR-021's durability
+panel is buildable today from committed, hash-bound evidence: for 2025-26, 582
+players hold at least one played game, median 51, mean 45.7, with 175 at 65-plus and
+265 at 55-plus. A twelve-team league drafting thirteen slots needs about 156 names,
+so the panel covers the whole draftable pool rather than its top.
+
+**And ADR-021 contained a defect I had not noticed when I wrote it.** Its point 4
+requires publishing "observed games played with its **unknown share** published" —
+but the unknown share is the very quantity its own Context calls not calculable.
+Point 4 could not be built as written. The amendment resolves it by publishing the
+*denominator actually used*, named on screen, labelled so it cannot be read as the
+protocol's `unknown_share`. Reusing that name for a weaker quantity would be the
+`gameEt` failure again: a well-formed value that lies about what it is.
+
+**Verified the CI concurrency fix by observation rather than by argument.** The run
+on `a0b78d8` survived two subsequent pushes to `main` that would previously have
+cancelled it, and its Postgres job kept running. That is the behaviour `9e3f10a1`
+was meant to produce.
+
+**A comparator hole, demonstrated rather than asserted.** `#166` compares
+`recorded != actual` on parsed JSON objects, where `True == 1` and `3 == 3.0`, so a
+field whose *type* changes while its value stays equivalent passes silently. I ran
+it rather than reasoned about it, and sent the one-line fix — compare `_serialized`
+forms, a function the script already has.
+
+- **Gates:** Code. `check_doc_terminators.py` and `check_append_only.py` both rc=0;
+  `backlog_graph.py` reports 200 items, 83 done, 117 pending, no defects, 47 ready,
+  and the header recounts to match. Docs only — no Adapter, Model or Automation gate
+  applies to these commits.
+- **Could not verify:** the Postgres suite on `main` had still not finished when I
+  wrote this, so "the job now completes" is proven only as "it is no longer
+  cancelled". A separate run, on `b7ffd128`, was cancelled with **zero jobs** and I
+  could not establish why — both it and its successor carry the fix, so the expected
+  behaviour is that neither cancels the other. I did not chase it. I also have not
+  verified that the four-season census's own coverage claims are true, only that it
+  makes them; and I have not verified any lane's diff beyond the ones I merged.
+- **What I deliberately did not do:** I counted played rows per player. I did **not**
+  compute an at-risk denominator, an unknown count, or any unknown share, so nothing
+  here is an input to the frozen preregistration and its prospectivity is intact.
