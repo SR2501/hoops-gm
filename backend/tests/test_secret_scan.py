@@ -180,7 +180,18 @@ def test_the_repository_is_clean(scanner: ModuleType) -> None:
     CI runs this script directly. Running it as a test as well means a
     developer finds out before pushing — which matters more than usual right
     now, because CI is not running at all.
+
+    This test owns the real ``git ls-files`` enumeration positive control. The
+    planted-credential test deliberately stubs that boundary so it can mutate
+    an isolated copy without exposing concurrent readers to a checkout write.
     """
+    tracked = scanner.tracked_files()
+    expected_fixture = REPO_ROOT / "backend/tests/fixtures/nba_static_teams.json"
+
+    assert tracked, "the scanner enumerated no files; a clean result would be vacuous"
+    assert expected_fixture in tracked, (
+        "the scanner did not enumerate the known tracked JSON fixture"
+    )
     assert scanner.main() == 0
 
 
