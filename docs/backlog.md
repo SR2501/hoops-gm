@@ -6094,6 +6094,18 @@ command that produced it. That degrades gracefully, because a review containing 
 re-derivable quantity is visibly a review containing no re-derivable quantity, and no
 check has to be built to notice. It does not solve attribution - GitHub still shows one
 author - but attribution was never the part that mattered; **evidence was.**
+
+**The gap is symmetric, and the second half is worse.** #178 was merged on
+2026-09-06, and the authoring lane - seeing the merge already on `origin/main` when it
+went to perform it - reported plainly that it had not done so. That was correct; the
+architect had. **Neither party could have established this from the record**, because
+`mergedBy` reads `SR2501` for every agent on this account, exactly as every review
+does. So the defect is not only that a reviewer cannot prove they reviewed. **An actor
+cannot disprove they acted**, and every agent on the account inherits liability for
+every other agent's actions, including a bad one. What made this recoverable was
+social - one party volunteered "this was not me" - and nothing in the repository
+prompted, required or recorded that. A done-condition that only fixes the review half
+leaves this half untouched.
 ### `game-date-write-once` - A game's date is fixed by whichever importer inserted it first
 
 - [ ] **pending**

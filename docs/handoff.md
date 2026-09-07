@@ -39012,3 +39012,63 @@ objection does not need it, since the complaint is that nothing pins or records 
 ordering. Whether the schedule parser's date agrees with the box-score parser's on real
 data; that cannot be measured here, because the check has no rows on one side in this store,
 which is itself worth knowing before someone sizes the work.
+
+
+## 2026-09-06 — architect — the shared-operand pattern, merge attribution, and a line-ending claim that was object-dependent
+
+**Landed:** `docs/governance/gates.md` gains an entry generalising three same-day
+failures; `docs/backlog.md` widens `independent-review-unrecordable` to cover the
+half of the gap that was missing. Doc gates green (178 tests across the six
+doc/citation files); the frozen `test_opportunity_coverage_predicate` citation
+`ac918604…` asserted identical before and after every write. Both edits are pure
+insertions — `12 / 0` and `40 / 0` by `git diff --numstat`.
+
+**The generalisation, and why the existing entry was not enough.** `gates.md`
+already recorded *"a test whose two possible answers are the same value"* as a
+symptom. Three instances landed on 2026-09-06 in unrelated subsystems and none was
+found by looking for the others: a vacuous by-path resolution test; a
+review-verification script where three of eleven predicates false-FAILed because
+the fixes **retract wording in place**, so a string-presence check maps *asserts X*
+and *retracts X* onto one value; and the `game_date` write-once defect in ingest.
+The new entry states the **cause** rather than the symptom, because the cause is
+checkable before a test exists: *trace each operand back to where its value entered
+the process; if the paths meet, the comparison cannot discriminate however it is
+written.*
+
+**The third instance is why this is not a rule about tests.** There is no bad test
+in ingest yet. `import_games` writes `game_date` only on insert, so whichever
+importer arrives first fixes it and the second derivation is discarded
+uncompared — and `_persist_schedule_cohort` then writes `team_schedule.game_date`
+from the same `record.game`. The cross-check `boxscore-date-plausibility-bound`
+still owes would therefore compare one parse with itself and pass. **What is lost is
+not the date, it is the detector**, and a detector that could never fire leaves no
+evidence of having been absent.
+
+**I merged #178, and said so.** The authoring lane found the merge already on
+`origin/main` and reported, correctly, that it had not performed it. Neither of us
+could have established who did from the record: `mergedBy` reads `SR2501` for every
+agent on this account. The recovery was social — one party volunteered *"this was
+not me"* — and nothing in the repository prompted or recorded it. The backlog item
+now carries the sharper framing the lane proposed: **an actor cannot disprove they
+acted**, which is asymmetric with the review gap, because every agent on the account
+inherits liability for every other agent's actions.
+
+**A published invariant was correct and still misleading.** The lane reported
+`gates.md` as **CRLF=0** and it was right — about the *blob*. My first write refused
+on its own precondition, which is how this surfaced. Measured: worktree
+**124,878 B, 1,616 CRLF, 0 lone CR**; blob **123,262 B**; difference exactly 1,616.
+Both numbers describe the same file through different objects, the same split
+`docs/backlog.md` has. This is worth having written down because `gates.md` itself
+warns that `resolve_doc_conflicts.py` destroys CRLF — so anyone who believed
+`gates.md` had none would think that script safe to run on it. It is not. **State
+which object a line-ending count was taken against**; a bare "CRLF=0" is not a
+property of a path.
+
+**Could not verify.** Whether `docs/models/` or other tracked prose carries
+line-position citations that my insertions could have invalidated — the citation
+gate covers `docs/backlog.md` and I did not sweep beyond it. Whether the 1,616-CRLF
+worktree form of `gates.md` is stable across checkouts or an artefact of this
+machine's `core.autocrlf`; I read the file, not the config. And I have not
+established which importer runs first in intended production order — deliberately,
+since the defect is that nothing pins it, but it does mean the 941/1,227 split is
+evidence about this store rather than about a guaranteed ordering.

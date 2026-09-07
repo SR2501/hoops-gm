@@ -1614,3 +1614,43 @@ above. There, a green is guaranteed regardless of the mechanism under test; here
 a green is guaranteed regardless of whether the prose is true. **Both are places
 where the suite is green because nothing was asked, not because something was
 answered.**
+
+
+### A comparison whose operands share a source is vacuous before the test is written
+
+Three instances on 2026-09-06, in three unrelated subsystems, none found by looking
+for the others.
+
+1. A by-path resolution test run in a tree where both candidate answers held the
+   same value - the entry above.
+2. A script written to confirm review fixes had landed: three of eleven predicates
+   reported FAIL, every one a false alarm. The fixes **retract old wording in
+   place**, so a string-presence check maps *"asserts X"* and *"retracts X"* onto
+   the same result. Had its author trusted it, three correct things would have been
+   "re-fixed".
+3. `game_date` in ingest. `_persist_schedule_cohort` passes `record.game` to
+   `import_games` and then writes `team_schedule.game_date` from that same
+   `record.game.game_date`, so the schedule-vs-box-score cross-check that
+   `boxscore-date-plausibility-bound` still owes would compare one parse's value
+   with itself.
+
+The entry above names the **symptom** - the two answers coincide, so the assertion
+cannot fail. This names the **cause**, which is checkable before the test exists:
+*trace each operand back to where its value entered the process; if the paths meet,
+the comparison cannot discriminate however the test is written.* Different fetch,
+different parse, or different process - one of those must hold, and if none does,
+say so in the test's own docstring rather than leaving the next reader to assume
+independence.
+
+**Instance 3 is why this is not only a rule about tests.** There is no bad test
+there yet. The defect is in the schema and it is lying in wait: `import_games` sets
+`game_date` only on insert, so whichever importer arrives first fixes it and the
+second derivation is computed and discarded without comparison. Anyone who later
+writes the obvious cross-check gets a green from it. What is lost is not the date,
+it is the detector - and a detector that was never able to fire leaves no trace of
+having been absent.
+
+**Instance 2 adds the polarity case.** A string-presence predicate is vacuous in
+*both* directions: it cannot distinguish a claim from its retraction, so negating
+it does not rescue it. When the thing being checked is prose, the check must locate
+the sentence, not merely find the substring somewhere in the file.
