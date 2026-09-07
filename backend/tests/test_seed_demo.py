@@ -14,17 +14,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, union
 from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings
-from hoops_gm.db.models.availability import PlayerParticipation
+from hoops_gm.db.models.availability import AbsenceSplit, PlayerParticipation
 from hoops_gm.db.models.draft import Draft, DraftEvent
 from hoops_gm.db.models.enums import (
     DraftEventType,
@@ -33,20 +34,28 @@ from hoops_gm.db.models.enums import (
     GameStatus,
     ParticipationOutcome,
 )
-from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
-from hoops_gm.db.models.league import League
+from hoops_gm.db.models.identity import NbaTeam, Player
+from hoops_gm.db.models.injury_report import InjuryReportEntry
+from hoops_gm.db.models.league import League, LeagueScoringCategory, LeagueScoringProfile
+from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.projections import Projection
-from hoops_gm.db.models.stats import NbaGame
+from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_demo import (
+    AUCTION_DEMO_LEAGUE_ID,
     FRONTEND_LEAGUE_ID,
+    MIN_COMPOSED_COHORT_SIZE,
+    SHORTLIST_CANDIDATE_COUNT,
     looks_like_a_previous_demo_seed,
     main,
     seed_demo,
 )
 from hoops_gm.dev.seed_draft import CanonicalDraftPlayer, seed_drafts
-from hoops_gm.dev.seed_reliability_demo import DEMO_PLAYER_IDS as RELIABILITY_DEMO_PLAYER_IDS
-from hoops_gm.dev.seed_reliability_demo import DEMO_PLAYER_NAMES
+from hoops_gm.dev.seed_reliability_demo import (
+    DEMO_APPEARANCES_PER_PLAYER,
+    DEMO_GAME_DATES,
+    DEMO_PLAYER_COUNT,
+)
 from hoops_gm.dev.seed_schedule_grid import (
     FANTRAX_LEAGUE_ID,
     LEAGUE_NAME,
@@ -54,11 +63,13 @@ from hoops_gm.dev.seed_schedule_grid import (
     DemoSeedRefused,
 )
 from hoops_gm.identity.names import normalize_name
+from hoops_gm.ingest.league_settings import LeagueSettingsDocument
+from hoops_gm.scoring.profiles import NINE_CATEGORY_DEFINITIONS
 
-#: Small on purpose. The cohort size is orthogonal to everything under test
-#: here — what is under test is that every screen reads one database — and the
-#: full 60 costs seconds per test for no extra coverage.
-COHORT = 8
+#: Small on purpose but large enough to preserve the composed fixture contract:
+#: seven auction selections followed by five undrafted health-evidence players.
+#: The full 60 costs seconds per test for no extra coverage.
+COHORT = MIN_COMPOSED_COHORT_SIZE
 
 
 def _published_sanity_bounds(document: str) -> dict[str, tuple[int, int]]:
@@ -109,13 +120,13 @@ def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient
     assert len(schedule.json()["teams"]) == 30
     assert len(projections.json()["projections"]) == COHORT
     assert len(drafts.json()["drafts"]) == 2
-    assert len(reliability.json()["scorecards"]) == 2
+    assert len(reliability.json()["scorecards"]) == DEMO_PLAYER_COUNT
     assert reliability.json()["counts"] == {
-        "scorecards": 2,
-        "scheduled_team_games": 6,
-        "schedule_context_team_games": 6,
-        "final_games": 3,
-        "player_game_logs": 4,
+        "scorecards": DEMO_PLAYER_COUNT,
+        "scheduled_team_games": len(DEMO_GAME_DATES) * 2,
+        "schedule_context_team_games": len(DEMO_GAME_DATES) * 2,
+        "final_games": len(DEMO_GAME_DATES),
+        "player_game_logs": DEMO_PLAYER_COUNT * DEMO_APPEARANCES_PER_PLAYER,
         "participation_rows": 0,
     }
     assert reliability.json()["lineage"]["schedule_source"].startswith("synthetic-demo:")
@@ -123,23 +134,108 @@ def test_one_seeded_database_answers_all_primary_data_screens(client: TestClient
         reliability.json()["lineage"]["observation_source"]
         == "nba_games+team_schedule+player_game_logs+player_participation"
     )
-    assert {scorecard["player_name"] for scorecard in reliability.json()["scorecards"]} == set(
-        DEMO_PLAYER_NAMES
-    )
+    assert {scorecard["player_id"] for scorecard in reliability.json()["scorecards"]} <= {
+        projection["player_id"] for projection in projections.json()["projections"]
+    }
+
+
+def test_composed_shortlist_inputs_share_five_undrafted_players_and_nine_categories(
+    database: Database,
+) -> None:
+    """The fixture intersection and scoring vocabulary cannot silently disappear."""
 
     with database.session() as session:
-        synthetic_links = list(
+        result = seed_demo(session, cohort_size=COHORT)
+
+    health_player_ids = union(
+        select(PlayerGameLog.player_id),
+        select(PlayerParticipation.player_id),
+        select(InjuryReportEntry.player_id).where(InjuryReportEntry.player_id.is_not(None)),
+        select(AbsenceSplit.beneficiary_player_id),
+        select(AbsenceSplit.absent_player_id),
+    ).subquery()
+    with database.session() as session:
+        projection_ids = set(
             session.scalars(
-                select(PlayerExternalId).where(
-                    PlayerExternalId.external_id.in_(
-                        tuple(str(player_id) for player_id in RELIABILITY_DEMO_PLAYER_IDS)
-                    )
+                select(Projection.player_id).where(
+                    Projection.projection_import_id == result.projections.projection_import_id
                 )
             )
         )
-    assert len(synthetic_links) == 2
-    assert all(link.source_detail == "synthetic-demo" for link in synthetic_links)
-    assert all(link.confidence == 0.0 for link in synthetic_links)
+        health_ids = set(session.scalars(select(health_player_ids.c.player_id).distinct()))
+        health_logs = session.execute(
+            select(PlayerGameLog.player_id, NbaGame.nba_game_id)
+            .join(NbaGame, NbaGame.id == PlayerGameLog.game_id)
+            .where(PlayerGameLog.player_id.in_(projection_ids))
+        ).all()
+        drafted_ids = set(
+            session.scalars(
+                select(DraftEvent.player_id)
+                .where(
+                    DraftEvent.draft_id == result.drafts.auction_draft_id,
+                    DraftEvent.event_type == DraftEventType.SALE,
+                    DraftEvent.player_id.is_not(None),
+                )
+                .distinct()
+            )
+        )
+        auction_league = session.get(League, result.drafts.auction_league_id)
+        snapshots = list(
+            session.scalars(
+                select(LeagueSettingsSnapshot).where(
+                    LeagueSettingsSnapshot.league_id == result.drafts.auction_league_id
+                )
+            )
+        )
+        profiles = list(
+            session.scalars(
+                select(LeagueScoringProfile).where(
+                    LeagueScoringProfile.league_id == result.drafts.auction_league_id
+                )
+            )
+        )
+        assert len(profiles) == 1
+        categories = list(
+            session.scalars(
+                select(LeagueScoringCategory)
+                .where(LeagueScoringCategory.profile_id == profiles[0].id)
+                .order_by(LeagueScoringCategory.display_order)
+            )
+        )
+
+        overlap = projection_ids & health_ids
+        undrafted_overlap = overlap - drafted_ids
+        assert len(projection_ids) == COHORT
+        assert len(drafted_ids) == 7
+        assert len(projection_ids - drafted_ids) == SHORTLIST_CANDIDATE_COUNT
+        assert len(overlap) == SHORTLIST_CANDIDATE_COUNT
+        assert undrafted_overlap == overlap
+        assert Counter(player_id for player_id, _ in health_logs) == Counter(
+            dict.fromkeys(overlap, DEMO_APPEARANCES_PER_PLAYER)
+        )
+        assert all(game_id.startswith("synthetic-reliability-demo-") for _, game_id in health_logs)
+        assert auction_league is not None
+        assert auction_league.fantrax_league_id == AUCTION_DEMO_LEAGUE_ID
+        assert len(snapshots) == 1
+        document = LeagueSettingsDocument.model_validate(snapshots[0].settings)
+        assert document.source_league_id == AUCTION_DEMO_LEAGUE_ID
+        assert {
+            evidence.capture_ref
+            for field in (document.scoring_type, document.scoring_categories)
+            for evidence in field.evidence
+        } == {"fixture:fantrax_getleagueinfo_settings_sanitized.json"}
+        assert profiles[0].is_active
+        assert {category.key for category in categories} == set(NINE_CATEGORY_DEFINITIONS)
+        assert len(categories) == 9
+        ratio_components = {
+            category.key: (category.numerator_stat, category.denominator_stat)
+            for category in categories
+            if category.key in {"fg_pct", "ft_pct"}
+        }
+        assert ratio_components == {
+            "fg_pct": ("field_goals_made", "field_goals_attempted"),
+            "ft_pct": ("free_throws_made", "free_throws_attempted"),
+        }
 
 
 def test_documented_sanity_bounds_contain_the_demo_screen_counts(
@@ -676,13 +772,14 @@ def test_the_cli_refuses_a_short_composed_cohort_without_leaving_partial_state(
 ) -> None:
     """The operator sees a refusal, not a successful six-selection demo."""
 
-    exit_code = main(["--database-url", settings.database_url, "--cohort-size", "6"])
+    too_small = MIN_COMPOSED_COHORT_SIZE - 1
+    exit_code = main(["--database-url", settings.database_url, "--cohort-size", str(too_small)])
 
     assert exit_code == 2
     stderr = capsys.readouterr().err
     assert "refused:" in stderr
-    assert "requires 7 canonical players" in stderr
-    assert "received 6" in stderr
+    assert f"needs at least {MIN_COMPOSED_COHORT_SIZE} projected players" in stderr
+    assert f"received {too_small}" in stderr
     with database.session() as session:
         assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
         assert session.scalar(select(func.count()).select_from(Projection)) == 0

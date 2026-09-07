@@ -99,8 +99,8 @@ The seed prints its own proof, grouped by screen:
   "schedule_screen":    { "league_id": 1, "season": "2026-27" },
   "projections_screen": { "cohort_size": 60, "projections_written": 60,
                           "identities_accepted": 60, "identities_unresolved": 0 },
-  "reliability_screen": { "season": "2025-26", "scorecards": 2,
-                          "final_games": 3, "player_game_logs": 4,
+  "reliability_screen": { "season": "2025-26", "scorecards": 5,
+                          "final_games": 10, "player_game_logs": 10,
                           "participation_rows": 0 },
   "draft_screen":       { "auction_selections": 7, "snake_selections": 12 },
   "frontend_expects_league_id": 1
@@ -127,14 +127,16 @@ another persistent or separately seeded database.
 | `team_games` | 16 | 32 |
 | `projection_rows` | 50 | 70 |
 | `mock_drafts` | 2 | 2 |
-| `reliability_players` | 2 | 2 |
-| `reliability_final_games` | 3 | 3 |
-| `reliability_box_scores` | 4 | 4 |
+| `reliability_players` | 5 | 5 |
+| `reliability_final_games` | 10 | 10 |
+| `reliability_box_scores` | 10 | 10 |
 | `reliability_non_play_rows` | 0 | 0 |
 
-The Reliability context is a separate, deliberately tiny 2025-26 synthetic
-cohort. The System tab reports backend/database readiness from that same
-process.
+The Reliability context is a deliberately tiny 2025-26 synthetic observation
+set attached to five players in the projection cohort. Those five remain
+undrafted in the auction fixture, so a shortlist can require both projection
+and health evidence without fusing either into a model output. The System tab
+reports backend/database readiness from that same process.
 
 The composed auction selects seven canonical players from that exact synthetic
 projection import, through the production nomination/sale/void writers. The
@@ -143,15 +145,17 @@ holding one player render visible **1-to-7 per-game-rate rankings**. The player
 names are real only because the identity join requires canonical IDs; every
 projection value, selection, seat and price remains synthetic, and the page
 continues to say this is not expected performance. A composed cohort shorter
-than those seven planned lots refuses before any draft write; it never returns
-a successful partial board.
+than the seven planned lots plus five undrafted health-evidence players refuses
+before any draft write; it never returns a successful partial board or a
+shortlist fixture with too few candidates.
 
-Reliability is descriptive only. Its player names begin `[synthetic demo]`, its
-schedule lineage begins `synthetic-demo:`, and the screen renders a prominent
-disclosure that every game and box score is invented
-only to exercise the interface. Observation lineage identifies the unchanged
-production writer chain; the synthetic origin is carried by the schedule source
-and disclosure rather than adding another dynamically sourced refresh call.
+Reliability is descriptive only. Its player names are canonical so they join the
+projection cohort, while every game id and schedule-lineage source begins
+`synthetic-reliability-demo`. The screen renders a prominent disclosure that
+every game and box score is invented only to exercise the interface. Observation
+lineage identifies the unchanged production writer chain; the synthetic origin
+is carried by the game ids, schedule source and disclosure rather than adding
+another dynamically sourced refresh call.
 The demo emits no reliability grade, projected games, recommendation, calibrated
 availability, or `p(play)`.
 
@@ -167,7 +171,9 @@ Backing that up, `backend/tests/test_seed_demo.py` drives Schedule, Projections,
 Draft and Reliability against **one** seeded database, then combines the auction
 state and current-projections responses exactly as the category page does. It
 asserts concrete row counts, the exact projection-import ID set, joined-player
-and ranked-seat counts, synthetic Reliability names, and synthetic lineage.
+and ranked-seat counts, the five-player projection/health intersection, two
+synthetic observations per player, and the active 9-cat profile including
+volume-aware FG% and FT% components.
 
 ---
 
@@ -182,7 +188,7 @@ as NBA evidence, so using it for synthetic observations would make persisted
 provenance false. Any participation row therefore still proves a real ingest
 happened.
 
-**Any `nba_games` row for a season other than 2026-27, outside the three exact
+**Any `nba_games` row for a season other than 2026-27, outside the ten exact
 synthetic Reliability game ids.** The additional 2025-26 cohort is narrow and
 self-identifying; another foreign-season game still refuses.
 
@@ -250,8 +256,8 @@ schedule version. Point `--database-url` somewhere else.
 
 The committed schedule fixture holds 12 games, which is enough to prove the
 grid renders and nothing about how it behaves at scale. To drive the real
-season you supply the capture yourself: **no vendor payload is ever committed**,
-so this needs a directory outside the repository.
+season you supply the capture yourself: **no full-season schedule payload is
+committed**, so this needs a directory outside the repository.
 
 `--fixtures-dir` is a **single** directory and the seed reads **all four**
 fixtures from it. Assemble it:
@@ -339,7 +345,7 @@ so you can tell, and do not put it where the service would find it by default.
 |---|---|---|
 | `hoops_gm.dev.seed_schedule_grid` | teams, games, scoring periods, deadline calendar | `seed_projections` |
 | `hoops_gm.dev.seed_projections` | the above, plus players, positions and the synthetic cohort | `seed_demo` |
-| `hoops_gm.dev.seed_reliability_demo` | three synthetic final games, two synthetic players, four played-game box scores and the published descriptive claim | `seed_demo` |
+| `hoops_gm.dev.seed_reliability_demo` | ten synthetic final games and box scores for five projected, undrafted players, plus the published descriptive claim | `seed_demo` |
 | `hoops_gm.dev.seed_draft` | two mock drafts, through the real recorders; standalone names stay unresolved, while `seed_demo` may supply typed canonical auction players | `seed_demo` |
 | `scripts/run_demo.py` | an ephemeral database plus backend and Vite lifecycle | operator entry point |
 

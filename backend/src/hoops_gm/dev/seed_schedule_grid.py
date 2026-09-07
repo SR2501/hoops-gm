@@ -356,7 +356,13 @@ def weekly_periods(first_game: date, last_game: date) -> list[tuple[int, date, d
     ]
 
 
-def settings_document(periods: list[tuple[int, date, date, bool]]) -> LeagueSettingsDocument:
+def settings_document(
+    periods: list[tuple[int, date, date, bool]],
+    *,
+    source_league_id: str = FANTRAX_LEAGUE_ID,
+    capture_ref: str = CAPTURE_REF,
+    source_path: str = "hoops_gm.dev.seed_schedule_grid (synthesized, never observed)",
+) -> LeagueSettingsDocument:
     """A settings document carrying exactly those period windows.
 
     **Why this is hand-built rather than read from a recorded fixture**, given
@@ -383,8 +389,10 @@ def settings_document(periods: list[tuple[int, date, date, bool]]) -> LeagueSett
 
     What is within reach is making the row obviously synthetic to anything that
     reads it: ``capture_ref`` is a ``synthetic:`` reference matching no capture,
-    ``source_path`` names this module rather than a Fantrax DOM path, and the
-    league is keyed ``schedule-grid-demo`` so it can never reach a real one.
+    ``source_path`` names its producing demo module rather than a Fantrax DOM
+    path, and ``source_league_id`` is a synthetic league key. The defaults retain
+    the schedule-grid fixture's original identity; the composed demo supplies
+    its auction fixture's identity explicitly.
     Tracked as a follow-up for ``data-engineer``: add a ``synthetic`` source and
     switch this to it.
     """
@@ -405,8 +413,8 @@ def settings_document(periods: list[tuple[int, date, date, bool]]) -> LeagueSett
     playoff_numbers = tuple(number for number, _, _, is_playoff in periods if is_playoff)
     return parse_official_league_settings(
         payload,
-        source_league_id=FANTRAX_LEAGUE_ID,
-        capture_ref=CAPTURE_REF,
+        source_league_id=source_league_id,
+        capture_ref=capture_ref,
     ).model_copy(
         update={
             "playoffs": SourcedSetting(
@@ -418,8 +426,8 @@ def settings_document(periods: list[tuple[int, date, date, bool]]) -> LeagueSett
                         # Not a Fantrax DOM path. Naming the real producer is
                         # the difference between synthesized data that says so
                         # and synthesized data wearing a plausible provenance.
-                        source_path="hoops_gm.dev.seed_schedule_grid (synthesized, never observed)",
-                        capture_ref=f"{CAPTURE_REF}:playoffs",
+                        source_path=source_path,
+                        capture_ref=f"{capture_ref}:playoffs",
                     ),
                 ),
             )

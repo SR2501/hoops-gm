@@ -13,6 +13,8 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
 
+from hoops_gm.dev.seed_demo import MIN_COMPOSED_COHORT_SIZE
+
 
 @pytest.mark.parametrize(
     ("module", "extra_args"),
@@ -20,7 +22,7 @@ from sqlalchemy import create_engine
         ("hoops_gm.dev.seed_schedule_grid", []),
         ("hoops_gm.dev.seed_projections", ["--cohort-size", "7"]),
         ("hoops_gm.dev.seed_draft", []),
-        ("hoops_gm.dev.seed_demo", ["--cohort-size", "7"]),
+        ("hoops_gm.dev.seed_demo", ["--cohort-size", str(MIN_COMPOSED_COHORT_SIZE)]),
     ],
     ids=("schedule-grid", "projections", "draft", "composed-demo"),
 )
