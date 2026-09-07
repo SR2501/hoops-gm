@@ -50,13 +50,13 @@ A source publishing genuinely decomposed outputs — per-game production and its
 
 ## Amendments
 
-### 2026-08-25 - a rank cannot express clause 3 (`Proposed`)
+### 2026-08-25 - a rank cannot express clause 2 (`Proposed`)
 
 **Status: Proposed.** Written by `architect` on the `backend` lane's argument.
-The decision is unchanged; what changed is the discovery that clause 3 is **not
+The decision is unchanged; what changed is the discovery that clause 2 is **not
 expressible** by the construction everyone reaches for first.
 
-Clause 3 says no ranking, AAV or composite value may be an input to any earlier
+Clause 2 says no ranking, AAV or composite value may be an input to any earlier
 layer. The obvious implementation is a rank: order the layers, refuse any flow
 from a higher number to a lower one. It is cheap, idiomatic, and wrong.
 
@@ -87,7 +87,7 @@ Recorded so it is refusable again rather than rediscovered.
 
 ### What this ratifies, at its real size
 
-`main` was **not** violating clause 3 when this landed: 39 mapped tables, 62
+`main` was **not** violating clause 2 when this landed: 39 mapped tables, 62
 declared foreign keys, **zero flowing backwards**, only 5 cross-layer and all
 five identity.
 
@@ -125,4 +125,36 @@ Pinned as assertions in `test_layer_purity.py` rather than left in prose.
 
 A layer vocabulary where every pair's permission follows from position - if one
 is ever found, the edge set becomes redundant. Nobody has proposed one, and
-clause 3's shape is the reason to doubt it exists.
+clause 2's shape is the reason to doubt it exists.
+### 2026-09-06 - the amendment above cited clause 3 while quoting clause 2
+
+Corrected in place by `architect`. **No decision changed and no status changed** -
+the 2026-08-25 block remains `Proposed`. What changed is five cross-references that
+pointed a reader at the wrong clause.
+
+The block argued that a rank cannot express the rule forbidding terminal products
+from re-entering an earlier layer, and quoted that rule verbatim: *"no ranking, AAV
+or composite value may be an input to any earlier layer"*. That is **clause 2**. It
+labelled it clause 3 throughout. Clause 3 is a different rule - external aggregates
+may be compared against but never blended in - and its point is independence, not
+flow direction.
+
+**The mislabel was wrong when written, not invalidated later.** Clauses 2 and 3 have
+carried identical text in every revision of this file since 2026-08-17, including
+`28d0d886`, the commit that added the amendment, so no renumbering can account for
+it. Checked before correcting, because if the list *had* been renumbered the defect
+would be renumbering an accepted ADR rather than a typo, and the fix would be a
+different one.
+
+**The code was already right.** `backend/tests/test_layer_purity.py` cites clause 1
+for aggregation and clause 3 for the independence the market layer relies on, both
+correctly. So a reader reconciling the two would have found the tests and the ADR
+using *clause 3* to mean two different rules, and the ADR was the wrong one. This is
+the reverse of the usual direction, where code prose goes stale against an amended
+decision.
+
+Corrected in place rather than contradicted below, on the precedent ADR-013 sets in
+its 2026-08-21 amendment: an ADR states the contract a consumer is entitled to build
+against, so it asserts the present and is corrected, while the historical fact is
+preserved by this dated block existing at all.
+

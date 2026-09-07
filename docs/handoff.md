@@ -39438,3 +39438,73 @@ still be the sole copy of its commits on this machine. That does not change the
 removal verdict, since removing a worktree leaves the branch, but it does mean
 *deleting* any of these branches needs its own check that I have not done.
 
+## 2026-09-06 - architect - auditing ADR citations in failure messages
+
+**The surface is 19, not ~120, and the item's estimate was measuring the wrong
+thing.** `audit-amended-adr-messages` recorded roughly 120 code references to
+amended ADRs and called a full sweep not worth it. Most of those references are
+in comments and docstrings, where going stale is cheap. The ones that matter sit
+inside `raise` and `assert` messages, because those render only when the check
+fires - so a false sentence there is read for the first time by someone already
+debugging, and the suite passes either way.
+
+Extracted with `ast` rather than a text search, walking every `Raise` and
+`Assert` node across `backend/src`, `backend/tests` and `scripts` and pulling
+the string constants out of each: **22 ADR citations in that position, 19 of
+them to an amended ADR, across 7 files.** Ten of the twenty ADRs carry
+amendments. Nineteen is small enough to read in full, which is what I did.
+
+**The audit found one defect, and it is in the ADR rather than the code - the
+reverse of what the item predicted.** ADR-008's decision list makes clause 2
+*"terminal products never re-enter"* and clause 3 *"external aggregates may be
+compared against, never blended in"*, whose point is independence. Its
+2026-08-25 amendment says **clause 3** five times while quoting clause 2
+verbatim. Meanwhile `backend/tests/test_layer_purity.py` cites clause 1 for
+aggregation and clause 3 for independence, both correctly. So the tests and the
+ADR used *clause 3* to mean two different rules, and anyone reconciling them
+would have concluded the tests were wrong.
+
+**I checked the alternative before editing, because it changes the fix.** If the
+decision list had been renumbered after 2026-08-25, the amendment would have
+been correct when written and the defect would be *renumbering an accepted ADR*,
+which silently invalidates every citation to it and is a much worse problem than
+a typo. Disproved: clauses 2 and 3 have carried identical text in every revision
+of the file since 2026-08-17, including `28d0d886`, the commit that added the
+amendment. Corrected in place with a dated block, on the precedent ADR-013 sets
+in its own 2026-08-21 amendment. **No decision and no status changed** - the
+2026-08-25 block is still `Proposed`.
+
+**Three things checked and cleared, recorded so they are not re-checked.**
+
+`test_live_smoke.py:924` says the NBA Cup knockout above group play is *"four
+quarterfinals and two semifinals - six"*, while ADR-013's last amendment is
+titled *"the set is five"*. Different quantities: the five is a set of absence
+causes that gained `implausible`, nothing to do with bracket size, and 4+2=6
+with the final carrying no regular-season id is right. I nearly filed this,
+and reading the amendment body is what stopped me.
+
+`test_cohort_evidence.py:737` and `:742` are not exposed to this failure at all -
+they are **guards against it**, asserting that the message has not reverted to
+ADR-019's superseded absolute rule or to forbidding `backend/`. That lane built
+the defence this audit item exists to apply by hand. It is the only place in the
+repository where a failure message's prose is itself under test, and it is worth
+copying rather than admiring.
+
+The twelve ADR-008 code messages are accurate, including both clause numbers.
+
+**One trap I walked into while fixing it.** My correction script asserted
+correctly on the edited text, then printed a summary counting `clause 3` across
+the *whole file* - including the note I had just appended explaining the
+mislabel, which names clause 3 five times deliberately. The summary read
+`5 -> 5`, as though nothing had changed. The assertions were right and the
+report was wrong. Same shape as measuring a retraction with a string-presence
+check: the text that describes a fix and the text that contains the bug are
+indistinguishable to a substring count.
+
+**Could not verify.** Whether the ~100 citations *outside* raise/assert are
+accurate - I deliberately did not read them, on the item's own scoping advice,
+so "the amended ADRs are audited" is true only for the failure-message surface.
+I also cannot rule out a message that paraphrases an amended decision **without
+naming any ADR**; an `ast` walk keyed on `ADR-\d{3}` cannot see those, and they
+would be the least detectable instances of exactly this defect.
+
