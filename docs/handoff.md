@@ -39239,3 +39239,98 @@ and 2,723 tests passed with 2 skipped and 44 live-smoke tests deselected.
 available; the complete SQLite suite and the repository's static portability
 checks passed. I did not build or drive a shortlist surface, ranking, or API
 route because this unit explicitly stops at fixture composition and its guard.
+## 2026-09-06 - architect - four commits held behind a review, and a doc that
+pointed at the one rename that would switch a safety banner off
+
+Four commits, held back from this file on purpose. PR #179 was open across all
+of them and every append here forces its author to reconstruct a 2.5 MB
+append-only file by hand; they had already done it three times. Holding cost
+nothing, so the entry covers the set rather than arriving four times.
+
+**`8d25a8c5` - the detector, not the mechanism.** The machine-global editable
+install is a singleton: whichever tree last ran `pip install -e` owns
+`hoops_gm` for every checkout on the box. `gates.md` already said so in three
+places, so there was nothing to add about the mechanism. What was missing is
+that `test_import_provenance` had twice been reported as "the known
+environmental red, already named with its mechanism", and I had myself cited
+one of its *passes* as confirming a diagnosis. A pass means only "not hijacked
+at this instant" - the pointer moves. The correct explanation had become
+standing permission to skip reading the next firing, which is a worse failure
+than not having the explanation at all.
+
+The expensive branch did not happen only by luck. My suite died in collection
+because the two trees had drifted incompatibly. Had they been compatible it
+would have gone **green** and I would have published a suite result about a
+tree I never tested. A green suite under a hijack is strictly worse than a red
+one. Also recorded: pinning `PYTHONPATH` cannot make that guard pass, by
+design, because it resolves in a clean subprocess - so the correct signature of
+a pinned run on a hijacked machine is exactly one failure and it is the guard.
+Read as a bare "1 failed" that looks like the pin failed.
+
+**`793ea988` - R70.** `C:\Users\steverones\hoops-gm-data\` holds 10,514
+files / 587,517,506 B of evidence that is not in the repository and mostly
+cannot be, and its own `backups\` subdirectory sits on the same volume. A
+backup that shares a failure domain with its original is a copy, not a backup.
+Needs the owner's hardware, so it is filed rather than fixed.
+
+**`985b8637` - a conditional vacuity living in prose.** The backlog told a
+future editor of a fingerprinted file to hold the working directory fixed
+across both manifest regenerations. That does make the differential sound,
+because drift cancels. But the committed artefact is the treatment run, and
+quant's ruling requires *that* run to come from the data root - a `backend/`
+run empties `operational_artifacts` and re-nulls the cascade. Two runs from
+`backend/` therefore yield a **passing** differential and a degraded manifest,
+and the differential passes either way, so nothing downstream would notice.
+The instruction was not wrong; it was underspecified in the one direction that
+cannot be detected from its own output.
+
+**`5afd8359` - the doc named the wrong prefix for a live safety trigger.**
+`docs/demo.md` said every game id *and schedule-lineage source* begins
+`synthetic-reliability-demo`. The game ids do. The lineage sources begin
+`synthetic-demo:`, and that literal is the entire trigger for the Reliability
+screen's synthetic-data banner. Since #179 that screen shows canonical NBA
+player names against invented game logs, so a maintainer tidying the code to
+match the doc by renaming `DEMO_SCHEDULE_SOURCE` would have switched the
+disclosure off. Not a live defect, and not a silent one either:
+`test_seed_demo.py` pins the literal independently of the seeder constant, so
+the three copies are genuinely independent and the rename fails loudly. The
+document was simply pointing at the trap rather than away from it.
+
+**#179 reviewed and merged at `ea21b458`.** I ran `gh pr merge` myself and it
+returned 0, which is worth stating because the previous merge on this account
+was unattributable and `mergedBy` distinguishes nobody. Verified rather than
+accepted: the branch contributes exactly 7 files by three-dot diff; no
+availability number is produced anywhere in them; provenance is carried in the
+data rather than only in the fixture, so it survives someone reading the
+database directly; the refusal guards raise instead of degrading; and the
+demo.md safety invariant was correctly widened from three synthetic game ids to
+ten. After merge, `docs/handoff.md` was still a pure append at exactly 312 CRLF
+pairs and 0 lone CR.
+
+**Twice in one day I misread `git diff A..B` as a revert.** Two-dot shows what
+would turn A's tree into B's, so a stale branch renders as mass deletion. Once
+I nearly reported four commits as unmerged; once I nearly opened a blocking
+finding that #179 was reverting my own work. Merging applies the *three-dot*
+diff. The cheap cross-check is `git merge-base --is-ancestor`, and absence of a
+path from a two-dot diff means identity, not deletion.
+
+**A structural concern chased and closed as a verified negative.** I expected
+the banner and the seeder to be free to drift, because the frontend test
+hand-writes its own `synthetic-demo:` literal rather than importing the
+constant. They cannot: the backend test pins the same literal, hard-coded. So
+the operands are independent and this is *not* the shared-operand family. I am
+recording the negative because the next reviewer should not have to re-derive
+it, and because "I checked and it holds" is a result.
+
+**Could not verify.** Whether the disclosure banner is legible *at the point of
+display* - I verified the predicate fires and that tests pin it, which is not
+the same as having looked at the rendered screen, and the change swapped
+obviously-fake player names for real ones. Whether `gates.md`'s 1,735-CRLF
+worktree form is stable across checkouts or an artefact of this machine's
+`core.autocrlf`; the blob carries 0 either way, and my first attempt at the
+demo.md edit asserted the blob's convention against the worktree and correctly
+refused. Whether acting on a `Proposed` quant ruling is legitimate - #171 did
+and merged, so the precedent exists but has never been ratified. And I have not
+re-run the full suite at `5afd8359`; the doc gates and the two tests that guard
+the edited file pass, which is the targeted claim and not a whole-suite one.
+
