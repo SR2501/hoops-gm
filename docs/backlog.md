@@ -200,10 +200,10 @@ marker, five hours off its sibling `gameTimeUTC` in the same object — so a tim
 parse of it is correct in form and wrong in meaning, shifting the date for every game tipping
 after 7pm Eastern, which is most of them. `player_participation` joins on that date, so the
 availability model would absorb the error as real signal. Cross-check against `gameTimeUTC`,
-the schedule endpoint's own date for the same `game_id`, and a plausibility bound (no NBA game
-tips outside a known daily window in Eastern time); fail loudly on disagreement rather than
-preferring either field. See the `AGENTS.md` house rule on self-describing fields: check the
-claim against something independent. Remaining scope and a known defect in what landed: see `boxscore-bound-message-overclaim` at the end of this file.
+the schedule endpoint's own parse for the same `game_id`, and a plausibility bound (no NBA
+game tips outside a known daily window in Eastern time); fail loudly on disagreement rather
+than preferring either field. See the `AGENTS.md` house rule on self-describing fields: check
+the claim against something independent. **Take the schedule operand from the payload parse, never from the stored `team_schedule.game_date`** - `_persist_schedule_cohort` passes `record.game` to `import_games` and then writes `team_schedule.game_date` from that same `record.game.game_date`, so a join between the two stored columns compares one parse with itself and cannot fail however it is written. That is a vacuous green, not a passing check; `game-date-write-once` carries the measurement and the fix it depends on. Remaining scope and a known defect in what landed: see `boxscore-bound-message-overclaim` at the end of this file.
 
 ### `bridge-capture` - Capturing Fantrax data via the bridge
 
