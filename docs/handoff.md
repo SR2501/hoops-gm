@@ -39072,3 +39072,68 @@ machine's `core.autocrlf`; I read the file, not the config. And I have not
 established which importer runs first in intended production order — deliberately,
 since the defect is that nothing pins it, but it does mean the 941/1,227 split is
 evidence about this store rather than about a guaranteed ordering.
+
+
+## 2026-09-06 — architect — correcting my own overclaim, one hour after publishing it
+
+**What I got wrong.** In the entry above I wrote that the schedule-vs-box-score
+`game_date` cross-check *"compares one parse with itself and cannot fail however it
+is written"*, and put the same claim into `docs/governance/gates.md` and into
+`boxscore-date-plausibility-bound`'s acceptance criteria. It is false. Corrected in
+place in both files, with the correction itself recorded in the gates entry rather
+than quietly applied.
+
+**What is actually true, read off `importers.py` rather than off my summary of it.**
+`import_games` sets `nba_games.game_date` **only on insert** (line 534, inside
+`if game is None`). `_persist_schedule_cohort` calls it at line 640 and then writes
+`team_schedule.game_date` unconditionally at 670/679. So:
+
+- **schedule-first** — the schedule import creates the row, both columns carry the
+  schedule parse, and the join is vacuous;
+- **box-score-first** — `nba_games` keeps the box-score parse while `team_schedule`
+  gets the schedule parse, the operands are genuinely independent, and **the join
+  works**.
+
+Nothing pins the ordering. The retained store is box-score-first
+(`team_schedule` = 0 rows, `nba_games` = 1,230), which is the ordering where my
+claim is *most* wrong.
+
+**The correction is more useful than the claim was.** A comparison can be vacuous
+**conditionally**, and then the *passing* result is exactly the one that cannot
+distinguish the cases: agreement between the columns is equally consistent with
+"derived independently and agreed" and with "one parse written into two columns".
+Disagreement is informative; agreement is not. Such a check raises no false alarms
+and silently loses all power under an ordering nobody declared — worse than one
+that is always vacuous, because it will have passed honestly at least once. The
+remedy is a better operand, not a better assertion: take the schedule value from
+the payload parse, which does not depend on ordering at all. That was already the
+advice; only my reason for it was wrong, so the guidance stands and its
+justification has been replaced.
+
+**The write-once defect itself is unaffected and still real.** `game_date` is fixed
+by whichever importer arrives first and the other derivation is discarded
+uncompared. `game-date-write-once` needs no change.
+
+**Why this is worth an entry rather than a silent fix.** I published an unqualified
+"cannot" inside an entry whose whole subject is checks that claim more than they
+verify, roughly an hour after the authoring lane fixed the same shape of error in
+`_assert_plausible_tipoff_hour`'s message. **An unqualified "cannot" in prose is the
+same defect as an over-wide assertion in code, and neither has a gate.** The thing
+that caught it was reading the file a second time for an unrelated reason — the
+`participation-opportunity-coverage` note at `docs/backlog.md:3509` mentioning
+`team_schedule` being empty — not any check.
+
+**A "could not verify" from the previous entry, closed as a clean negative.** I swept
+`docs/`, `backend/`, `scripts/` and `frontend/` for line-position citations of
+`docs/backlog.md`. Six exist — lines 223, 548, 1237, 1588-1595, 2007 and 3508-3546 —
+and my 12-line insertion went in at line 6096, so every one of them sits above it and
+none moved. The other edits preserved line count by construction. No citation
+anywhere was invalidated.
+
+**Could not verify.** Which importer runs first in intended production order — still
+deliberately unpinned, and now demonstrably load-bearing rather than merely untidy,
+since the validity of a future check depends on it. Whether any *other* claim in the
+entry above is similarly over-wide; I re-read the two sentences I had reason to doubt,
+not all of them. And whether `gates.md`'s 1,674-CRLF worktree form is stable across
+checkouts or an artefact of this machine's `core.autocrlf` — I read the file, not the
+config, and that remains open from the previous entry.

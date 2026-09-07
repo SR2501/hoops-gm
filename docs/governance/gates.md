@@ -1628,11 +1628,13 @@ for the others.
    place**, so a string-presence check maps *"asserts X"* and *"retracts X"* onto
    the same result. Had its author trusted it, three correct things would have been
    "re-fixed".
-3. `game_date` in ingest. `_persist_schedule_cohort` passes `record.game` to
-   `import_games` and then writes `team_schedule.game_date` from that same
-   `record.game.game_date`, so the schedule-vs-box-score cross-check that
-   `boxscore-date-plausibility-bound` still owes would compare one parse's value
-   with itself.
+3. `game_date` in ingest - the *conditional* case, and the most instructive of the
+   three. `_persist_schedule_cohort` calls `import_games` and then writes
+   `team_schedule.game_date` from the same `record.game.game_date`. But
+   `import_games` sets `nba_games.game_date` **only on insert**, so the two stored
+   columns hold independently derived parses when a box-score import created the
+   game row first, and one parse copied twice when the schedule import created it.
+   Nothing pins the ordering.
 
 The entry above names the **symptom** - the two answers coincide, so the assertion
 cannot fail. This names the **cause**, which is checkable before the test exists:
@@ -1642,13 +1644,29 @@ different parse, or different process - one of those must hold, and if none does
 say so in the test's own docstring rather than leaving the next reader to assume
 independence.
 
-**Instance 3 is why this is not only a rule about tests.** There is no bad test
-there yet. The defect is in the schema and it is lying in wait: `import_games` sets
-`game_date` only on insert, so whichever importer arrives first fixes it and the
-second derivation is computed and discarded without comparison. Anyone who later
-writes the obvious cross-check gets a green from it. What is lost is not the date,
-it is the detector - and a detector that was never able to fire leaves no trace of
-having been absent.
+**Instance 3 is why this is not only a rule about tests - and it carries a second
+lesson, because the first draft of this entry got it wrong.** There is no bad test
+in ingest yet; the hazard sits in the schema waiting for one, since `import_games`
+fixes `game_date` on whichever import arrives first and discards the other
+derivation uncompared. What is lost is not the date, it is the detector.
+
+But the first version of this paragraph said the cross-check *"cannot fail however
+it is written"*, and that is false: it is vacuous only under schedule-first
+ordering. **A comparison can be vacuous conditionally** - and then the sharper
+problem is that the *passing* result is precisely the one that cannot distinguish
+the two cases. Agreement between the columns is equally consistent with "derived
+independently and agreed" and with "one parse written into two columns";
+disagreement is informative, agreement is not. Such a test raises no false alarms
+and silently loses all of its power under an ordering nobody declared, which is
+worse than a test that is always vacuous, because it will have passed honestly at
+least once. The fix is not a better assertion but a better operand: take the
+schedule value from the payload parse, which does not depend on ordering at all.
+
+That correction was made about an hour after publishing, by reading `importers.py`
+instead of the summary of it I had written the same evening - inside an entry whose
+subject is checks that claim more than they verify. It generalises the same way
+`boxscore-bound-message-overclaim` does: **an unqualified "cannot" in prose is the
+same defect as an over-wide assertion in code**, and neither of them has a gate.
 
 **Instance 2 adds the polarity case.** A string-presence predicate is vacuous in
 *both* directions: it cannot distinguish a claim from its retraction, so negating
