@@ -4,6 +4,8 @@ Four gates. Apply the one matching your work type; apply several where work span
 
 Gates exist because this project's failure modes are unusual — see the four points in `AGENTS.md`.
 
+**If you are here because something surprised you, start at the symptom index below rather than reading forward** - the entries are titled as conclusions and do not announce the symptom that brings you to them.
+
 ---
 
 ## Code gate
@@ -109,6 +111,79 @@ Enforced by CI, except the three bullets marked otherwise.
 
 ---
 
+## Symptom index
+
+**Every entry below is titled as a conclusion, so it is findable only by someone
+who already knows its lesson.** On 2026-09-06 two entries were rediscovered from
+scratch during an incident rather than found - one of them recording the exact two
+hashes the reader was staring at. This index is keyed by **what you observe**, not
+by what you will conclude. Scan for your symptom; the italic title is the entry.
+
+It is kept complete by `test_gates_symptom_index.py`, which fails when an entry is
+added without a symptom line. **Add the symptom you had before you understood the
+problem**, not a restatement of the title - the title is already the answer.
+
+**Git, branches and merges**
+
+- You want to know whether a branch's work is already on the trunk - *Ahead-of-origin is not a measure of unmerged work*
+- You are diffing a branch against the trunk to decide if it landed - *Neither form of `git diff` answers "does the trunk already have this?"*
+- A merge command exited nonzero and you are about to report it failed - *The command that reports a merge can fail after the merge succeeded*
+- A rebase refused to continue and your push seemed to work anyway - *A refused `git rebase --continue` leaves you detached, and `push HEAD:branch` hides it completely*
+- You restored one file from another ref and the tree looks normal - *`git checkout <ref> -- <path>` stages the file, and the result reads as ordinary*
+- A test imports code and you cannot prove which worktree it came from - *The import you got is not the tree you are in*
+- A change here breaks something in a tree this repository cannot see - *A coupling between trees that nothing here can see*
+
+**CI and gate signal**
+
+- A check is green and you cannot name the tree it judged - *A green check is a verdict on a tree, and you must prove it is yours*
+- A test is red and you did not write the code it names - *A red test is not evidence unless the red is attributable*
+- A job was cancelled, queued, or never started - *A timeout only bounds what has already started*
+- A shell step passed and printed nothing at all - *A shell check that fails prints nothing, and nothing reads as clean*
+- Your change is documentation only, so you are about to skip a gate - *"Docs-only" means safe, except where the doc is the gate*
+- You restated a gate's requirement in your own words - *A paraphrase of a gate is a new gate, and nobody reviewed it*
+- An append-only check passed and you suspect it proved nothing - *The append-only gate is non-vacuous in exactly one window: after commit, before push*
+- You are about to pick a numeric threshold tonight - *Two thresholds shipped in one night, both chosen, neither derived*
+- You are unsure which work a gate actually applies to - *Three questions no gate asks, because no gate looks at scope of application*
+- You named the defect class in the write-up and moved on - *Naming a defect class is not a mitigation*
+
+**Hashes, bytes and line endings**
+
+- A SHA-256 you computed by hand disagrees with a committed manifest - *Hashing a fingerprinted file by hand on Windows disagrees with the manifest, and the symptom points at the wrong culprit*
+- A file's CRLF count changed after you ran the conflict resolver - *`resolve_doc_conflicts.py` destroys every CRLF in the file it is run on, and its own guard cannot see it*
+
+**Tests and predicates**
+
+- A test passes and you cannot state what would make it fail - *A test whose two possible answers are the same value has not been run*
+- The two sides of your comparison were produced by the same code - *A comparison whose operands share a source is vacuous before the test is written*
+- A grep, filter or matcher returned nothing and you read that as absence - *A pattern that matches 95% of the time is worse than one that matches half*
+- A predicate accepted 0, False or empty and reported success - *Zero and false are values, and a predicate that accepts them counts nothing*
+- You are trusting a failure message you have never actually seen printed - *A failure message is the least-exercised line in a green suite and the most trusted line in a red one*
+- A fixture or specimen passes and covers one shape of the input - *A specimen validates the domain it chose, not the domain the model allows*
+
+**Counts, denominators and evidence**
+
+- A count is arithmetically true but you are unsure what it counted - *A count can be true and describe a different population than the one it implies*
+- Your denominator was built from the same rows as your numerator - *A denominator reconstructed from the numerator flatters itself*
+- Provenance is present and well-formed, and you checked only that - *Validating the shape of provenance is not validating the provenance*
+- You wrote that some evidence can no longer be reached - *Disclosing that evidence is unreachable is not preserving it*
+- Something is measured and emitted and nothing downstream reads it - *A true signal with no consumer*
+- A status string is parsed somewhere and its format varies - *A status format that varies defeats the tool that reads it, including you*
+
+**Documentation, citations and claims**
+
+- You cited a line range and edits landed elsewhere in the file - *A cited line range is not stable under edits it does not contain*
+- A citation check went red on documentation you believe is correct - *A citation check fails on correct documentation unless it can tell absence from disclosure*
+- A `done` item carries a caveat written when it was still open - *A caveat is a claim with a shelf life, and `done` items are where they rot*
+- The assertion is right and the sentence reporting it overstates - *The assertion can be right while the sentence reporting it is wrong*
+- You caught your own framing before you published it - *A framing caught before it is written is not a retraction*
+
+**Scope, process and the graph**
+
+- A dependency edge resolves cleanly and still reads oddly - *A dependency edge that resolves can still be incoherent*
+- You want to confirm a change did what you believe it did - *Verifying a change did what you think*
+- A review is accumulating rounds and prose - *Rounds have a cost, and the cost is prose*
+
+---
 ## What gates cannot catch
 
 Added 2026-08-20, after three lanes and thirteen review rounds produced roughly fifteen

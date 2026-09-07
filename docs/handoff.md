@@ -39681,3 +39681,46 @@ complete. It was derived by matching item names and lead paragraphs against a
 word list, so a seam described without any of those words is missed and would not
 appear in the 79. The 24 individually-read edges are exact; the *denominator* is
 a heuristic and is stated as one.
+
+## 2026-09-06 - architect - gates.md indexed by symptom, because it was being rediscovered
+
+`docs/governance/gates.md` holds 37 entries in 1,842 lines and every one is
+titled as a **conclusion** - "A denominator reconstructed from the numerator
+flatters itself". That reads well and means an entry is findable only by someone
+who already knows its lesson, which is exactly the person who does not need it.
+
+**The evidence is that I rediscovered two of them from scratch tonight.** I
+hashed a fingerprinted file with raw `hashlib` on Windows, got `f2b85835...`
+against a manifest's `79cd1b93...`, and briefly believed the manifest was stale
+while the test covering it passed - which is entry "Hashing a fingerprinted file
+by hand on Windows disagrees with the manifest", *already recorded, carrying
+those exact two hashes*. Then a PowerShell predicate combining `[regex]::Escape`
+with `-SimpleMatch` reported a backlog item as dropped when it sat at a
+character-identical heading. I had written in this file earlier the same day.
+
+Added a **symptom index** keyed by what you observe rather than what you will
+conclude, covering all 37 entries in 39 lines, placed above the corpus with a
+pointer from the intro. `backend/tests/test_gates_symptom_index.py` keeps it
+complete: an entry added without a symptom line fails CI. Red-without-fix
+verified by injecting an unindexed heading into the real file and watching the
+assertion name it, then restoring the file byte-identically.
+
+**This is less governance, not more.** It adds no rule and no gate; it makes
+rules that already exist retrievable at the moment they are needed. The
+alternative on the table was a 38th entry recording tonight's rediscoveries,
+which would have made the corpus marginally larger and no more findable.
+
+Following `test_adr_index.py`'s convention, every invariant is driven by a
+mutation that must make it fire, including **two vacuity mutations** - a deleted
+index and an emptied one - because an extractor that silently stops matching
+satisfies every containment assertion ever written against it. That is this
+file's own "zero and false are values" entry applied to the test itself.
+
+**Could not verify:** whether the symptom keys are the ones a reader would
+actually search for. They are my reconstruction of the question behind each
+entry, written by someone who already knows all 37 answers, and that is the
+worst possible vantage point for the task. The test enforces that every entry
+*has* a key; nothing enforces that the key is the one you would have typed. The
+cheap disproof is the next incident - if an entry is rediscovered again with an
+index in place, the key was wrong, and that is worth recording rather than
+patching quietly.
