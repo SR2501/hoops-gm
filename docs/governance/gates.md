@@ -1672,3 +1672,64 @@ same defect as an over-wide assertion in code**, and neither of them has a gate.
 *both* directions: it cannot distinguish a claim from its retraction, so negating
 it does not rescue it. When the thing being checked is prose, the check must locate
 the sentence, not merely find the substring somewhere in the file.
+
+- **A red that has been explained is still a red, and `test_import_provenance`
+  spent 2026-09-06 being explained rather than read.** Added 2026-09-06. The
+  import-hijack *mechanism* is already recorded three times above; this is not
+  that. It is about what happened to its detector.
+
+  Tonight, from the **canonical checkout** at `88b71053`, a full backend suite
+  died in collection importing
+  `copilot-worktrees/hoops-gm/sr2501-silver-dollop/backend/src/hoops_gm` - a
+  **live concurrent session's** worktree, neither stale nor deleted. That is
+  precisely the defect `backend/tests/test_import_provenance.py` exists to
+  catch. In the hours before it, the same test's red had twice been reported as
+  *"the known environmental red, already named with its mechanism"*, and I had
+  myself watched it **pass** in this checkout and cited that pass as confirming
+  the red was worktree-specific. It is not worktree-specific; the singleton
+  moves, so a pass means only *"not hijacked at this instant"*.
+
+  **The mechanism explanation was true, and that is what made it dangerous.** A
+  correct diagnosis of one firing became standing permission to skip reading the
+  next. The same red is emitted by the benign case and the real one, so the red
+  alone cannot distinguish them - only the resolved path can. This is the
+  shared-operand family again: two candidate causes collapsed onto one
+  observation, and the habit of explaining it removed the one read that
+  separates them.
+
+  **The expensive branch is the one that did not happen tonight.** This run
+  failed loudly only because the two trees had drifted incompatibly - a
+  `DEMO_PLAYER_IDS` symbol present in one and absent in the other. Had they been
+  compatible, the suite would have gone **green**, and I would have published
+  *"full local suite green at `88b71053`"* about a tree I was not testing. A
+  green suite under a hijack is strictly worse than a red one, and nothing in
+  this file previously said so.
+
+  **The cheap remedy, which is a reporting rule rather than a tool.** A suite
+  result is a claim about a commit only if the run either pinned the source
+  (`cd backend; $env:PYTHONPATH = (Resolve-Path 'src').Path`) or reports
+  `test_import_provenance`'s own outcome from that same run. Absent one of
+  those, *"the suite is green at X"* names a commit it has not tested. Per-
+  worktree virtual environments remain the structural fix and remain absent;
+  this entry does not reduce the case for them, it is the fourth documented
+  instance and the first where the detector itself was the casualty.
+
+  **Amended the same night, after running it rather than reasoning about it.**
+  The paragraph above implied a pinned run could come back green. It cannot, and
+  the reason is deliberate design: the guard calls `resolve_in_clean_process()`,
+  which resolves the package in a **subprocess with `PYTHONPATH` stripped**, so
+  the mitigation is structurally incapable of silencing it. A full pinned suite
+  on this machine at `88b71053` produced **exactly one failure, and it was the
+  guard** - every other test ran against the intended tree. That signature is
+  what a *correct* pinned run looks like while the machine-global install points
+  elsewhere; read as a bare "1 failed" it looks like the pin did not work, and
+  the next person will re-pin to no effect.
+
+  **The reason it must be reported separately rather than folded into the
+  suite's verdict** is that the two reds have different subjects. The guard's
+  red is a statement about **the machine**; every other red is a statement about
+  **the commit**. One observation, two possible subjects - the same collapse
+  this file records elsewhere - and a reader who sees a single tally cannot tell
+  which one they are being told about. So report it as two claims: *"the suite
+  is green at X, source pinned"* and *"the machine's editable install currently
+  serves Y"*. Neither sentence is derivable from the other.
