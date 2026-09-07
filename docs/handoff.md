@@ -39724,3 +39724,61 @@ worst possible vantage point for the task. The test enforces that every entry
 cheap disproof is the next incident - if an entry is rediscovered again with an
 index in place, the key was wrong, and that is worth recording rather than
 patching quietly.
+
+## 2026-09-06 - architect - the symptom index audited itself and failed, then was fixed
+
+The entry above shipped a symptom index for `gates.md` and closed with a "could
+not verify": whether its keys are the ones a reader would actually search for,
+written by someone who already knew all the answers. That is testable more
+cheaply than I claimed, because **today produced four real navigation failures,
+and their queries predate the index.** Three distinct symptoms, tested against
+it: two hit their entry exactly, and the third had no home.
+
+**The miss was a corpus gap, not an index gap** - no entry covered it - so the
+index was complete over what existed. Entry added: *"A lane reads governance
+from its own checkout, so correcting a document in place does not reach it"*.
+The measurement behind it: a lane branched at `2a1d7a94` (03:23:52) and the
+ADR-019 routing amendment landed at `007d8fbb` (16:21:04), thirteen hours later.
+The lane read ADR-019 from its own worktree, complied exactly with the 03:23
+text, and reported a blocker that did not exist. ADR-013's in-place-correction
+rule is right and cannot reach that lane, because correcting a document changes
+the trunk while a branch holds a snapshot, and nothing rebases a lane because a
+governance file moved.
+
+**Auditing the index found a defect in the test I committed an hour earlier.**
+`_entry_titles` matched `^### ` only. The corpus held **37 `###` entries and 2
+filed at `##`**, so the extractor saw 37 of 39, its `>= 30` denominator guard
+passed comfortably, and both misfiled entries were exempt from the index
+requirement with nothing going red. One of the two invisible entries was *"A
+pattern that matches 95% of the time is worse than one that matches half"* - the
+extractor was itself the defect that entry describes.
+
+Proved rather than argued, by running both extractors against
+`HEAD:docs/governance/gates.md` with one index line deleted: the old regex
+reported `[]` and the new one named the orphaned entry. Fixed both ends - the
+two headings normalised to `###`, and the extractor made level-agnostic with the
+seven structural section names excluded by name, so the check no longer depends
+on the corpus staying tidy. Misfiling happened twice in 39 entries, which is a
+recurring slip rather than an accident, and a new mutation test fires only if
+the extractor is level-agnostic. A guard on the structural allowlist was added
+too, since a renamed section would otherwise read as a phantom unindexed entry -
+failing closed, but pointing at the wrong thing.
+
+`gates.md` is now 40 entries, 13 groups of index lines, CRLF 1917 -> 1966 with
+zero lone LF or CR, written byte-level because a multi-line insert through a
+text editor is where a lone LF enters a uniformly-CRLF file.
+
+**Environmental red closed, and it was real.** `test_import_provenance` failed
+the full suite against
+`copilot-worktrees/hoops-gm/sr2501-silver-dollop/backend/src`. Ran the fix the
+failure message itself prescribes - `python -m pip install -e . --no-deps` from
+this checkout - and verified by content rather than by path as it instructs.
+Now 10/10, passing *without* `PYTHONPATH` set, which is the honest check.
+
+**Could not verify:** the two index keys that hit were mine to begin with, so
+they test recall of my own phrasing more than they test a stranger's. The
+genuine test is still the next reader who arrives with a symptom and no
+knowledge of the answer. What is now closed is narrower and worth stating
+exactly: the index is *complete* over the corpus, and its completeness check can
+no longer be defeated by a heading level. Whether a key is the one you would
+have typed remains unenforced, and the cheap disproof remains the next incident.

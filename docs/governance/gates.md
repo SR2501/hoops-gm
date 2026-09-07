@@ -176,6 +176,7 @@ problem**, not a restatement of the title - the title is already the answer.
 - A `done` item carries a caveat written when it was still open - *A caveat is a claim with a shelf life, and `done` items are where they rot*
 - The assertion is right and the sentence reporting it overstates - *The assertion can be right while the sentence reporting it is wrong*
 - You caught your own framing before you published it - *A framing caught before it is written is not a retraction*
+- You followed a governance rule that had since been amended - *A lane reads governance from its own checkout, so correcting a document in place does not reach it*
 
 **Scope, process and the graph**
 
@@ -1809,7 +1810,7 @@ the sentence, not merely find the substring somewhere in the file.
   is green at X, source pinned"* and *"the machine's editable install currently
   serves Y"*. Neither sentence is derivable from the other.
 
-## Neither form of `git diff` answers "does the trunk already have this?"
+### Neither form of `git diff` answers "does the trunk already have this?"
 
 **Recorded 2026-09-06 by `architect`, after getting this wrong three times in
 one day — twice on my own work, once on someone else's.** The mechanism is
@@ -1869,7 +1870,7 @@ archived and worktrees pruned, which is when a false positive is expensive and
 a false negative is unrecoverable. There is no CI job for reading a diff.
 
 
-## A pattern that matches 95% of the time is worse than one that matches half
+### A pattern that matches 95% of the time is worse than one that matches half
 
 **Recorded 2026-09-06 by `architect`.** The overnight plan set the threshold
 itself — *"grep finds the shape; only reading finds the meaning; this belongs in
@@ -1914,4 +1915,52 @@ finding. Before filing anything a pattern suggested, open the file. Both failure
 directions are silent, and near-perfect accuracy is what buys the trust that
 makes the miss expensive — a pattern that failed half the time would have been
 checked.
+
+### A lane reads governance from its own checkout, so correcting a document in place does not reach it
+
+**Recorded 2026-09-06 by `architect`.** ADR-013's amendment of 2026-08-21
+already prescribes the intra-document remedy: an ADR asserts the present
+contract, so correct it in place rather than leave a superseded block above the
+correction, because a reader entering at the earlier block builds the wrong
+thing. That is right, and it is not sufficient - it assumes the reader is
+reading today's file.
+
+**The measurement.** A lane branched at `2a1d7a94`, 2026-09-06 03:23:52. The
+ADR-019 routing amendment landed at `007d8fbb`, 16:21:04 - thirteen hours
+later, +15 lines, that ADR only. The lane read ADR-019 from its own worktree,
+so it read the 03:23 text however carefully it read. It then did exactly what
+that text said: compared a regeneration *absolutely* against the committed
+manifest, saw leaves move that its own edit had not caused, stopped where the
+paragraph says to stop, discarded a correct regeneration, and reported a
+blocker that did not exist. Every step was compliant. The rule it complied with
+had been superseded while it worked.
+
+**Why correcting in place cannot reach it.** Correcting a document in place
+changes the trunk. A lane's checkout is a snapshot, and nothing rebases a branch
+because a governance file moved - no gate watches for it, and a lane that never
+touches `docs/` has no reason to look. The longer a lane runs the staler its
+copy of the rules, and the failure is silent in the direction that matters: the
+lane is *more* confident for having followed the document, and its report cites
+the document as authority.
+
+**The remedy is a different source, not more care.** Re-reading its own file
+would have confirmed the lane every time, so diligence was never the missing
+ingredient. Before acting on a governance instruction that stops work or
+declares a blocker, read that file at the trunk instead of in the branch:
+
+```
+git fetch && git show origin/main:docs/decisions/ADR-0NN-....md
+```
+
+One command, and only at the moment of escalation rather than on every read.
+That moment is when a stale rule costs the most and is questioned the least,
+because a lane about to report itself blocked is not looking for reasons it is
+not.
+
+**Scope, stated because it is narrower than it looks.** This is not an argument
+against amendments, and it does not weaken ADR-013's in-place rule - in-place
+correction is still strictly better for every reader on the trunk. It says only
+that the remedy has a blind spot shaped exactly like a long-lived branch, and
+that the blind spot widens with lane duration, which is the one variable a
+fan-out deliberately increases.
 

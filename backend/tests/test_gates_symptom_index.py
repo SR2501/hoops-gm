@@ -39,8 +39,35 @@ def _read(path: Path) -> str:
     return path.read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
+_STRUCTURAL_HEADINGS = frozenset(
+    {
+        "Code gate",
+        "Adapter gate",
+        "Model gate",
+        "Automation gate",
+        "Symptom index",
+        "What gates cannot catch",
+        "Gate discipline",
+    }
+)
+
+
 def _entry_titles(text: str) -> list[str]:
-    return [m.group(1).strip() for m in re.finditer(r"^### (.+)$", text, re.M)]
+    """Match ``##`` as well as ``###``, excluding structural sections by name.
+
+    A ``^### `` regex was wrong on 2026-09-06: the corpus held 37 ``###``
+    entries and 2 filed at ``##``. The extractor found 37, the ``>= 30``
+    denominator guard below passed comfortably, and both misfiled entries were
+    exempt from the index requirement without a single check going red. One of
+    the two was *"A pattern that matches 95% of the time is worse than one that
+    matches half"* - which is precisely what that regex was.
+
+    Filing at the wrong level has happened twice in a 39-entry corpus, so it is
+    a recurring slip rather than a one-off, and the extractor must tolerate it
+    instead of the corpus having to stay tidy for the check to mean anything.
+    """
+    titles = [m.group(1).strip() for m in re.finditer(r"^#{2,3} (.+)$", text, re.M)]
+    return [t for t in titles if t not in _STRUCTURAL_HEADINGS]
 
 
 def _index_block(text: str) -> str:
@@ -93,6 +120,20 @@ def test_the_index_sits_above_the_corpus_it_indexes(gates_text: str) -> None:
     assert gates_text.find(_INDEX_HEADING) < first_entry
 
 
+def test_the_structural_allowlist_still_describes_the_file(gates_text: str) -> None:
+    """A stale allowlist reads a renamed section as an unindexed entry.
+
+    That fails closed rather than open, so nothing unsafe ships - but the
+    message would point at the wrong thing and cost the reader the time this
+    file exists to save. Name the drift directly instead.
+    """
+    for heading in _STRUCTURAL_HEADINGS:
+        assert f"\n## {heading}\n" in gates_text, (
+            f"structural heading '{heading}' is no longer in gates.md - update "
+            "_STRUCTURAL_HEADINGS or it will be read as an unindexed entry"
+        )
+
+
 # --------------------------------------------------------------------------
 # Negative controls. Each mutation must make the check above fire.
 # --------------------------------------------------------------------------
@@ -130,8 +171,19 @@ def test_an_entry_added_without_a_symptom_line_is_caught() -> None:
     assert _unreachable(mutated) == ["A third entry nobody indexed"]
 
 
+def test_an_entry_misfiled_at_section_level_is_still_required_to_be_indexed() -> None:
+    """The defect this extractor was rewritten to close.
+
+    Two real entries sat at ``##``. A level-specific extractor reported 37 of
+    39, satisfied its own denominator guard, and silently exempted both. This
+    mutation fires only if the extractor is level-agnostic.
+    """
+    mutated = _COMPLETE + "\n## A third entry misfiled at section level\n\nBody.\n"
+    assert _unreachable(mutated) == ["A third entry misfiled at section level"]
+
+
 def test_a_deleted_index_does_not_pass_vacuously() -> None:
-    mutated = _COMPLETE.replace(_INDEX_HEADING, "## Something else")
+    mutated = _COMPLETE.replace(_INDEX_HEADING, "## Gate discipline")
     assert len(_unreachable(mutated)) == 2, (
         "removing the index must report every entry as unreachable, not zero"
     )
