@@ -150,8 +150,15 @@ before any draft write; it never returns a successful partial board or a
 shortlist fixture with too few candidates.
 
 Reliability is descriptive only. Its player names are canonical so they join the
-projection cohort, while every game id and schedule-lineage source begins
-`synthetic-reliability-demo`. The screen renders a prominent disclosure that
+projection cohort, while every game id begins `synthetic-reliability-demo`
+and the schedule and observation lineage sources begin `synthetic-demo:`.
+Those are two different prefixes deliberately, and the second one is
+load-bearing: `ReliabilityPage.tsx` fires the disclosure banner on
+`startsWith('synthetic-demo:')`, so renaming the lineage sources to match
+the game-id prefix would turn the banner off on a screen showing real
+player names. `test_seed_demo.py` pins that literal independently of the
+seeder constant, so such a rename fails loudly rather than silently.
+The screen renders a prominent disclosure that
 every game and box score is invented only to exercise the interface. Observation
 lineage identifies the unchanged production writer chain; the synthetic origin
 is carried by the game ids, schedule source and disclosure rather than adding
