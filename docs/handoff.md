@@ -39572,3 +39572,73 @@ something I measured. And I have not established that its worktree is safe to
 remove beyond it being clean and its branch being an ancestor of `main`; that is
 sufficient for removal but I did not check whether anything still consumes it.
 
+
+## 2026-09-06 - architect - a dependency edge that contradicted ADR-002 held the whole valuation path
+
+`zscore-engine` depended on `expected-games`. **ADR-002's Decision defines
+`expected-games` as the seam** - per-game production and availability "are modelled
+independently" and `expected-games` is "the only place the two are combined". So
+that edge made the production half wait on the fusion. It is the "single blended
+seasonal projection" ADR-002 lists under Rejected, reintroduced as a schedule
+rather than as a formula, which is why no gate caught it: the Model gate inspects
+numbers, and this was an edge.
+
+**Check it against the item's own body, which is the cheap disproof if I am
+wrong.** `zscore-engine` names nine per-game rates, volume-weighted percentages
+from `numerator_stat`/`denominator_stat`, turnover sign, and a replacement level
+from *league size x roster spots* - a count of rostered players, 12 x 13, not a
+quantity of games. **Not one named input is availability.** No reason for the edge
+was ever recorded in the item, unlike the `draft-tracker` edge on
+`draft-day-shortlist`, which stated its reason and was retargeted on the same
+grounds the same day.
+
+**The cost, measured with the repo's own tool rather than argued.**
+`projection-blending` and `scoring-profiles` are both `done`, so this was the only
+blocking edge. After removing it `scripts/backlog_graph.py` reports `zscore-engine`
+READY with **39 unfinished items waiting behind it** - the largest unblock count in
+the graph - and every one of the graph's deepest chains, 7 to 9 deep, bottoms out
+on it. One unexamined edge held the entire draft-day valuation path.
+
+**It also made ADR-021 self-contradictory, on the critical path, while awaiting the
+owner's acceptance.** Its Context lists `zscore-engine` among the items "behind
+that veto"; its Decision point 2 requires on 18 October "our own per-game
+projections and category values, unadjusted for durability", which is that item's
+output. Both cannot hold. The Context is the wrong half. Amendment written
+`Proposed` - I do not accept ADRs - recording the contradiction, the resolution,
+and that point 2 is therefore not a concession: an unadjusted per-game z-score is
+**the production half of the intended architecture**, fusing at `expected-games`
+without rework when the veto clears, so nothing built for draft day is thrown away.
+
+**It supplies the selection rule `draft-day-shortlist` was missing.** That item
+must return 3-5 candidates; the owner's stated reason for wanting it is to avoid
+"overweighting one category by sorting in a hurry", so single-category sorting is
+excluded by the requirement itself, and its Gate boundary forbids inventing a fused
+score under the Code gate. A production-only z-score under a full Model gate is the
+one ordering that satisfies both. I did not hand the shortlist to a lane, because
+until now its brief would have forced a lane to choose between those two.
+
+**This lowers no gate.** A z-score is a number a draft decision rests on: held-out
+backtest reporting calibration, a model card, and a blind-spot statement beginning
+with the fact that it is production-only and says nothing about who suits up. It
+must never be sorted or displayed as availability-adjusted value (ADR-018,
+ADR-002). What changed is when it may start, not how carefully.
+
+Filed `fusion-seam-edge-audit` because I found this by walking one deadline item's
+chain, not by auditing the graph, and a one-item fix presented as an audit is the
+sampling this repository has already been burned by. Header recounted 91/0/132/223,
+`backlog_graph.py` green, hashed window 3623-3661 asserted unmoved.
+
+**One small thing worth keeping.** My edit script asserted ADR-021 held exactly one
+`**Status:** Proposed`; it holds two, because the existing amendment carries one.
+The assertion encoded my assumption rather than a measurement - the same defect
+family as the rest of today - but it *refused* instead of writing, which is the
+whole reason to assert preconditions rather than check afterwards. Cost: one
+revert, nothing written.
+
+**Could not verify.** That no *other* edge carries the same inversion - that is the
+filed audit, and I checked the spine rather than the graph, so I cannot say whether
+this is one instance or the first of several. Whether a per-game z-score will
+actually *pass* its Model gate: unblocking it is not evidence it calibrates, and a
+ready item is not a working one. And I have not re-read the ~100 ADR citations
+outside `raise`/`assert` statements, so I do not know whether any of them repeats
+the Context claim I just contradicted.

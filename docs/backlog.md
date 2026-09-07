@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 131 pending - 222 total**
+**91 done - 0 blocked - 132 pending - 223 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4036,9 +4036,50 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 ### `zscore-engine` - Implementing the 9-cat z-score engine
 
 - [ ] **pending**
-- **Depends on:** `expected-games`, `projection-blending`, `scoring-profiles`
+- **Depends on:** `projection-blending`, `scoring-profiles`
 
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
+**Dependency edge on `expected-games` removed 2026-09-06, because it contradicts
+ADR-002.** That ADR's Decision is explicit that per-game production and expected
+games are modelled *independently*, and that **`expected-games` is the only place
+the two are combined**. So `expected-games` is the fusion seam. An edge making the
+production half wait for the seam inverts the architecture the ADR exists to
+protect - it is the "single blended seasonal projection" ADR-002 lists under
+Rejected, reintroduced as a schedule rather than as a formula, where no gate looks
+for it.
+
+**Read this item's own body against its own edge.** Every input named above is
+production-side or structural: nine per-game rates, volume-weighted percentages
+from `numerator_stat`/`denominator_stat`, turnover sign, and a replacement level
+derived from *league size x roster spots*. That last is a count of rostered
+players - 12 teams x 13 slots - not a quantity of games. **Not one named input is
+availability.** No stated reason for the edge was ever recorded here, unlike the
+`draft-tracker` edge on `draft-day-shortlist`, which stated its reason and was
+retargeted on the same grounds the same day.
+
+**The likely origin, so it is not re-added.** "Value should account for
+availability" is true, and it is carried by `risk-adjusted-valuation`, which
+exists as its own item downstream. Encoding that concern as an edge on the
+*z-score* rather than on the *fusion* is precisely the conflation ADR-002 forbids.
+Anyone tempted to restore this edge should add it to `risk-adjusted-valuation`
+instead, where it already is.
+
+**What this unblocks, and it is the deadline item.** `projection-blending` and
+`scoring-profiles` are both `done`, so `expected-games` was this item's only
+blocking edge and removing it makes `zscore-engine` dependency-ready today.
+ADR-021's Decision point 2 requires "our own per-game projections and category
+values, unadjusted for durability" on 18 October - that is this item's output -
+while its Context lists `zscore-engine` as behind the availability veto. Those
+cannot both hold; an amendment proposed 2026-09-06 records the resolution.
+
+**This does not lower the bar. The Model gate still applies in full.** A z-score
+is a number a draft decision rests on. It needs held-out backtesting reporting
+**calibration**, a model card in `docs/models/`, and an explicit statement of what
+it cannot see - beginning with the fact that it is production-only and says
+nothing whatever about whether a player suits up. What changed is *when* it can be
+built, not *how carefully*. It must never be displayed or sorted as though it were
+availability-adjusted value (ADR-018, ADR-002), and fusing it with `p(play)`
+remains `expected-games` work behind the veto.
 
 
 
@@ -6185,3 +6226,47 @@ exercised in the current store at all until schedule rows exist on one side of i
 
 **What I did not check.** Which importer runs first in the intended production order - and the
 objection does not need it, because the complaint is that nothing pins or records that ordering.
+
+
+### `fusion-seam-edge-audit` - Auditing every dependency edge that points at a fusion or aggregation step
+
+- [ ] **pending**
+
+**Why this exists.** On 2026-09-06 `zscore-engine` was found to depend on
+`expected-games`. ADR-002's Decision defines `expected-games` as the seam where
+per-game production and availability are combined - "the only place the two are
+combined" - so that edge made the *production* half wait for the *fusion*. It is
+the "single blended seasonal projection" ADR-002 lists under Rejected,
+reintroduced as a schedule rather than as a formula. Nothing looked for it there:
+the Model gate inspects numbers, and this was an edge.
+
+**The cost was not theoretical.** That single edge was `zscore-engine`'s only
+blocking dependency - its other two are `done` - so it held the sole route to a
+defensible draft-day per-player number behind the availability veto, and it made
+ADR-021 self-contradictory: its Context listed `zscore-engine` as vetoed while its
+Decision point 2 required that item's output on 18 October.
+
+**Scope, and the honest reason it is a separate item.** That edge was found by
+walking the chain behind one deadline-critical item, not by auditing the graph.
+The same inversion can sit on any edge whose target is a step that *combines* or
+*aggregates* rather than *produces*. Candidate targets to walk first, because they
+are named as seams or aggregates rather than as producers: `expected-games`,
+`risk-adjusted-valuation`, `projection-blending`, `draft-day-synthesis`. The
+property to test for each edge is one question - **does the dependent need this
+target's output as an input, or was the target merely named because it sounds like
+a prerequisite?** The second is the defect.
+
+**Do not read a removed edge as a lowered gate.** Removing an over-tight edge
+changes *when* work may start, never *how carefully*. Anything downstream that
+produces a number a decision rests on keeps its Model gate in full, including
+calibration reporting and a blind-spot statement.
+
+**Done when** every dependency edge whose target is a fusion or aggregation step
+has been read against that question, each is either kept with its reason recorded
+in the item or removed with the argument recorded, and the walk states how many
+edges were examined so a later reader can tell a complete audit from a sampled
+one. Gate: Code - `scripts/backlog_graph.py` must still pass and no dependency may
+be left dangling.
+- *Filed by `architect` 2026-09-06 from the ADR-021 amendment that found the first
+  instance. Filed rather than fixed inline because a one-item fix presented as an
+  audit is exactly the sampling this file has been burned by before.*

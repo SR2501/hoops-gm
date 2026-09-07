@@ -178,3 +178,57 @@ answer the second question or foreclose it.
 at-risk denominator, an unknown count, or any unknown share, and nothing here is
 an input to the frozen preregistration at
 `docs/models/participation-opportunity-coverage-preregistration.md`.
+
+### 2026-09-06 - the Context vetoes a thing the Decision requires, and the veto is the mistake
+
+**Status:** Proposed. Written by `architect`, the author of the body above.
+
+**The decision does not change. One claim under it is false and it is load-bearing.**
+
+**The contradiction, stated so it can be checked in a minute.** The Context above
+says everything downstream - naming `zscore-engine` among them - "is behind that
+veto". Decision point 2 requires on 18 October "our own per-game projections and
+**category values, unadjusted for durability**". Category values unadjusted for
+durability *are* `zscore-engine`'s output; the backlog item describes it as
+"Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO". So as written
+this ADR requires on draft day a thing it elsewhere declares vetoed. Two readings
+build different products, which is why this is worth an amendment rather than a
+correction in passing.
+
+**The Context is the half that is wrong.** `zscore-engine` was behind the veto
+only through a single backlog dependency edge on `expected-games`. ADR-002's
+Decision defines `expected-games` as the seam where production and availability
+are combined - "the only place the two are combined" - so that edge made the
+production half wait on the fusion. Its other two edges, `projection-blending` and
+`scoring-profiles`, are both `done`. The edge is removed as of 2026-09-06 with the
+argument recorded in the backlog item, and `zscore-engine` is dependency-ready.
+
+**Why this matters more than a tidy-up.** It changes what point 2 costs. Written,
+point 2 reads as a concession - ship less because the model is blocked. It is
+better than that: an unadjusted per-game z-score is not a substitute for the
+intended architecture, it is **the production half of it**, computed exactly as
+ADR-002 intends and fusing at `expected-games` without rework when the veto
+clears. The draft-day fallback and the real design are the same artifact stopped
+one layer short, so nothing built for 18 October is thrown away.
+
+**It also supplies a selection rule the headline deliverable lacks.**
+`draft-day-shortlist` must return 3-5 candidates and the owner's stated reason for
+wanting it is to avoid "overweighting one category by sorting in a hurry" - so
+single-category sorting is excluded by the requirement itself, while its Gate
+boundary forbids inventing a fused score under the Code gate. A production-only
+z-score under a full Model gate is the one ordering that satisfies both.
+
+**What this does not do.** It does not weaken the availability veto, touch
+`PROCEED_COMMON`, or make `expected-games`, `risk-adjusted-valuation` or
+`auction-values` reachable; those remain behind it and the amendment above still
+governs. It does not relax the Model gate on the z-score, which needs calibration
+reporting, a model card and a blind-spot statement before any number it produces
+reaches a screen. And it does not make the z-score safe to display as value: it is
+production-only, it says nothing about who suits up, and sorting it as though it
+were availability-adjusted is the failure ADR-002 exists to prevent.
+
+**What I did not verify.** That no *other* dependency edge in the backlog carries
+the same defect. I found this one by walking the chain behind a single deadline
+item; the same inversion could sit on any edge pointing at a fusion or aggregation
+step, and I checked the spine rather than the graph. Filed as
+`fusion-seam-edge-audit`.
