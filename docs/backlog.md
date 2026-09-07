@@ -4080,6 +4080,68 @@ nothing whatever about whether a player suits up. What changed is *when* it can 
 built, not *how carefully*. It must never be displayed or sorted as though it were
 availability-adjusted value (ADR-018, ADR-002), and fusing it with `p(play)`
 remains `expected-games` work behind the veto.
+**Acceptance criteria, written 2026-09-06 by `architect` because removing this
+item's blocking edge left the graph's highest-leverage item specified in one
+sentence.** These state what must be true, not how to get there; the method is
+`quant`'s and nothing below should be read as prescribing one.
+
+1. **Production-only, and it says so in its own output.** The engine consumes
+   per-game rates and league structure. It reads no `p(play)`, no availability
+   table, and no games-played column - including `source_games_played_assumptions`,
+   whose prohibition is recorded on `draft-day-shortlist` and in
+   `api/routes/projections.py`. A test asserts the computation touches none of
+   them, so the boundary is enforced rather than intended.
+
+2. **Percentage categories are volume-weighted impact.** FG% and FT% enter as
+   impact relative to league mean scaled by attempts, never as raw percentage.
+   `league_scoring_categories` already carries `numerator_stat` and
+   `denominator_stat`, so the schema supports it. The falsifying test is the house
+   rule stated as a case: **a 90% FT shooter on one attempt per game must not
+   out-rank a 80% shooter on eight**, and it must be a committed test rather than a
+   claim, because this is the single most common bug in homebrew fantasy tools and
+   it produces confident, plausible, wrong numbers rather than a crash.
+
+3. **Turnovers are negative and nothing else is inverted by accident.** A test
+   pins the sign of every one of the nine categories independently. A sign error
+   here is silent and survives any aggregate check.
+
+4. **Replacement level is stated, not implied.** League size x roster spots gives
+   a rostered population - 12 x 13 = 156 - and z-scores computed over the whole
+   projected pool differ from those computed over that population. Whichever is
+   chosen, the choice is recorded in the model card with its consequence, and a
+   test asserts the population actually used matches the one declared.
+
+5. **Model gate, and what calibration means for a value rather than a
+   probability.** A z-score is not a probability, so the `p(play)` sense of
+   calibration does not transfer and must not be waved through as inapplicable.
+   The analogous property is that **magnitudes carry the meaning they claim**: a
+   player at +2.0 should deliver about twice the standardised category edge of one
+   at +1.0 in held-out data, not merely rank above them. Report that relationship
+   against a held-out season, not rank correlation alone - rank correlation can be
+   high while the spacing is meaningless, and spacing is exactly what an auction
+   spends money against.
+
+6. **The model card states what it cannot see, beginning with three things it
+   structurally cannot.** (a) Whether anybody plays - it is production-only by
+   construction, and a durable 55-game player and a fragile one are identical to
+   it. (b) That 9-cat H2H is won **per category per week**, not on season totals,
+   so equal weighting across categories is an assumption this engine makes and
+   cannot test. (c) That z-scores presume a roughly symmetric distribution per
+   category, which counting stats with long right tails - blocks, threes - violate;
+   name the effect rather than only the assumption.
+
+7. **It is never displayed or sorted as availability-adjusted value.** ADR-018 and
+   ADR-002. Any surface consuming it labels it production-only. Fusing it with
+   `p(play)` is `expected-games`, which remains behind the veto, and a consumer
+   that multiplies them has left the Code gate for the Model gate
+   (`draft-day-shortlist` states that boundary).
+
+**Sequencing note.** `draft-day-shortlist` needs an ordering and this is the only
+one available to it that is neither single-category sorting nor an invented fused
+score. That makes this item deadline-relevant rather than merely deep in the graph:
+39 unfinished items sit behind it, and the 18 October auction is one of them.
+**It is a Model-gated unit and deserves a supervised run**, on the same reasoning
+`plan.md` applies to `blend-recipe-persistence` - not an unattended overnight lane.
 
 
 
