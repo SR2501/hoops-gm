@@ -39198,3 +39198,44 @@ project keeps finding to be narrower than stated. And I have not checked whether
 `docs/models/participation-opportunity-coverage-preregistration.md` itself repeats
 the "descriptive counting" wording — it is frozen, so it could not be corrected
 anyway, but a reader could still meet the wrong characterisation there.
+
+## 2026-09-06 - backend (delivery) - the composed demo now has shortlist inputs that actually intersect
+
+Measured from a fresh temporary SQLite database before changing the fixture:
+60 projections, 7 distinct auction-drafted players, 53 projected-and-undrafted
+players, 0 participation rows, 0 absence splits, 0 injury-report entries, and
+4 game logs on internal player ids 581 and 582. The projection/health-evidence
+intersection was 0. The auction was league 2 and had 0 settings snapshots,
+0 scoring profiles and 0 scoring categories; league 1 alone had one settings
+snapshot.
+
+The composed seed now takes the five projected players immediately after the
+seven deterministic auction selections and gives each two invented 2025-26
+appearances through the production schedule and box-score writers. Five is the
+upper end of the planned 3-5 shortlist and all five remain undrafted. Their game
+ids and schedule source carry `synthetic-reliability-demo` provenance; their
+canonical names exist only so health evidence and projections join on the same
+player ids. No availability probability, expected-games value, fused score, or
+`source_games_played_assumptions` value is read or produced.
+
+The auction league now receives its own synthetic league identity and settings
+snapshot. Its 2026-27 period windows are visibly synthetic, while scoring type
+and the nine category definitions come from the committed sanitized Fantrax
+settings fixture. The persisted source digest combines the raw fixture-byte
+digest with the synthetic-period document digest. The production scoring-profile
+deriver activates one profile with nine categories; FG% and FT% retain their
+made/attempted component columns.
+
+Measured after the change from another fresh temporary database: 60 projections,
+7 drafted, 53 projected-and-undrafted, 10 game logs, a projection/health
+intersection of 5, and an undrafted projection/health intersection of 5. Auction
+league 2 has 1 settings snapshot, 1 active scoring profile and 9 categories.
+`test_seed_demo.py` guards the overlap, two synthetic observations per player,
+undrafted status, provenance, active profile, exact 9-cat vocabulary, and ratio
+components. The full offline Code gate passed: Ruff format/check, strict mypy,
+and 2,723 tests passed with 2 skipped and 44 live-smoke tests deselected.
+
+**Could not verify.** PostgreSQL execution because no `TEST_DATABASE_URL` was
+available; the complete SQLite suite and the repository's static portability
+checks passed. I did not build or drive a shortlist surface, ranking, or API
+route because this unit explicitly stops at fixture composition and its guard.

@@ -76,6 +76,8 @@ import json
 import sys
 import traceback
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 from sqlalchemy import select
@@ -86,6 +88,7 @@ from hoops_gm.core.config import Settings
 from hoops_gm.db.models.identity import Player
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection
+from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_draft import (
     DEMO_PREFIX,
@@ -107,14 +110,28 @@ from hoops_gm.dev.seed_schedule_grid import (
     FANTRAX_LEAGUE_ID,
     DemoSeedRefused,
     create_schema_only_on_a_fresh_database,
+    load_fixture,
     redacted_url,
+    settings_document,
+    weekly_periods,
 )
+from hoops_gm.ingest.backfill import derive_scoring_profile
 from hoops_gm.ingest.errors import SourceContractError
+from hoops_gm.ingest.importers import import_league_settings
+from hoops_gm.ingest.league_settings import parse_official_league_settings
 
 #: The league id both dashboard screens are hardcoded to. Not enforced here —
 #: it is a consequence of insertion order on a fresh database — but printed, so
 #: a database that came out otherwise is visible rather than a mystery 409.
 FRONTEND_LEAGUE_ID = 1
+SHORTLIST_CANDIDATE_COUNT = 5
+AUCTION_SELECTION_COUNT = 7
+MIN_COMPOSED_COHORT_SIZE = AUCTION_SELECTION_COUNT + SHORTLIST_CANDIDATE_COUNT
+AUCTION_DEMO_LEAGUE_ID = "synthetic:auction-demo"
+AUCTION_PERIODS_CAPTURE_REF = "synthetic:auction-demo-periods"
+SCORING_SETTINGS_FIXTURE = "fantrax_getleagueinfo_settings_sanitized.json"
+SCORING_SETTINGS_CAPTURE_REF = f"fixture:{SCORING_SETTINGS_FIXTURE}"
+SEEDED_AT = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -140,14 +157,14 @@ def seed_demo(
     """Seed schedule, projections, reliability and drafts in one transaction.
 
     ``seed_projections`` runs first because it composes the schedule seed and
-    because both dashboard screens read league 1; ``seed_drafts`` runs last
-    because its ``[demo] `` leagues would make the schedule seed's foreign-league
-    refusal fire. See the module docstring for why each of those is a
-    constraint rather than a habit.
+    because both dashboard screens read league 1. Draft creation follows it:
+    its ``[demo] `` leagues would make the schedule seed's foreign-league
+    refusal fire. Reliability evidence and the auction scoring profile can then
+    bind to the projected cohort and auction league. See the module docstring
+    for why that ordering is a constraint rather than a habit.
     """
 
     projections = seed_projections(session, fixtures_dir=fixtures_dir, cohort_size=cohort_size)
-    reliability = seed_reliability_demo(session)
     auction_players = tuple(
         CanonicalDraftPlayer(player_id=player_id, player_label=player_label)
         for player_id, player_label in session.execute(
@@ -157,8 +174,89 @@ def seed_demo(
             .order_by(Projection.player_id)
         )
     )
+    if len(auction_players) < MIN_COMPOSED_COHORT_SIZE:
+        raise DemoSeedRefused(
+            "the composed demo needs at least "
+            f"{MIN_COMPOSED_COHORT_SIZE} projected players: {AUCTION_SELECTION_COUNT} "
+            f"auction selections plus {SHORTLIST_CANDIDATE_COUNT} undrafted players with "
+            f"synthetic health evidence; received {len(auction_players)}"
+        )
     drafts = seed_drafts(session, auction_players=auction_players)
+    reliability = seed_reliability_demo(
+        session,
+        player_ids=tuple(
+            player.player_id
+            for player in auction_players[
+                AUCTION_SELECTION_COUNT : AUCTION_SELECTION_COUNT + SHORTLIST_CANDIDATE_COUNT
+            ]
+        ),
+    )
+    _seed_auction_scoring_profile(
+        session,
+        auction_league_id=drafts.auction_league_id,
+    )
     return DemoSeedResult(projections=projections, reliability=reliability, drafts=drafts)
+
+
+def _seed_auction_scoring_profile(session: Session, *, auction_league_id: int) -> None:
+    """Give the composed auction its own source-attributed active 9-cat profile."""
+
+    league = session.get(League, auction_league_id)
+    if league is None:
+        raise ValueError(f"the composed auction league {auction_league_id} does not exist")
+    league.fantrax_league_id = AUCTION_DEMO_LEAGUE_ID
+
+    game_dates = tuple(
+        session.scalars(
+            select(NbaGame.game_date).where(NbaGame.season == league.season).order_by(NbaGame.id)
+        )
+    )
+    if not game_dates:
+        raise ValueError(
+            f"the composed auction league {auction_league_id} has no {league.season} "
+            "schedule dates from which to build synthetic settings"
+        )
+    period_document = settings_document(
+        weekly_periods(min(game_dates), max(game_dates)),
+        source_league_id=AUCTION_DEMO_LEAGUE_ID,
+        capture_ref=AUCTION_PERIODS_CAPTURE_REF,
+        source_path="hoops_gm.dev.seed_demo (synthesized, never observed)",
+    )
+    scoring_fixture_path = DEFAULT_FIXTURES_DIR / SCORING_SETTINGS_FIXTURE
+    scoring_payload = load_fixture(DEFAULT_FIXTURES_DIR, SCORING_SETTINGS_FIXTURE)
+    recorded_scoring = parse_official_league_settings(
+        scoring_payload,
+        source_league_id=AUCTION_DEMO_LEAGUE_ID,
+        capture_ref=SCORING_SETTINGS_CAPTURE_REF,
+    )
+    document = period_document.model_copy(
+        update={
+            "scoring_type": recorded_scoring.scoring_type,
+            "scoring_categories": recorded_scoring.scoring_categories,
+        }
+    )
+    source_payload_sha256 = sha256(
+        json.dumps(
+            {
+                "recorded_scoring_fixture_sha256": sha256(
+                    scoring_fixture_path.read_bytes()
+                ).hexdigest(),
+                "synthetic_period_document_sha256": sha256(
+                    period_document.canonical_json().encode()
+                ).hexdigest(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    import_league_settings(
+        session,
+        league=league,
+        document=document,
+        source_payload_sha256=source_payload_sha256,
+        observed_at=SEEDED_AT,
+    )
+    derive_scoring_profile(session, league=league, activate=True)
 
 
 def looks_like_a_previous_demo_seed(session: Session) -> bool:
@@ -330,9 +428,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(proof(result, database_url=args.database_url), indent=2))
     print(
         "\nEvery projection number, reliability observation, box score, seat, selection "
-        "and price above is invented. Projection and draft names are real only because "
-        "their identity join needs canonical players; reliability names explicitly say "
-        "synthetic demo. A screenshot taken from any of these screens proves shape and "
+        "and price above is invented. Player names are real only because their identity "
+        "joins need canonical players. The auction's 9-cat vocabulary comes from the "
+        "sanitized recorded settings fixture; its league identity and periods are "
+        "synthetic. A screenshot taken from any of these screens proves shape and "
         "nothing else.",
         file=sys.stderr,
     )
