@@ -39384,3 +39384,57 @@ corrected method; `cleanup-worktrees` re-derived them on an earlier reading, and
 that reading used exactly the comparison this entry says does not work, so its
 conclusions are not safe to rely on even though they may well be right.
 
+## 2026-09-06 - architect - re-auditing the worktrees, and retiring a stale warning
+
+**Why I redid work already marked clear.** My previous entry states that
+`cleanup-worktrees` cleared the registered worktrees using the git comparisons
+the entry above it proves cannot answer the question. Leaving that standing
+would be relying on a conclusion I had just published as unsafe, so I re-derived
+it. The conclusion changed in one respect and a live warning in the plan turned
+out to be obsolete.
+
+**There are six registered worktrees, not five.** The count in the inherited
+notes was stale, which is itself the argument for recounting.
+
+**All six have zero uncommitted changes** - no modified files, no untracked
+files, measured with `git -C <path> status --porcelain`. This is the fact that
+actually governs worktree removal, and it had been conflated with merge status.
+`git worktree remove` deletes a checkout; it does not delete a branch ref. So
+the only thing removal can destroy is uncommitted work, and there is none.
+Whether a branch has landed is a separate question that does not gate removal.
+
+**A warning in the plan is now obsolete and should stop being propagated.** It
+reads: *"A4's implementation is uncommitted and all five arm branches are 0
+commits ahead. Removing those worktrees destroys it."* That was true when
+written. `db07b1e74 trial(A5): preserve adr-index-consistency implementation`
+committed it - 4 files, 568 insertions. The risk is retired.
+
+**Method, since the point of the exercise was not trusting the old one.**
+`git cherry` for patch-id equivalence, then for every commit it marked unique,
+`git show <c> | git apply --check --reverse`, where exit 0 means the change is
+already present in the tree. That flagged four commits across three branches as
+absent. **Three of the four were wrong**, and reverse-apply failing on context
+drift is exactly why: the plausibility bound is on `main` (`main:parsers.py`
+carries `_assert_plausible_tipoff_hour` three times) in its post-review form, so
+the pre-review commit no longer reverse-applies; the c39 closure is on `main` in
+`docs/backlog.md`; and `scripts/check_adr_index.py` is on `main` under a
+different test filename than the trial branch used. Only the A5 trial commit is
+genuinely unlanded, and deliberately so - the plan records it as a candidate,
+not a merge.
+
+So the corrected method is better than the ones it replaces and still produced a
+75% false-positive rate on this set. It is safe in the direction that matters -
+it does not report content as present when it is absent - but *anything it
+flags* needs a content-level check before it is believed.
+
+**I removed nothing.** Two of these worktrees belong to sessions I was
+corresponding with today, and tidying up another agent's checkout on my own
+initiative is the failure this project has a rule against. The audit is the
+deliverable; the removal is a decision for whoever owns the cleanup.
+
+**Could not verify.** Whether any of the six branches exists only locally - I
+checked working-tree cleanliness, not push state, so a branch could be clean and
+still be the sole copy of its commits on this machine. That does not change the
+removal verdict, since removing a worktree leaves the branch, but it does mean
+*deleting* any of these branches needs its own check that I have not done.
+

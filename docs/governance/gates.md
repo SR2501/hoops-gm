@@ -1782,3 +1782,50 @@ unmerged work at risk?" gets asked at exactly the moment sessions are being
 archived and worktrees pruned, which is when a false positive is expensive and
 a false negative is unrecoverable. There is no CI job for reading a diff.
 
+
+## A pattern that matches 95% of the time is worse than one that matches half
+
+**Recorded 2026-09-06 by `architect`.** The overnight plan set the threshold
+itself — *"grep finds the shape; only reading finds the meaning; this belongs in
+the skill file if it happens a fourth time"* — after three findings in one night
+that reading disproved: a `seed_demo.py` docstring believed to lie (it delegates
+to the function that changed), a stdout path believed unguarded (`json.dumps`
+defaults to `ensure_ascii=True`), and an integer predicate believed weakened (it
+was line-wrapped past the pattern). It has since happened again, twice, so the
+threshold is met and the rule is written down where it will be found rather than
+left in a chronological log.
+
+**The measurement, because the ratio is the whole point.** Twenty ADR files on
+`main` carry a status. Nineteen write it line-initial as `**Status:**`. Exactly
+one writes it as a bullet, `- **Status:**`:
+
+```
+git ls-tree main --name-only docs/decisions/    # 20 ADR files
+#   line-initial **Status:**  -> 19
+#   bullet form - **Status:** ->  1   ADR-017-auction-pricing-without-mock-corpus.md
+```
+
+A `^\*\*Status:\*\*` search is therefore **95% accurate**, which is precisely what
+makes it dangerous: it is right often enough to be trusted, and it fails silently
+by returning fewer rows rather than an error. The single file it misses is
+**ADR-017** — whose acceptance is the stated precondition for ADR-021, the last
+open decision on the 18 October path. I read that grep and concluded ADR-017 was
+still `Proposed`. It had been `Accepted` by the owner since 2026-09-06. The one
+exception in twenty was the one that mattered.
+
+**The second instance, same day, opposite direction.** `scripts/check_adr_index.py`
+is on `main` and `grep -n check_adr_index .github/workflows/ci.yml` returns
+nothing, which reads as *a checker nothing runs*. Reading
+`backend/tests/test_adr_index.py` shows `test_real_repository_index_is_consistent`
+invoking `checker.problems(REAL_DECISIONS)` against the live `docs/decisions/`
+directory, with `test_reserved_exemption_is_load_bearing` as a negative control.
+It is fully gated; the absent CI wiring would be a redundant second invocation.
+The first instance was a false negative, this one a false positive, and neither
+announced itself.
+
+**The operative rule.** A search result is a list of places to read, never a
+finding. Before filing anything a pattern suggested, open the file. Both failure
+directions are silent, and near-perfect accuracy is what buys the trust that
+makes the miss expensive — a pattern that failed half the time would have been
+checked.
+
