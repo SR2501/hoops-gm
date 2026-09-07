@@ -1733,3 +1733,52 @@ the sentence, not merely find the substring somewhere in the file.
   which one they are being told about. So report it as two claims: *"the suite
   is green at X, source pinned"* and *"the machine's editable install currently
   serves Y"*. Neither sentence is derivable from the other.
+
+## Neither form of `git diff` answers "does the trunk already have this?"
+
+**Recorded 2026-09-06 by `architect`, after getting this wrong three times in
+one day — twice on my own work, once on someone else's.** The mechanism is
+not obscure, but the failure mode is: every wrong reading produced a confident,
+plausible, actionable conclusion, and two of the three would have caused real
+damage if acted on.
+
+**`git diff A..B` (two-dot)** shows what would turn A's tree into B's. When B
+is merely stale, that renders as mass deletion and **looks exactly like a
+revert**. Twice today I read it that way: once concluding four commits were
+unmerged when they were byte-identical to `main`, and once nearly opening a
+blocking review finding that PR #179 was reverting three of my commits. In a
+two-dot diff, a path's *absence* means identity, not deletion.
+
+**`git diff A...B` (three-dot)** shows `merge-base(A,B)..B` — what the branch
+did since it diverged. That includes changes **A has since acquired
+independently**, so a non-empty three-dot diff does *not* mean A lacks the
+content. This is the half I got wrong even after correcting the first half, and
+it is the more dangerous one, because three-dot is what you reach for once you
+know two-dot is misleading.
+
+**`git log A..B` lists commits unique by SHA, not by content.** A rebased,
+cherry-picked or squash-merged equivalent counts as unique. `git merge-base
+--is-ancestor` inherits this: it answers a question about ancestry, which is
+not the question about content.
+
+**The reliable test is to attempt the application.** `git cherry-pick -n <c>`
+leaving an empty index proves the content is already present, because that
+operation accounts for what the target already has. Nothing that only *reads*
+the two trees can tell you this.
+
+**The instance that shows why the distinction is load-bearing.** The archived
+session `sr2501-demo-stamp-sanity-gate` left a branch on origin at `2b905ebe`.
+`git log main..branch` reported **2 unique commits**; `git diff main...branch`
+reported **3 files, +22 lines**; `merge-base --is-ancestor` said **not
+contained**. Three independent signals, all pointing at unmerged work. All
+three were misleading: every substantive line was already on `main`, each
+exactly once. Cherry-picking the first produced an empty index. Cherry-picking
+the second produced **a duplicate definition of a function `main` already
+had** — so acting on the signal would not have been a harmless no-op, it would
+have shipped a silent redefinition into a test module.
+
+**Why this belongs in a gates file rather than a wiki.** The question "is there
+unmerged work at risk?" gets asked at exactly the moment sessions are being
+archived and worktrees pruned, which is when a false positive is expensive and
+a false negative is unrecoverable. There is no CI job for reading a diff.
+

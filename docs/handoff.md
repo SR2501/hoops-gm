@@ -39334,3 +39334,53 @@ and merged, so the precedent exists but has never been ratified. And I have not
 re-run the full suite at `5afd8359`; the doc gates and the two tests that guard
 the edited file pass, which is the targeted claim and not a whole-suite one.
 
+## 2026-09-06 - architect - three git signals agreed, and all three were wrong
+
+**Closing `moved-main-under-review`.** The standup rule is that while a review
+is running you do not move the tree underneath it, because a verdict on a tree
+that moved is not a verdict. I broke that during #178 by pushing `3555b738`
+while it was open, creating a `handoff.md` conflict its author then had to
+reconstruct by hand. I did honour it for #179 — four commits were held out of
+this file until it merged, which is why they arrived as one entry rather than
+four. Recording the earlier breach here because the item asked for a handoff
+entry and holding the line once does not retire the miss.
+
+**An archived session with a live branch, and no way to ask it anything.**
+"Harden demo gate checks" went idle and I went to ask the question this
+project's cleanup rule puts first — what do you hold that is not in the
+repository? It was **already archived**, so the tool refused and the only
+remaining witness was git. That ordering is the whole point of the rule, and it
+was violated by whoever archived it, not by me discovering it late.
+
+Its branch was still on origin at `2b905ebe`. Three separate git signals said
+it held unmerged work: `git log main..branch` gave 2 unique commits,
+`git diff main...branch` gave 3 files and +22 lines, and `merge-base
+--is-ancestor` said not contained. **All three were wrong.** Every substantive
+line — the `assert expected is not None` vacuity guard in
+`test_seed_revisions.py` with its comment intact, the `demo.md` bounds-scope
+paragraph, and `_published_sanity_bounds` with its thousands-separator test —
+was already on `main`, each exactly once. The branch differed only because
+`main` is *ahead* of it.
+
+What settled it was attempting the application rather than reading the trees.
+Cherry-picking `2b905ebe` produced an empty index. Cherry-picking `3660d6a9`
+produced **a second copy of a function `main` already defined** — so "trust the
+signal and land it" would have shipped a silent redefinition, not a no-op. The
+general form is now in `gates.md`: no read-only comparison of two trees can
+answer whether one already contains the other's content.
+
+**Also closed, by re-measuring rather than by trusting the note.**
+`hold-doc-edits-for-178` recorded a prepared edit held during #178's conflict
+window. It had in fact landed, in `4912fb52`. Its claim was a measured zero, so
+I re-measured instead of confirming from the commit: `data/raw`, `data/reports`,
+`backend/data/raw` and `backend/data/reports` are all still absent. The zero
+still holds, which is the only thing that makes the entry worth having.
+
+**Could not verify.** Why the demo-gate session was archived with a live
+unmerged-looking branch, or whether whoever archived it knew the branch would
+outlive it — I can see the outcome, not the intent, and the session is gone. I
+also have not checked the remaining five registered worktrees against this same
+corrected method; `cleanup-worktrees` re-derived them on an earlier reading, and
+that reading used exactly the comparison this entry says does not work, so its
+conclusions are not safe to rely on even though they may well be right.
+
