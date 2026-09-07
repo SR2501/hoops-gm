@@ -5585,7 +5585,7 @@ Code gate.
 - **Depends on:** none
 
 `docs/governance/risks.md` is the single place failure modes are allowed to live
-- `docs/governance/gates.md:148` says so explicitly, and forbids restating them
+- `docs/governance/gates.md` says so explicitly, and forbids restating them
 elsewhere on the grounds that "a lesson restated in two files drifts in one of
 them". A register with that much authority is checked by nothing.
 

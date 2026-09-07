@@ -39782,3 +39782,47 @@ knowledge of the answer. What is now closed is narrower and worth stating
 exactly: the index is *complete* over the corpus, and its completeness check can
 no longer be defeated by a heading level. Whether a key is the one you would
 have typed remains unenforced, and the cheap disproof remains the next incident.
+
+## 2026-09-06 - architect - line-number citations into gates.md, checked because I moved its lines
+
+Inserting a symptom index at `gates.md:114` and a 40th entry at its foot shifted
+every line number below the intro. `gates.md` carries its own entry for this -
+*"A cited line range is not stable under edits it does not contain"* - so the
+obligation was to go and look rather than to have known better afterwards.
+
+**The size of the gap, which is the part worth stating.** Exactly two
+line-number citations into `gates.md` exist anywhere in the repository. Both
+were **already wrong before my commits**, which I checked rather than assumed by
+reading each cited line at `68006f02`:
+
+- `docs/backlog.md:5588` cited `gates.md:148` for the rule that `risks.md` is
+  the single home for failure modes. That rule sat at ~169 then and sits at 245
+  now, so the citation was off by ~21 lines before I touched the file.
+- `docs/governance/coordinator-register.md:1353` cites `gates.md:73` for a
+  change to the **Automation gate**. Line 73 was `- **Recorded fixture
+  committed.**` - the *Adapter* gate.
+
+So my edits widened a drift they did not cause. Both statements are cheap to
+disprove: read the two lines at that commit.
+
+**Fixed the backlog one by deleting four characters.** The sentence already
+quotes the text it cites - *"a lesson restated in two files drifts in one of
+them"* - so the line number was redundant with a stable anchor sitting two lines
+below it. Removing `:148` makes the citation correct and permanently stable, and
+that is the general remedy: cite the words, because they move with the text.
+Verified the file's position-sensitive invariants held - exactly one changed
+line, 6,395 lines before and after, the hash-by-position region at 3623-3661
+untouched, CRLF 6,394 with zero lone LF or CR.
+
+**Deliberately did not fix the register one.** `coordinator-register.md` is a
+log of past findings, and rewriting a historical entry to correct a pointer that
+was already wrong when it was written trades a small navigation cost for a
+record that no longer says what it said. The surrounding prose names the
+Automation gate, the safety sign-off and the dry-run transcript, so the intent
+survives the broken pointer. Recorded here instead.
+
+**Could not verify:** that two is the true total. The search was
+`gates\.md:\d+|gates\.md#L\d+`, which finds numeric citations and would miss
+a prose reference like "the fourth bullet of the Adapter gate" - a form that
+drifts the same way and cannot be grepped at all. I did not attempt to bound
+that class.
