@@ -39508,3 +39508,67 @@ I also cannot rule out a message that paraphrases an amended decision **without
 naming any ADR**; an `ast` walk keyed on `ADR-\d{3}` cannot see those, and they
 would be the least detectable instances of exactly this defect.
 
+## 2026-09-06 - architect - asking before archiving, and what it was worth
+
+**I asked a live session what it held before anything was archived, which is the
+step that was skipped yesterday.** `sr2501-schedule-grid-contract` went idle. Last
+time a session went idle I went to ask the same question and found it already
+archived, leaving git as the only witness - and git then gave three agreeing
+signals that were all wrong. This time the session was still there and answered at
+length, explicitly declining to say "nothing".
+
+**The answer was almost entirely already in the repository, and that is the
+finding.** Every one of its four "could not verify" items - that a specimen cannot
+see a widening from `str` to `str | None`, that a new enum member stays green,
+that the artefact never drives HTTP so a bare dict or a middleware reshape passes,
+that a semantic change preserving type is invisible - is already written down in
+`gates.md` under *"A specimen validates the domain it chose, not the domain the
+model allows"*, and already filed as `schedule-grid-contract-domain-coverage`. So
+is the `gh pr merge` trap it reported, recorded from PR #174 with the same
+mechanism: a two-phase command that succeeds remotely and fails locally because
+`main` is checked out in another worktree, whose error text describes only the
+half that failed. So is the import hijack it hit, including the detail that the
+editable install resolves into a **live sibling worktree** rather than a deleted
+one.
+
+Three independent rediscoveries of three documented traps, by a lane that had not
+read them. That is the argument for the files being *found* rather than merely
+written, and it is also a measurement I could not have made without asking.
+
+**What was genuinely new is small and operational**, recorded here because it is
+the residue that would otherwise be lost: the push incantation needs the runtime
+form `git -c credential.helper= -c "credential.helper=!gh auth git-credential"`,
+and file-local config does not override it; a fresh worktree needs `npm --prefix
+frontend ci` before any frontend test will run, because `vitest` is absent until
+then; and `gh pr checks --watch` produces hundreds of kilobytes and backgrounds
+repeatedly, where `gh pr view --json state,headRefOid,mergeStateStatus,
+statusCheckRollup` answers the same question in one call.
+
+The session also flagged an enumeration it made and did not commit - 16 integer
+leaves and 1 boolean in the specimen, 7 of the integers holding 0 or 1, so 8
+leaves were bool/int-equivalent under ordinary equality and all 16 were vulnerable
+to equal-valued float drift. **It told me to re-derive before citing it rather
+than repeating it**, which is the right way to hand over a number whose command
+was not kept, and I have not re-derived it, so it is recorded here as its claim
+and not as mine.
+
+**Separately, I corrected an overclaim of my own from this morning.** My
+`gates.md` entry on git comparisons said `git merge-base --is-ancestor` simply
+"inherits" the SHA-not-content flaw. It does not. It is **asymmetric**: a YES is
+conclusive, because every commit of the branch is then in the trunk's history; a
+NO means nothing, because rebase and squash-merge preserve content while breaking
+ancestry. Writing it as a flat dismissal made the tool look uniformly untrustworthy
+and pushed a reader towards an expensive cherry-pick when a free answer existed.
+This branch proved the useful direction within hours: `1eb3ea9a` returned YES, 0
+ahead and 110 behind, PR #166 merged as `ba3fc3a7` - one command, no cherry-pick.
+Corrected in place, with the correction dated in the text rather than silently
+swapped.
+
+**Could not verify.** Whether the operational residue above is complete - I have
+only the session's account of its own methods, and a lane cannot enumerate what it
+never noticed it knew. I also did not re-run any of its commands, so "these are
+the invocations that work on this machine" is its claim carried forward, not
+something I measured. And I have not established that its worktree is safe to
+remove beyond it being clean and its branch being an ancestor of `main`; that is
+sufficient for removal but I did not check whether anything still consumes it.
+

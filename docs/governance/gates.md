@@ -1758,8 +1758,19 @@ know two-dot is misleading.
 
 **`git log A..B` lists commits unique by SHA, not by content.** A rebased,
 cherry-picked or squash-merged equivalent counts as unique. `git merge-base
---is-ancestor` inherits this: it answers a question about ancestry, which is
-not the question about content.
+--is-ancestor` is the exception, and it is **asymmetric in the useful
+direction**: a **YES is conclusive** - every commit of the branch is in the
+trunk's history, so the content is contained and nothing further is needed. A
+**NO means nothing about content**, because rebasing and squash-merging both
+preserve content while breaking ancestry. Read it in one direction only.
+
+*Corrected 2026-09-06: this paragraph originally said `--is-ancestor` simply
+"inherits" the flaw above. That overstated it and pushed a reader towards an
+expensive cherry-pick when a free answer was available. The demonstration came
+the same day: `sr2501-schedule-grid-contract` at `1eb3ea9a` returned YES - 0
+commits ahead, 110 behind, PR #166 merged as `ba3fc3a7` - settling in one
+command what needed a cherry-pick for the archived session below, whose NO was
+the uninformative direction.*
 
 **The reliable test is to attempt the application.** `git cherry-pick -n <c>`
 leaving an empty index proves the content is already present, because that
