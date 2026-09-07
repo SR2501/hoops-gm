@@ -6033,6 +6033,23 @@ confine the difference between the two to `operator.source_fingerprints` and
 `boxscore-date-plausibility-bound` because this can be done alone - but doing both in one
 commit pays that regeneration once instead of twice.
 
+**The differential is valid from any fixed working directory; only one of those
+directories yields a manifest fit to commit.** Holding the CWD fixed across both
+runs is what makes the *comparison* sound - the environment drift appears in
+both and cancels. But the artefact that gets committed is the treatment run, and
+`docs/models/cohort-drift-preunblind-ruling-2026-09-06.md` ("Verdict on #171")
+requires that run to be made **from the data root**, never from `backend/`,
+because a `backend/` run "would empty `operational_artifacts` and re-null the
+cascade". Two runs from `backend/` therefore produce a **passing** differential
+and a degraded committed manifest at the same time, and the differential cannot
+tell you which of those you did, because it passes either way. This is the
+conditional-vacuity shape recorded in `docs/governance/gates.md`: the check has
+no power to separate the two cases, and its passing result is the uninformative
+one. So pin the CWD to the data root explicitly rather than merely equal, and
+verify `operational_artifacts` is non-empty and the cascade populated **in the
+committed result** - a positive property of the artefact, not an inference from
+a green diff.
+
 **Where this had to go, and why it is not next to its item.** The first attempt appended
 this beside `boxscore-date-plausibility-bound` near the top of the file and broke a Model
 gate: lines 3623-3661 here are cited by hash in frozen v1 coverage evidence, and a 36-line
