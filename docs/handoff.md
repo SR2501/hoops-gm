@@ -39642,3 +39642,42 @@ actually *pass* its Model gate: unblocking it is not evidence it calibrates, and
 ready item is not a working one. And I have not re-read the ~100 ADR citations
 outside `raise`/`assert` statements, so I do not know whether any of them repeats
 the Context claim I just contradicted.
+
+## 2026-09-06 - architect - fusion-seam edge audit closed; two rediscoveries
+
+Closed `fusion-seam-edge-audit`. **One defect in 368 edges.** Twenty-three
+targets read as fusion or aggregation steps; 79 edges point at them, but 53
+target `done` items and an edge into a `done` target blocks nothing. The
+actionable surface was **26 edges into 11 pending targets**, of which **24 into 9
+genuine seams were each read individually**. All 24 kept, reasons recorded in the
+item.
+
+The result that matters is not "no further defects". It is that
+`league-category-table` faced the *identical* choice against `expected-games` and
+got it right - shipping the per-game half separately as a labelled rate table.
+So the `zscore-engine` edge was **a slip, not a misreading of ADR-002**, and no
+further sweep of this class is warranted. Flip condition recorded in the item: a
+second inverted edge found by any route moves the diagnosis back to pattern.
+
+**Stated because the audit cannot see it:** a *missing* edge - a dependent that
+needs a seam's output and never declares it - is invisible both to this walk and
+to `scripts/backlog_graph.py`, which resolves declared edges only. That is the
+opposite defect and nothing here detects it.
+
+**Two entries in `gates.md` were rediscovered from scratch tonight rather than
+found.** I hashed a fingerprinted file with raw `hashlib` on Windows, got
+`f2b85835...` against a manifest's `79cd1b93...`, and briefly believed the
+manifest was stale while the test covering it was passing - which is entry
+"Hashing a fingerprinted file by hand on Windows disagrees with the manifest",
+already recorded, *carrying those exact two hashes*. Separately I concluded a
+backlog item had been dropped in conflict resolution because a PowerShell
+predicate combined `[regex]::Escape` with `-SimpleMatch`; Escape rewrites every
+space as `\ `, SimpleMatch then hunts for those backslashes literally, and the
+item was present at a character-identical heading. Both are instances of entries
+already in the file.
+
+**Could not verify:** whether the 23-target fusion/aggregation classification is
+complete. It was derived by matching item names and lead paragraphs against a
+word list, so a seam described without any of those words is missed and would not
+appear in the 79. The 24 individually-read edges are exact; the *denominator* is
+a heuristic and is stated as one.

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**91 done - 0 blocked - 132 pending - 223 total**
+**92 done - 0 blocked - 131 pending - 223 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -6292,7 +6292,67 @@ objection does not need it, because the complaint is that nothing pins or record
 
 ### `fusion-seam-edge-audit` - Auditing every dependency edge that points at a fusion or aggregation step
 
-- [ ] **pending**
+- [x] **done**
+
+**Walked 2026-09-06. One defect in 368 edges; every other edge into a pending
+fusion or aggregation target is defensible.**
+
+**Method, and the cheap filter a later auditor should apply first.** The graph
+holds **223 items and 368 edges**. Twenty-three targets match a fusion or
+aggregation reading. **Seventy-nine edges point at those twenty-three, but
+fifty-three of them target items that are already `done`, and an edge into a
+`done` target blocks nothing** - it can be over-tight and still cost zero. That
+leaves **26 edges into 11 pending targets** as the whole actionable surface. Two
+of those eleven (`draft-board-feed-integration`, `list-perturbation`) are
+heuristic catches rather than seams. **The genuine set is 24 edges into 9
+targets, and all 24 were read individually** - not sampled.
+
+**All 24 kept. The reason, per target:**
+
+- **`expected-games` (1)** - `league-category-table` is the *exemplary* case and
+  the reason this audit ends where it does. It shipped the per-game half
+  separately as `league-category-rate-table`, states on the screen that a rate
+  table is not expected performance, and identifies the remaining work *as* the
+  fusion. Same ADR, opposite conclusion to `zscore-engine`, correctly reached.
+- **`risk-adjusted-valuation` (8)** - this is the *legitimate* place availability
+  re-enters, exactly as ADR-002 intends, so its consumers are correctly shaped.
+  `auction-values` converts "risk-adjusted G-score to dollar values";
+  `punt-builds` "operates on risk-adjusted values"; `trade-evaluator` carries
+  "durability/shutdown risk on both sides"; `stock-watch`, `model-vs-market`,
+  `dashboard-evidence-views`, `waiver-clear-monitor` and `draft-day-synthesis`
+  each consume a final value.
+- **`zscore-engine` (3)** - `gscore-engine` absorbs "production variance and
+  availability variance into the same framework" and needs the z-score to do it;
+  `out-of-position-production` and `positional-scarcity-tipping-points` both need
+  category values.
+- **`draft-day-synthesis` (2)** - `live-draft-availability` must recompute
+  *through* the pipeline rather than "patch rankings directly".
+  `rehearsal-harness` is the one arguable edge: a harness measuring whether the
+  overlay sufficed does not strictly need the final versioned number. **Kept, and
+  the measurement is why** - `rehearsal-harness` also depends on
+  `fantrax-auction-capture`, which is owner-blocked, so removing this edge
+  unblocks nothing. An edge whose removal changes no start date is not worth the
+  churn.
+- **`auction-values` (3)**, **`auction-inflation` (2)**, **`aav-blending` (2)**,
+  **`aav-empirical` (2)**, **`blend-recipe-persistence` (1)** - each dependent
+  consumes the target's output directly (max bid from values, inflation-adjusted
+  price restatement, source re-weighting, and an ADR-015 clause 5 split).
+
+**What this changes.** The `zscore-engine` edge was **an anomaly, not a
+systemic misreading of ADR-002**. The graph elsewhere gets this seam right,
+including in the one place that faced the identical choice. That is a stronger
+result than "no further defects found", because it distinguishes *a slip* from
+*an author who did not understand the rule* - and it means no further sweep of
+this class is warranted. **The flip condition:** walk this class again only if a
+second inverted edge is found by any route, since two instances would move the
+diagnosis from slip back to pattern.
+
+**What this audit could not see.** It reads edges that *exist*. A **missing**
+edge - a dependent that needs a seam's output and does not declare it - is
+invisible to this walk and to `scripts/backlog_graph.py`, which resolves
+declared edges and cannot know about undeclared ones. That is the opposite
+defect and it has no detector here.
+
 
 **Why this exists.** On 2026-09-06 `zscore-engine` was found to depend on
 `expected-games`. ADR-002's Decision defines `expected-games` as the seam where
