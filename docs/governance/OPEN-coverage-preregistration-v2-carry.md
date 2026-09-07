@@ -39,6 +39,14 @@ and schedule manifests, independent reproduction, ancestry and cohort-key digest
 are not report ornamentation — they are the mechanism that makes the counted thing
 a reproducible at-risk cohort rather than a denominator inferred from
 participation silence. The backlog wording should be corrected to match.
+**The backlog half of this is done, 2026-09-06, `architect`.** `docs/backlog.md`
+no longer calls the coverage report "descriptive counting over existing rows"; it
+now names the registry, contract, manifests, reproduction, ancestry and digest as
+the mechanism rather than ornamentation, keeps *nothing fitted* (which is what
+makes it a Code gate rather than a Model gate) and cites this section. **The defect
+itself stays open**: correcting a shorthand is not fixing v2, and (a), (b) and (d)
+are untouched. Recorded here so the same correction is not made twice, and so that
+"open" continues to mean the v2 document, not the pointer to it.
 
 **d. The evidence cites by line range into a living file, which freezes that file
 above the range.** `participation-opportunity-coverage-v1-evidence-gap.json` cites

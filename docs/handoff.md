@@ -39137,3 +39137,64 @@ entry above is similarly over-wide; I re-read the two sentences I had reason to 
 not all of them. And whether `gates.md`'s 1,674-CRLF worktree form is stable across
 checkouts or an artefact of this machine's `core.autocrlf` — I read the file, not the
 config, and that remains open from the previous entry.
+
+
+## 2026-09-06 — architect — the spine's verdict is in, and criterion 2's shorthand was wrong
+
+**Re-derived the spine's state rather than carrying it forward, and it is further
+along than my own weekend plan assumed.** That plan named "run the coverage report
+and get the verdict" as the highest-information hour available this weekend. It has
+already happened. `participation-opportunity-coverage`'s criterion 1 was frozen and
+merged as PR #165 at `a0b78d8` (frozen head `3267da0`), the report lane ran against
+it, and the outcome is the **evidence gap** that criterion 4 explicitly blesses as
+legitimate progress — recorded in
+`participation-opportunity-coverage-v1-evidence-gap.json` and analysed in
+`docs/governance/OPEN-coverage-preregistration-v2-carry.md`. So `availability-model`
+stays blocked on evidence, not on anyone's attention, and the item stays `pending`
+correctly.
+
+**What I corrected.** That carry document's §1c records a finding I had not seen
+anywhere else: the backlog characterised the coverage report as *"descriptive
+counting over existing rows, nothing fitted"*, and the report lane discovered it
+cannot be, until an independent denominator exists. The source registry,
+reconstruction contract, canonical roster-interval and schedule manifests,
+independent reproduction, ancestry and cohort-key digest are not ornamentation on a
+count — they are the mechanism that makes the counted thing a reproducible at-risk
+cohort rather than a denominator inferred from participation silence. §1c asks for
+the backlog to be corrected and the document is **open and unowned**, so I made the
+correction it asks for.
+
+**The correction keeps the half that was true.** *Nothing fitted* is still accurate,
+and it is what keeps this a Code gate rather than a Model gate; only *descriptive*
+was wrong, and it understated the work by most of it. Anyone scoping criterion 2
+from the old wording would have under-resourced it and then discovered why
+mid-flight, which is roughly what happened. I also marked §1c's backlog half as
+actioned in the carry file itself, and said plainly that **the defect stays open** —
+correcting a pointer is not fixing v2, and (a), (b) and (d) are untouched.
+
+**Placement was the whole risk, and it was cheap because someone had already
+measured it.** §1d documents that `docs/backlog.md` 3623-3661 is hashed *by line
+position*, so any insertion above 3623 breaks a Model gate while leaving the quoted
+prose untouched — demonstrated on 2026-09-06, reverted in `431de99e`, re-landed
+below the range in `9ac853fd`. The text I needed to change sits at 3697, below the
+window, so a 10-line insertion shifts nothing cited. Asserted rather than assumed:
+the script refuses if the edit starts at or above 3661, and re-checks the hash after
+writing.
+
+**One thing §1d says that is still true and still unfixed:** *"that is a subtle rule
+to have to know, and nothing states it at the point of edit."* The interim mitigation
+is a failure message, which helps only after you have already broken it. I have now
+navigated this constraint six times in one evening and it has cost a revert once.
+Worth a v2 item, not a fix tonight — the honest fix is §1d's own recommendation, cite
+content or a stable anchor rather than a line range, and that belongs to whoever
+writes v2.
+
+**Could not verify.** Whether the evidence-gap outcome has any consumer still
+waiting on a different answer — I read the artifacts and the carry document, and did
+not canvass the lanes. Whether §1c's list of six mechanisms is complete or merely
+the six the report lane hit; I reproduced its characterisation rather than
+re-deriving the requirement myself, which is exactly the kind of inherited claim this
+project keeps finding to be narrower than stated. And I have not checked whether
+`docs/models/participation-opportunity-coverage-preregistration.md` itself repeats
+the "descriptive counting" wording — it is frozen, so it could not be corrected
+anyway, but a reader could still meet the wrong characterisation there.

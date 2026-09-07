@@ -3695,7 +3695,17 @@ preregistration and finding the threshold is not met is progress, and must be
 recorded as such, but does not unblock `availability-model`.
 
 Gate: Adapter gate for any new source call. The coverage report itself is Code
-gate — descriptive counting over existing rows, nothing fitted. The
+gate — but **not** the "descriptive counting over existing rows, nothing fitted"
+this line claimed until 2026-09-06. The report lane found it cannot be, until an
+independent denominator exists: the source registry, reconstruction contract,
+canonical roster-interval and schedule manifests, independent reproduction,
+ancestry and cohort-key digest are not ornamentation on a count — they are the
+mechanism that makes the counted thing a reproducible at-risk cohort rather than a
+denominator inferred from participation silence. *Nothing fitted* remains true and
+is what keeps this a Code gate; *descriptive* understated the work by most of it,
+and anyone scoping from the old wording would have under-resourced it. See
+`docs/governance/OPEN-coverage-preregistration-v2-carry.md` §1c, which recorded
+the finding and asked for this correction. The
 preregistration and the proceed-condition judgement are `quant`'s, under the
 Model gate's existing identification-strategy requirement from ADR-007's
 2026-08-22 amendment.
