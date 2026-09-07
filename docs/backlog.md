@@ -6018,6 +6018,42 @@ none of the unresolved numerical availability question. `league_scoring_categori
 already carries `numerator_stat` and `denominator_stat`, which is the right shape
 for volume-weighted percentages, so the house rule is supported by the schema.
 
+**Closed 2026-09-07, and the counts above are now the "before" side.** PR #179
+(`ea21b458`) seeds that intersection deliberately. Verified from the committed
+test rather than from the lane's report:
+`test_seed_demo.py::test_composed_shortlist_inputs_share_five_undrafted_players_and_nine_categories`
+asserts `len(overlap) == 5`, `undrafted_overlap == overlap`, two synthetic game
+logs per candidate, and the exact nine-category vocabulary - so the fixture is
+regression-guarded rather than merely seeded once. Auction league 2 now carries
+one settings snapshot, one active scoring profile and nine categories, closing
+the *"no source for the league's own categories"* gap recorded above. Nothing
+fuses availability and `source_games_played_assumptions` is untouched, so the
+prohibition below stands unweakened.
+
+**Read the size of that fixture before designing against it.** The health cohort
+is a fixed slice - the `player_ids` argument `seed_demo` passes to
+`seed_reliability_demo` is `auction_players[AUCTION_SELECTION_COUNT :
+AUCTION_SELECTION_COUNT + SHORTLIST_CANDIDATE_COUNT]` - so **exactly five
+players regardless of cohort size**. At the regression test's
+`MIN_COMPOSED_COHORT_SIZE` of 12 that is 7 drafted plus 5 undrafted, and the
+overlap therefore covers *every* candidate. At `DEMO_COHORT_SIZE = 60`, which is
+what the demo actually seeds, it is 5 of 53 undrafted players - so **48
+candidates carry no health evidence at all**. Both statements are true of the
+same fixture at different sizes, and quoting only the first overstates it.
+
+**Those 48 are the refusal-path fixture, not a gap to fill.** The Done-when below
+asks for a health indicator on every candidate *and* for an explicit refusal when
+an input is missing. A surface that quietly filtered its 3-5 candidates down to
+the five populated players would satisfy its fixture test while never exercising
+the refusal branch - passing for precisely the reason the test exists to exclude.
+Rank over all 53 and require the 48 to say so.
+
+**So this item's blocker moved rather than cleared.** It was a data gap; it is now
+an ordering gap. The owner's requirement excludes sorting on a single category,
+and the Gate boundary below excludes an invented fused score, which leaves
+`zscore-engine` - Model-gated, and awaiting the owner's authorisation for a
+supervised run. That one is not an agent's to close.
+
 **Do not reach for `source_games_played_assumptions` to fill the health slot.** It
 is populated 1:1 with projections and reads like a ready-made durability figure.
 `api/routes/projections.py` documents at length why a rate must not be multiplied

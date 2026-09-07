@@ -39826,3 +39826,67 @@ survives the broken pointer. Recorded here instead.
 a prose reference like "the fourth bullet of the Adapter gate" - a form that
 drifts the same way and cannot be grepped at all. I did not attempt to bound
 that class.
+
+## 2026-09-07 - architect - a landed unit with no backlog record, and a fixture smaller than its headline
+
+**A todo cited a backlog item that does not exist.** Resuming an interrupted
+check of whether `build-shortlist` was still blocked, I searched for
+`shortlist-overlap-fixture` and got no matches anywhere in `docs/backlog.md`. The
+work was real; the name was not. `gh pr view 179` and `git show ea21b458 --stat`
+explain why: **PR #179 changed seed code, its tests and `docs/demo.md`, and never
+touched `docs/backlog.md` at all.** So a unit landed, closed a recorded blocker,
+and left no trace in the file that records blockers. The next reader would have
+re-measured a gap that was already closed, which is exactly what I was about to
+do.
+
+**Verified from the committed test rather than the lane's report.**
+`test_seed_demo.py::test_composed_shortlist_inputs_share_five_undrafted_players_and_nine_categories`
+asserts `len(overlap) == 5`, `undrafted_overlap == overlap`, two synthetic game
+logs per candidate, and the exact nine-category vocabulary. That makes the
+fixture regression-guarded rather than seeded once, and makes the claim checkable
+by someone who trusts neither me nor the lane.
+
+**I nearly published two wrong numbers, and the test itself stopped me.** The
+lane reported 60 projections / 7 drafted / 53 projected-undrafted with an overlap
+of 5. But the test asserts *both* `len(projection_ids - drafted_ids) ==
+SHORTLIST_CANDIDATE_COUNT` *and* `len(overlap) == SHORTLIST_CANDIDATE_COUNT`, and
+those cannot both hold at 53 and at 5. Reading the constants instead of inferring
+them resolved it: `MIN_COMPOSED_COHORT_SIZE` is `AUCTION_SELECTION_COUNT +
+SHORTLIST_CANDIDATE_COUNT` = 12, so the **regression test runs at the minimum
+cohort of 12, not the demo's 60**. Two sizes, two different true statements, one
+of which I was about to publish as the other.
+
+**The fixture is a fixed slice, and its size is the part worth recording.** The
+`player_ids` argument `seed_demo` passes to `seed_reliability_demo` is
+`auction_players[AUCTION_SELECTION_COUNT : AUCTION_SELECTION_COUNT +
+SHORTLIST_CANDIDATE_COUNT]` - **five players regardless of cohort size**. At
+cohort 12 that is every undrafted candidate; at `DEMO_COHORT_SIZE = 60` it is 5
+of 53, leaving **48 candidates with no health evidence at all**. I recorded those
+48 as the *refusal-path fixture* rather than a gap to fill: the item's Done-when
+demands both a health indicator per candidate and an explicit refusal when an
+input is missing, so a surface that quietly filtered down to the five populated
+players would pass its fixture test for precisely the reason that test exists to
+exclude. Cited the slice by symbol rather than by line number, applying the
+lesson from the previous entry.
+
+**The blocker moved rather than cleared.** It was a data gap; it is now an
+ordering gap. Single-category sorting is excluded by the owner's own stated
+requirement and an invented fused score by the item's Gate boundary, which leaves
+`zscore-engine` - Model-gated, and awaiting owner authorisation.
+`backlog_graph.py` corroborates the weight of that independently: `zscore-engine`
+is the root of nearly every seven-deep chain it prints.
+
+**A write guard earned its keep.** The insert script asserted that the CRLF delta
+equalled the block's line count, and refused - `CRLF.join` of N lines yields N-1
+separators. Same off-by-one class I acknowledged to a lane earlier in this
+session, caught before the write this time rather than in the wording afterwards.
+Final: 478,040 -> 480,449 bytes, 6,395 -> 6,431 lines, CRLF 6,430, zero lone LF,
+the position-hashed 3623-3661 region byte-identical, and both status counts
+unchanged at 131 pending / 92 done.
+
+**Could not verify:** whether #179 is the only landed unit that skipped the
+backlog. I found this one by following a broken todo reference, not by a search
+that would find the class. The general check - every PR merged since some date
+that touched `backend/` but not `docs/backlog.md` - is cheap, and I did not run
+it.
+
