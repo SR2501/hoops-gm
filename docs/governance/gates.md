@@ -183,6 +183,7 @@ problem**, not a restatement of the title - the title is already the answer.
 - A dependency edge resolves cleanly and still reads oddly - *A dependency edge that resolves can still be incoherent*
 - You want to confirm a change did what you believe it did - *Verifying a change did what you think*
 - A review is accumulating rounds and prose - *Rounds have a cost, and the cost is prose*
+- You are about to measure a gap that a merged PR may already have closed - *The change and its record land in different commits, so nothing can check that a change was recorded*
 
 ---
 ## What gates cannot catch
@@ -1963,4 +1964,38 @@ correction is still strictly better for every reader on the trunk. It says only
 that the remedy has a blind spot shaped exactly like a long-lived branch, and
 that the blind spot widens with lane duration, which is the one variable a
 fan-out deliberately increases.
+
+### The change and its record land in different commits, so nothing can check that a change was recorded
+
+**Found 2026-09-07 while resuming an interrupted check.** A todo named
+`shortlist-overlap-fixture`; no such item exists in `docs/backlog.md`. The work
+was real - PR #179 - but the name was not, and following it showed that #179
+changed seed code, its tests and `docs/demo.md` while **never touching
+`docs/backlog.md`**. The item it satisfied still described the pre-change world
+and still named the landed work as its own next unit. I was one step from
+re-measuring a gap that was already closed.
+
+**#179 is not exceptional; it is the pattern.** Measured with `gh pr list
+--state merged --limit 40 --json number,files`: **13 of the last 40 merged PRs
+touched `backend/` without touching `docs/backlog.md`**, and 11 of those touched
+neither the backlog nor `docs/handoff.md`. Four were spot-checked against `git
+show --stat` on the merge commit rather than trusting the API, and their file
+counts - 3 to 18 - sit far below any truncation threshold, so the tool was not
+quietly eliding the answer.
+
+**The handoff rule is not being broken - it is being satisfied elsewhere.** 77
+commits touched `docs/handoff.md` since 2026-09-05 and **only 2 of them were
+merge commits**; the rest are direct commits on `main`, written after the fact
+by whoever reviewed the work. That is arguably better than self-reporting, and
+it is not the defect. The defect is that **the commit that changes behaviour and
+the commit that records it are never the same commit**, and no gate spans both.
+Every gate runs on the PR. The record lands afterwards, or does not land at all,
+and nothing goes red either way.
+
+**What this is not.** It is not an argument for forcing the record into the PR;
+independent recording is a feature, and the project already prefers a reviewer
+to write the entry. It is a statement that the *closing* step is unchecked, and
+that the cheapest available detector is the query above, run over the window
+since it was last run. Nothing automates choosing *which* item a PR should have
+updated, and this entry does not pretend otherwise.
 

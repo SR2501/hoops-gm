@@ -39890,3 +39890,43 @@ that would find the class. The general check - every PR merged since some date
 that touched `backend/` but not `docs/backlog.md` - is cheap, and I did not run
 it.
 
+## 2026-09-07 - architect - closed my own "could not verify" from an hour ago, and it was not a one-off
+
+**The previous entry disclosed a gap and called the check cheap, so I ran it.**
+The question was whether #179 was the only landed unit that skipped the backlog.
+It is not, and it is not close: **13 of the last 40 merged PRs touched `backend/`
+without touching `docs/backlog.md`** - #151, #166 to #169, #171 to #177, and
+#179. Eleven of those touched neither the backlog nor `docs/handoff.md`.
+
+**I distrusted that second number before publishing it**, because "eleven PRs
+skipped the handoff" contradicts what several of those lanes reported to me
+directly, and `gh pr list --json files` is exactly the kind of API that truncates
+without saying so. Two independent checks: the reported file counts run 3 to 18,
+far below any truncation threshold, and `git show --stat` on the merge commits of
+#166, #171, #173 and #176 confirms none of them carries either file. The tool was
+not lying, and the contradiction was in my assumption about what the lanes meant.
+
+**The interesting number inverts the finding.** 77 commits touched
+`docs/handoff.md` since 2026-09-05, and **only 2 of them were merge commits**. So
+the handoff rule is not being skipped at all - it is being satisfied by direct
+commits on `main`, written after the fact by whoever reviewed the work. That is
+better than self-reporting, not worse, and any remedy that forced the record into
+the PR would trade an independent reviewer for an author's own account.
+
+**The defect is the seam, not either half.** The commit that changes behaviour
+and the commit that records it are never the same commit, so no gate spans both.
+Every gate runs on the PR; the record lands afterwards or not at all, and nothing
+goes red either way. That is exactly how #179's backlog gap survived a green PR,
+an independent review and a merge - its handoff entry does exist, at `383824e1`,
+and only the backlog update never followed.
+
+Recorded as `gates.md` entry 41 with its symptom line. The file goes 40 -> 41
+entries, 148,349 -> 150,705 bytes, CRLF 1,966 -> 2,001, zero lone LF or CR, and
+`test_gates_symptom_index.py` passes 10/10 at that head.
+
+**Could not verify:** which backlog item each of the other twelve PRs should have
+updated. The query finds the class; choosing the item is judgement, and I did not
+spend it on twelve PRs tonight. That is the honest limit of the detector, and the
+entry says so rather than implying an automation that does not exist.
+
+
