@@ -106,6 +106,7 @@ def test_get_settings_can_disable_dotenv(
     dotenv = tmp_path / ".env"
     dotenv.write_text("LOG_LEVEL=ERROR\n", encoding="utf-8")
     monkeypatch.setitem(Settings.model_config, "env_file", (dotenv,))
+    monkeypatch.delenv(DISABLE_DOTENV_ENV_VAR, raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.delenv("BRIDGE_SECRET", raising=False)
 

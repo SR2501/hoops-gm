@@ -63,6 +63,21 @@ games are rejected blend layers. The only accepted weight basis is
    normalized weights, manual inputs, and deterministic output rows with
    SHA-256.
 
+`blend_profile_content_sha256` is the single content-digest implementation for
+profile construction and downstream pure validation. A consumer reconstructs
+that digest from the complete profile value and also verifies the exact
+`name:v{version}:{digest-prefix}` profile ID; matching repeated strings or
+well-formed SHA-256 text is not sufficient. Database currentness is a separate
+producer check and is not imported into the pure valuation boundary.
+
+Normalized production obeys the exact physical rule `made <= attempted`.
+Projection rows are checked as complete made/attempted pairs. Category
+transforms and manual replacements check the complete pair whenever that
+category carries one. Equality and zero-made/zero-attempt values are valid;
+any positive excess, including values that were formerly inside a `0.001`
+tolerance, refuses. No epsilon, clamping, or rounding is applied. Importer and
+storage tolerances are outside this model contract and are unchanged.
+
 Profiles and activation pointers are immutable caller-owned domain values.
 Definition does not activate. Activation revalidates every import and the active
 scoring profile before returning a new catalog, so A -> B -> A is an ordinary
@@ -94,6 +109,11 @@ and lineage properties:
 - rejection of terminal, market, mock, availability, expected-games, and
   unsupported learned-weight inputs;
 - separate manual-override provenance;
+- authoritative profile-content reconstruction at the producer/valuation
+  boundary, including refusal after source, scoring-contract, weight,
+  weight-basis, override, version, hash, or profile-ID tampering;
+- exact made/attempted physical-boundary regressions for FG and FT, including
+  zero attempts, equality, and values below the former tolerance edge;
 - stale, duplicate, mixed-season, incompatible-scoring, missing-category, and
   in-place mutation failure;
 - validate-before-register/activate atomicity and A -> B -> A currentness.
@@ -158,3 +178,4 @@ cannot prove that the configured number is a good forecast.
 | Version | Date | Change | Evaluation effect |
 |---|---|---|---|
 | 1 | 2026-08-19 | Initial deterministic per-game blending contract. | No learned-performance claim; contract invariants covered by focused tests. |
+| 1 clarification | 2026-09-11 | Established one reconstructable profile-integrity path and made the normalized made≤attempted rule exact. | Adds executable producer-to-valuation integrity and shooting-boundary coverage; no learned-performance claim changes. |

@@ -152,6 +152,10 @@ describe('the draft board, from recorded payloads', () => {
       expect(screen.getByTestId(`seat-${String(participant.id)}`)).toBeInTheDocument()
     }
     expect(auctionState.participants).toHaveLength(12)
+    expect(screen.getByTestId('draft-production-candidates-link')).toHaveAttribute(
+      'href',
+      '/draft/1/production-candidates',
+    )
   })
 
   it('keeps the recorder and the log inside one sticky container, so recording survives a long board', async () => {

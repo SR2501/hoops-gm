@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+
+from hoops_gm.core.bridge_pairing import BridgePairing
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "capture_openapi.py"
 
@@ -49,6 +52,33 @@ def test_recording_format_is_platform_independent_lf() -> None:
     serialized = module._serialized({"openapi": "3.1.0"})
     assert serialized.endswith(b"}\n")
     assert b"\r\n" not in serialized
+
+
+def test_served_document_uses_disposable_pairing_storage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("BRIDGE_SECRET_PATH", str(tmp_path / "not-the-capture-secret"))
+    reads: list[Path] = []
+    original_read = BridgePairing._read_secret
+
+    def read_disposable_secret(pairing: BridgePairing) -> str | None:
+        path = pairing.secret_path
+        assert path.parent.parent == tmp_path
+        assert path.parent.is_dir()
+        assert not path.exists()
+        reads.append(path)
+        return original_read(pairing)
+
+    monkeypatch.setattr(BridgePairing, "_read_secret", read_disposable_secret)
+
+    document = module._served_openapi()
+
+    assert document["openapi"].startswith("3.")
+    assert len(reads) == 1
+    assert not reads[0].parent.exists()
 
 
 def test_committed_recording_matches_the_served_document(

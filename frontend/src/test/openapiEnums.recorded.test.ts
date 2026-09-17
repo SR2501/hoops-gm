@@ -52,6 +52,13 @@ import {
   DRAFT_TOOL_USAGES,
   DRAFT_TYPES,
 } from '../api/draftTypes'
+import {
+  PRODUCTION_SCORING_TYPES,
+  PRODUCTION_SEASON_TYPES,
+  type ProductionCategoryKind,
+  type ProductionReplacementState,
+  type ProductionScaleStatus,
+} from '../api/productionCandidatesTypes'
 import openapi from './fixtures/openapi.recorded.json'
 
 /** Ten seconds. Pure JSON comparison, no DOM, no network, no timers. */
@@ -74,6 +81,22 @@ interface OpenApiDocument {
 
 const document = openapi as unknown as OpenApiDocument
 
+// Exhaustive records bind the type-only unions in both directions at type-check.
+const CATEGORY_KINDS = {
+  counting: true,
+  ratio: true,
+} satisfies Record<ProductionCategoryKind, true>
+
+const REPLACEMENT_STATES = {
+  available: true,
+  unavailable_insufficient_projected_pool: true,
+} satisfies Record<ProductionReplacementState, true>
+
+const SCALE_STATUSES = {
+  defined: true,
+  zero_variance: true,
+} satisfies Record<ProductionScaleStatus, true>
+
 /** Schema name → the frontend array that mirrors it. */
 const MIRRORED: Record<string, readonly string[]> = {
   DraftType: DRAFT_TYPES,
@@ -81,6 +104,11 @@ const MIRRORED: Record<string, readonly string[]> = {
   DraftToolUsage: DRAFT_TOOL_USAGES,
   DraftEventType: DRAFT_EVENT_TYPES,
   DraftSourceBoardProfile: DRAFT_SOURCE_BOARD_PROFILES,
+  CategoryKind: Object.keys(CATEGORY_KINDS),
+  ReplacementState: Object.keys(REPLACEMENT_STATES),
+  ScaleStatus: Object.keys(SCALE_STATUSES),
+  ScoringType: PRODUCTION_SCORING_TYPES,
+  SeasonType: PRODUCTION_SEASON_TYPES,
 }
 
 /**
@@ -92,9 +120,7 @@ const MIRRORED: Record<string, readonly string[]> = {
  */
 const NOT_MODELLED: Record<string, string> = {
   ExternalSource:
-    'Carried as a bare `string` on `CurrentProjections.source` and displayed, never branched on. A narrow union here would refuse a payload the backend considers valid the moment a source is registered, and the failure would read as a contract error rather than as this build being out of date.',
-  ScoringType:
-    'Carried as `assumed_scoring_type: string | null` and compared with `includes("categories")` rather than by equality, deliberately: the check that matters is "is this a category format", and it must stay true for a value this build has never seen. See `leagueCategoryModel.ts`.',
+    'The generic `CurrentProjections.source` remains a bare string. Production candidates declare a deliberately narrower supported-input vocabulary, not a mirror of every registered ExternalSource; it excludes NBA and Fantrax acquisition namespaces.',
   RefreshArtifactType:
     'Belongs to the lineage endpoints, which no screen consumes yet. Unmodelled because unused, not because it was considered and rejected.',
 }

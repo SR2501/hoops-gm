@@ -7,6 +7,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,7 @@ def _read_round_trippable(path: Path) -> object:
 
 
 def _served_openapi() -> dict[str, Any]:
+    """Build the schema without environment settings or persisted pairing credentials."""
     sys.path.insert(0, str(BACKEND_SRC))
     from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
@@ -96,12 +98,14 @@ def _served_openapi() -> dict[str, Any]:
             del settings_cls, env_settings, dotenv_settings, file_secret_settings
             return (init_settings,)
 
-    settings = SourceFreeSettings(
-        database_url="sqlite+pysqlite:///:memory:",
-        environment="test",
-        host="127.0.0.1",
-    )
-    return create_app(settings=settings).openapi()
+    with TemporaryDirectory(prefix="hoops-gm-openapi-") as directory:
+        settings = SourceFreeSettings(
+            database_url="sqlite+pysqlite:///:memory:",
+            environment="test",
+            host="127.0.0.1",
+            bridge_secret_path=Path(directory) / "bridge_secret",
+        )
+        return create_app(settings=settings).openapi()
 
 
 def _print_diff(diff: OpenApiDiff) -> None:

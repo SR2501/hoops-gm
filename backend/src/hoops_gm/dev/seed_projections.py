@@ -407,6 +407,7 @@ def seed_projections(
     *,
     fixtures_dir: Path = DEFAULT_FIXTURES_DIR,
     cohort_size: int = DEMO_COHORT_SIZE,
+    assumed_scoring_type: ScoringType = ScoringType.H2H_CATEGORIES,
 ) -> ProjectionsSeedResult:
     """Bring one database to the state the projections endpoint requires.
 
@@ -417,6 +418,12 @@ def seed_projections(
     schedule writers in the canonical lock order. Players are imported before
     positions because ``import_player_positions`` refuses to invent a canonical
     row. The demo CSV is generated after both, from the players that now exist.
+
+    The standalone seed keeps its historical ``h2h_categories`` assumption by
+    default. A composed seed may pass the scoring type derived from the exact
+    recorded settings document it will bind to later in the same transaction;
+    this changes only the declared provenance on the first immutable import,
+    never the generated rates or the standalone command's behaviour.
     """
 
     require_safe_projection_target(session)
@@ -449,9 +456,16 @@ def seed_projections(
         season=SEASON,
         csv_bytes=csv_bytes,
         original_filename=DEMO_FILENAME,
-        assumed_scoring_type=ScoringType.H2H_CATEGORIES,
+        assumed_scoring_type=assumed_scoring_type,
         profile=BASKETBALL_MONSTER_PROFILE,
     )
+    if outcome.projection_import.assumed_scoring_type != assumed_scoring_type:
+        raise DemoSeedRefused(
+            f"the immutable synthetic projection import declares "
+            f"{outcome.projection_import.assumed_scoring_type!s}, not the requested "
+            f"{assumed_scoring_type.value}. Delete the throwaway database and seed it "
+            "fresh rather than rewriting import provenance."
+        )
 
     written = outcome.counts.created + outcome.counts.updated
     if written == 0:

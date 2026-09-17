@@ -60,6 +60,12 @@ A model that says 70% and is right 70% of the time is more useful for a lineup d
 
 ## Expected cards
 
+- [`zscore-production.md`](zscore-production.md) — immutable freeze-bound base
+  card for the production-only nine-category transform
+- [`zscore-production-v1-final-evaluation-addendum.md`](zscore-production-v1-final-evaluation-addendum.md)
+  — current append-only held-out result report; Model gate passed for limited
+  descriptive projection-relative production scoring; current-vendor
+  calibration and production activation remain unapproved
 - [`schedule-context.md`](schedule-context.md) — opponent context and blowout probability
 - `availability.md` — per-game `p(play)`
 - [`injury-status-conversion.md`](injury-status-conversion.md) — report status →

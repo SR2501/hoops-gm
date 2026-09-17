@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from hoops_gm.db.models.enums import ExternalSource, MatchMethod
+from hoops_gm.db.models.enums import ExternalSource, MatchMethod, ScoringType
 from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection, ProjectionImport
@@ -347,6 +347,9 @@ def test_re_seeding_converges_on_one_import(database: Database) -> None:
     with database.session() as session:
         assert session.scalar(select(func.count()).select_from(ProjectionImport)) == 1
         assert session.scalar(select(func.count()).select_from(Projection)) == COHORT
+        projection_import = session.get(ProjectionImport, first.projection_import_id)
+        assert projection_import is not None
+        assert projection_import.assumed_scoring_type == ScoringType.H2H_CATEGORIES
 
 
 def test_the_default_cohort_is_not_a_realistic_league(database: Database) -> None:
