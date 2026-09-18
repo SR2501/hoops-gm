@@ -375,6 +375,7 @@ def define_blend_profile(
         None,
     )
     if existing is not None:
+        validate_blend_profile_integrity(existing)
         return catalog, existing
 
     version = (
@@ -404,6 +405,7 @@ def define_blend_profile(
         weight_basis=weight_basis,
         content_sha256=content_sha256,
     )
+    validate_blend_profile_integrity(profile)
     return replace(catalog, profiles=(*catalog.profiles, profile)), profile
 
 
@@ -518,6 +520,7 @@ def blend_projections(session: Session, profile: BlendProfile) -> BlendResult:
             _validate_shooting_values(
                 values,
                 label=f"player {player_id} category {contract.category_key}",
+                require_complete_pairs=False,
             )
             category_values.append(
                 BlendedCategoryValue(
@@ -960,6 +963,7 @@ def _validate_manual_overrides(
         _validate_shooting_values(
             tuple((field, _require_fraction(value)) for field, value in override.values),
             label=f"manual override {override.override_id}",
+            require_complete_pairs=False,
         )
 
 
@@ -1004,6 +1008,7 @@ def _validate_complete_cohort(
 
 
 def _assert_profile_current(session: Session, profile: BlendProfile) -> None:
+    validate_blend_profile_integrity(profile)
     scoring_profile = _active_scoring_profile(
         session,
         league_id=profile.league_id,
@@ -1021,6 +1026,151 @@ def _assert_profile_current(session: Session, profile: BlendProfile) -> None:
         )
     for release in profile.sources:
         _validate_and_load_release(session, release)
+
+
+def blend_profile_content_sha256(profile: BlendProfile) -> str:
+    """Reconstruct a profile's canonical content identity without database access."""
+
+    return _profile_content_sha256(
+        name=profile.name,
+        league_id=profile.league_id,
+        season=profile.season,
+        scoring_profile_id=profile.scoring_profile_id,
+        scoring_profile_sha256=profile.scoring_profile_sha256,
+        sources=profile.sources,
+        contracts=profile.category_contracts,
+        weights=profile.category_weights,
+        overrides=profile.manual_overrides,
+        weight_basis=profile.weight_basis,
+    )
+
+
+def validate_blend_profile_integrity(profile: BlendProfile) -> None:
+    """Validate pure profile semantics plus its content-addressed identity.
+
+    This is the authoritative no-I/O boundary used both by the projection
+    producer and downstream valuation. Currentness of released imports and the
+    active scoring profile remains the producer's separate database check.
+    """
+
+    if not _PROFILE_NAME.fullmatch(profile.name):
+        raise InvalidBlendProfileError(
+            "blend profile name must be 1-64 lowercase letters, digits, underscores, or hyphens"
+        )
+    if type(profile.version) is not int or profile.version <= 0:
+        raise InvalidBlendProfileError("blend profile version must be a positive integer")
+    if type(profile.league_id) is not int or profile.league_id <= 0:
+        raise InvalidBlendProfileError("blend profile league_id must be a positive integer")
+    if type(profile.scoring_profile_id) is not int or profile.scoring_profile_id <= 0:
+        raise InvalidBlendProfileError(
+            "blend profile scoring_profile_id must be a positive integer"
+        )
+    if not profile.season:
+        raise InvalidBlendProfileError("blend profile season must be non-empty")
+    if profile.weight_basis is not WeightBasis.USER_CONFIGURED:
+        raise LayerPurityError(
+            "projection blend weights must be explicit user configuration; "
+            f"{profile.weight_basis.value} is not an approved learned weighting path"
+        )
+    if not profile.category_contracts:
+        raise InvalidBlendProfileError("blend profile requires at least one scoring category")
+    category_keys = [contract.category_key for contract in profile.category_contracts]
+    if len(category_keys) != len(set(category_keys)):
+        raise InvalidBlendProfileError("blend profile repeats a scoring category")
+    for contract in profile.category_contracts:
+        if contract.direction not in {-1, 1}:
+            raise InvalidBlendProfileError(
+                f"category {contract.category_key!r} direction must be -1 or 1"
+            )
+        if not contract.production_fields:
+            raise InvalidBlendProfileError(
+                f"category {contract.category_key!r} has no production fields"
+            )
+        if len(contract.production_fields) != len(set(contract.production_fields)):
+            raise InvalidBlendProfileError(
+                f"category {contract.category_key!r} repeats a production field"
+            )
+        unknown_fields = set(contract.production_fields) - set(CANONICAL_STAT_FIELDS)
+        if unknown_fields:
+            raise InvalidBlendProfileError(
+                f"category {contract.category_key!r} has unsupported production fields "
+                f"{sorted(unknown_fields)}"
+            )
+        if contract.kind is CategoryKind.COUNTING and len(contract.production_fields) != 1:
+            raise InvalidBlendProfileError(
+                f"counting category {contract.category_key!r} requires one production field"
+            )
+        if contract.kind is CategoryKind.RATIO and (
+            len(contract.production_fields) != 2
+            or contract.production_fields not in _SHOOTING_PAIRS
+        ):
+            raise InvalidBlendProfileError(
+                f"ratio category {contract.category_key!r} requires a canonical "
+                "made/attempted production pair"
+            )
+
+    canonical_sources = tuple(sorted(profile.sources, key=lambda item: item.source.value))
+    if profile.sources != canonical_sources:
+        raise InvalidBlendProfileError("blend profile sources are not in canonical order")
+    _validate_source_selection(
+        profile.sources,
+        season=profile.season,
+        scoring_type=profile.scoring_type,
+    )
+    for release in profile.sources:
+        if type(release.import_id) is not int or release.import_id <= 0:
+            raise InvalidBlendProfileError("released import identity must be positive")
+        if release.imported_at.utcoffset() is None:
+            raise InvalidBlendProfileError("released import timestamp must be timezone-aware")
+        if type(release.projection_count) is not int or release.projection_count <= 0:
+            raise InvalidBlendProfileError("released import projection_count must be positive")
+
+    configured = {
+        category.category_key: {weight.source: weight.raw_weight for weight in category.weights}
+        for category in profile.category_weights
+    }
+    if len(configured) != len(profile.category_weights):
+        raise InvalidBlendProfileError("blend profile repeats category weights")
+    rebuilt_weights = _normalize_category_weights(
+        configured,
+        contracts=profile.category_contracts,
+        selected_sources=tuple(source.source for source in profile.sources),
+    )
+    if profile.category_weights != rebuilt_weights:
+        raise InvalidBlendProfileError(
+            "blend profile weights are not the canonical normalization of raw weights"
+        )
+    expected_weight_order = tuple(contract.category_key for contract in profile.category_contracts)
+    if tuple(item.category_key for item in profile.category_weights) != expected_weight_order:
+        raise InvalidBlendProfileError(
+            "blend profile category weights do not follow scoring-contract order"
+        )
+
+    canonical_overrides = tuple(
+        sorted(
+            profile.manual_overrides,
+            key=lambda item: (item.player_id, item.category_key, item.override_id),
+        )
+    )
+    if profile.manual_overrides != canonical_overrides:
+        raise InvalidBlendProfileError("manual overrides are not in canonical order")
+    _validate_manual_overrides(
+        profile.manual_overrides,
+        league_id=profile.league_id,
+        season=profile.season,
+        contracts=profile.category_contracts,
+    )
+
+    expected_content_sha256 = blend_profile_content_sha256(profile)
+    if profile.content_sha256 != expected_content_sha256:
+        raise InvalidBlendProfileError(
+            "blend profile content hash does not match its semantic fields"
+        )
+    expected_profile_id = f"{profile.name}:v{profile.version}:{expected_content_sha256[:12]}"
+    if profile.profile_id != expected_profile_id:
+        raise InvalidBlendProfileError(
+            "blend profile ID does not match name, version, and content identity"
+        )
 
 
 def _profile_content_sha256(
@@ -1141,19 +1291,36 @@ def _validate_projection_shooting_pairs(row: Projection) -> None:
     )
 
 
-def _validate_shooting_values(values: Sequence[tuple[str, Fraction]], *, label: str) -> None:
+def _validate_shooting_values(
+    values: Sequence[tuple[str, Fraction]],
+    *,
+    label: str,
+    require_complete_pairs: bool = True,
+) -> None:
     by_field = dict(values)
     for made_field, attempted_field in _SHOOTING_PAIRS:
         made = by_field.get(made_field)
         attempted = by_field.get(attempted_field)
         if (made is None) != (attempted is None):
+            if not require_complete_pairs:
+                continue
             raise InvalidBlendProfileError(
                 f"{label} must preserve complete {made_field}/{attempted_field} volume"
             )
-        if made is not None and attempted is not None and made > attempted + Fraction(1, 1000):
+        if made is not None and attempted is not None and made > attempted:
             raise InvalidBlendProfileError(
                 f"{label} has makes greater than attempts for {made_field}/{attempted_field}"
             )
+
+
+def validate_production_shooting_values(
+    values: Sequence[tuple[str, Fraction]],
+    *,
+    label: str,
+) -> None:
+    """Enforce exact physical made/attempt constraints for normalized production."""
+
+    _validate_shooting_values(values, label=label)
 
 
 def _as_fraction(value: WeightValue, *, label: str) -> Fraction:

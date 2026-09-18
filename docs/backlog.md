@@ -4038,6 +4038,19 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 - [ ] **pending**
 - **Depends on:** `projection-blending`, `scoring-profiles`
 
+**Execution note (updated 2026-09-14 UTC):** The owner authorized one supervised
+production-only unit. Its single final evaluation completed on 12 September.
+Independent adjudication passed the Model gate for limited descriptive,
+projection-relative production scoring; current-vendor calibration is not
+established. The exact reviewed formatting-only delivery successor subsequently
+passed its targeted local Code gate, with all sixteen live delivery hashes
+confirmed separately from the preserved original experiment bytes. The item
+remains pending: its committed-regression/delivery criteria are not met, and no
+commit or production activation is authorized.
+The owner's separate 13 September fan-out authorizes a bounded read-only
+production-candidates API/UI increment against that unchanged producer; it does
+not reopen the experiment, permit availability fitting/fusion, or accept ADR-021.
+
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
 **Dependency edge on `expected-games` removed 2026-09-06, because it contradicts
 ADR-002.** That ADR's Decision is explicit that per-game production and expected
@@ -4096,10 +4109,12 @@ sentence.** These state what must be true, not how to get there; the method is
    impact relative to league mean scaled by attempts, never as raw percentage.
    `league_scoring_categories` already carries `numerator_stat` and
    `denominator_stat`, so the schema supports it. The falsifying test is the house
-   rule stated as a case: **a 90% FT shooter on one attempt per game must not
-   out-rank a 80% shooter on eight**, and it must be a committed test rather than a
-   claim, because this is the single most common bug in homebrew fantasy tools and
-   it produces confident, plausible, wrong numbers rather than a crash.
+   rule stated as a case: **at a reference FT percentage of 0.78, a 90% FT
+   shooter on one attempt per game has +0.12 impact, below the +0.16 of an
+   80% shooter on eight**. This ordering is conditional on the reference,
+   not universal; volume-weighted impact is the rule. The example must be a
+   committed test rather than a claim, because raw-percentage scoring produces
+   confident, plausible, wrong numbers rather than a crash.
 
 3. **Turnovers are negative and nothing else is inverted by accident.** A test
    pins the sign of every one of the nine categories independently. A sign error
@@ -5913,6 +5928,18 @@ id on a machine that did not produce it. Gate: Code + Adapter.
 
 - [ ] **pending**
 - **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `projection-blending`, `scoring-profiles`
+
+**Execution note (updated 2026-09-14 UTC):** The owner's fan-out produced the
+local read-only production-candidates API and page. It scores one explicitly
+selected source's full pool before excluding recorded holdings and retains
+players without historical observations. Normal composed seeding now supplies
+its first compatible import; the genuine recorded synthetic response drives
+53 candidates from a 60-player reference after seven exclusions. Desktop/mobile
+workflow evidence and the lineage/route-ID review corrections are preserved.
+See `docs/production-candidates.md` for exact scope and artifact identity.
+This remains a partial increment, not the strategy/budget/roster-aware 3-5-player
+recommendation below. No availability adjustment, auction price, live-account
+action or Git delivery is implied; the task marker remains pending.
 
 **Owner requirement, 2026-09-06, in his words:** *"What I want working on draft
 day is live suggestions on my pick that fit my current strategy. With health

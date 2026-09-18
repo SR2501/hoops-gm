@@ -39930,3 +39930,546 @@ spend it on twelve PRs tonight. That is the honest limit of the detector, and th
 entry says so rather than implying an automation that does not exist.
 
 
+
+## 2026-09-10 - architect - standup, retained-store restart, and child cleanup
+
+**Read at:** `main` and fetched `origin/main`
+`cec55862bac78fe7d64de46e8cb3deb90399e61c`; the starting checkout was clean.
+Read the plan, ADRs including amendments, governance, and backlog; the existing
+backlog graph script recounted and validated its own source. Owner-facing
+summary, full standup, and child debriefs are in private session artifacts,
+not this public repository.
+
+**State:** one open PR, #180, the Vitest dependency update, at `c430e37c`.
+The exact-main push run `34124681608` passed. Scheduled run `34482968136`
+failed only in live smoke: 18 stats.nba.com read-timeout failures from its
+runner, not evidence of global source downtime or unseen payload correctness.
+No checks were weakened, and no PR was merged during the standup.
+
+**Product boundary:** #179's composed fixture is present; ranked, strategy-aware
+shortlist ordering is not. Production-only `zscore-engine` can proceed
+independently of the availability fit veto. All four seasonal censuses exist;
+the independent roster-opportunity denominator is still missing. ADR-021's
+amendments, not its stale original dependency description, govern the proposed
+fallback. ADR-021 remains Proposed. No model fit, feature fan-out, source
+purchase, or live-account action was started or authorized by this standup.
+
+**Runtime:** restarted the existing real Reliability store without reseeding.
+The API returns 596 scorecards; setup returns zero leagues. Backend PID 18136
+listens on loopback 8000 and frontend PID 31788 on loopback 5174, deliberately
+left session-attached for the owner. This is not a configured live draft.
+
+**Cleanup:** preserved procedures, failed approaches, and two otherwise
+session-only scripts before archiving the completed #166, #179, and #178
+children. #171's three changed blobs equal main after its squash; #168's extra
+test and c39/backlog sections are already on main via #170. Those two children
+remain open pending their preservation replies. The deliberately unmerged A5
+trial, all five local trial tags, shared stashes, and private evidence stores
+were retained. Only caches/dependencies were found among the worktrees'
+ignored paths.
+
+**Could not verify:** rendered React UI was not independently re-observed;
+frontend HTML and backend API responses were observed. No new local full-suite
+result was obtained. Ongoing gaps retain named owners and triggers:
+`roster-interval-source` for the denominator, `fantrax-auction-capture` for NBA
+sale/seat semantics, `news-feed-observation-run` for feed continuity, R69 before
+preseason rehearsal, and R70 when the owner supplies a second-device backup
+destination. The two unanswered child debriefs are a cleanup hold, not an
+assumption that their sessions contain nothing.
+
+
+## 2026-09-11 - architect - second-coordinator standup and rendered dashboard
+
+**Read at:** `main` and fetched `origin/main`
+`cec55862bac78fe7d64de46e8cb3deb90399e61c`. The September 10 standup append
+was already uncommitted and is preserved. Today's full report and newest-day
+executive summary are private artifacts in coordinator session
+`baeb9984-a1e5-4aac-8c95-af634150b9dd`, not this public repository.
+
+**Coordinator state:** the earlier Architect's event log contains its final
+September 10 standup at 19:25:41Z and successful completion hooks. Its process
+still exists; today's status message has not appeared in its transcript.
+This does not establish a hung tool or explain the apparent session lock.
+Its process and existing dashboard servers were left untouched.
+
+**Observed product:** the existing Reliability page rendered 596 historical
+scorecards, 50 on its first page, with seven monthly evidence rows visible
+after expanding one player. Rendered counters matched the API. Incomplete
+opportunity coverage and no roster-fragility summary remain explicit.
+Draft setup returns zero leagues. This closes the prior rendered-page
+observation gap, not the absent ranked shortlist or real-auction evidence.
+Only a temporary isolated browser was started here; it and its profile are
+removed. Existing loopback services remain on 8000 and 5174.
+
+**Next unit proposed, not started:** supervised production-only `zscore-engine`
+under Code and Model gates, then the shortlist contract and API/UI integration.
+The composed fixture is already on main. No availability fit is authorized:
+four seasonal censuses exist, but independent roster opportunities do not.
+ADR-021 remains Proposed, separately awaiting owner acceptance. No feature
+fan-out, purchase, commit, push, merge, or live-account action was performed.
+
+**Repository and cleanup:** main is unchanged; #180 remains the only open PR,
+at `c430e37c`. Push run `34124681608` passed; scheduled run `34482968136`
+failed only on 18 stats.nba.com read timeouts. The backlog graph was recounted
+without copying its totals. No children belong to this coordinator to archive.
+The two merged children still await debriefs; the unmerged trial, all local
+trial tags, shared stashes, private evidence, and real databases are retained.
+
+**Could not verify:** why the earlier session does not consume today's message;
+the two outstanding child debriefs; real NBA auction behavior or room
+availability. No new local full-suite result was obtained. Continuing evidence
+gaps retain their existing owners and triggers: `roster-interval-source`,
+`fantrax-auction-capture`, `news-feed-observation-run`, R69 before rehearsal,
+and R70 once a second-physical-device backup destination is supplied.
+
+
+## 2026-09-11 - architect - scoring authorized, one coordinator, independent evidence
+
+**Read at:** fetched `main` / `origin/main`
+`cec55862bac78fe7d64de46e8cb3deb90399e61c`. The owner explicitly selected
+"Authorize the scoring unit" for one supervised production-only implementation,
+held-out calibration and a model card. No commit, push, merge, ADR acceptance,
+availability fit, purchase, or live-account action was authorized.
+
+**Coordination:** the original Architect resumed communication. Coordinators
+agreed that session `baeb9984-a1e5-4aac-8c95-af634150b9dd` owns the sole scoring
+unit and shared handoff/backlog writes. No duplicate scoring or news lane was
+started. Both earlier standup appends and all historical bytes are preserved.
+The original coordinator's two merged children remain on their debrief hold;
+the trial, stashes, real databases and running dashboard are untouched.
+
+**Dependency review:** the original coordinator found, and this coordinator
+confirmed at #180 head `c430e37c`, that Vitest 5 requires Node
+`^22.12.0 || ^24.0.0 || >=26.0.0` while the project promises Node >=20.19.
+Hold approval until the dependency or declared support contract is coherent.
+No GitHub review/comment or repair was posted. New scheduled run `34604409011`
+failed only in live smoke; the earlier 18-timeout count is not evidence about
+this newer run's failures.
+
+**Scoring checkpoint:** independent quant approved the complete-input reference
+population and explicit unavailable replacement for undersized projected pools.
+The existing 12x13 league with 60 or 12 projected players still receives valid
+production scores, never an invented replacement player or value above it.
+Arbitrary slope/intercept and per-bin-sign vetoes were rejected; the experiment
+must report magnitude calibration, uncertainty, denominators and limitations.
+No held-out result or current-vendor calibration claim exists yet.
+
+**Evidence separation:** initial model-worker source metadata inspection is
+retained as an invalid discovery path, not relabelled as a released experiment.
+It exposed aggregate counts but no player/game-level feature or outcome cells
+according to the preserved command inventory. Independent custody and release
+now establish a fresh 2022-23/2023-24 development package. Runtime implementation
+and development analysis are authorized; 2024-25 held-out outcomes remain sealed
+until an independently confirmed freeze. No 2025-26 data may enter this run.
+Private manifests, digests, release, deviation and supervision records remain
+with this coordinator's session artifacts. No raw evidence is published here.
+
+**Could not verify:** final scoring calibration or Code gate, not completed;
+current BBM/blend forecast quality, which the historical carry-forward benchmark
+cannot establish; why the earlier session appeared locked; a Node20 runtime
+failure; and the two outstanding child debriefs. Next is the supervised
+implementation/development checkpoint, then freeze and independent outcome
+release. The backlog marker remains pending rather than implying completion.
+
+## 2026-09-12 - architect - owner-away scoring checkpoint
+
+**Pause:** the owner is heading home to sleep. No new work is to start. The
+already-authorized frozen evaluation may finish and preserve its private
+result/receipt if it is in flight, then all work holds for the owner's return.
+No commits, pushes, merges, live-account actions or system power changes.
+
+**Preserved state:** production-only scoring and its evaluator passed independent
+prefreeze review. Study freeze
+`zscore-final-freeze-20260911T231730153723Z-966f1d50e74d` is accepted and
+independently confirmed. The 2024-25 outcome package was independently released
+and delivered only to quant worker `cbd0b663-f1be-41a8-bebb-d4519b1326cf`.
+Frozen source, protocol, forecasts, packages, receipts and rejected candidates
+are retained in supervising session `baeb9984-a1e5-4aac-8c95-af634150b9dd`.
+Its `files/scoring-unit-supervision.json` is the exact resumable control record.
+
+**Resume carefully:** at `2026-09-12T11:42:47.5936097Z`, the expected private
+`files/final-evaluation-v5/zscore-production-final-result.json` did not exist.
+Inspect worker receipts and process state before assuming a run completed or
+retrying it. Never modify or retune the frozen implementation after unblind.
+The next work, once the owner returns, is result collection and independent
+final adjudication, not another feature lane. The backlog remains pending.
+
+**Could not verify:** whether the worker began or completed the authorized
+evaluation; final calibration or Model-gate passage. Current-vendor calibration,
+availability fusion, API/UI integration and real-auction operation remain outside
+this unit. The private snapshots do not resolve the same-physical-disk R70 gap.
+
+### Completion received while paused
+
+The worker completed the previously authorized frozen invocation at
+`2026-09-12T11:46:48.8472379Z` through `11:47:03.5103182Z`, then acknowledged
+the queued hold. It reports one run, exit code zero, empty stderr, and no
+process left in flight. No follow-on review or publication has started.
+
+At `2026-09-12T11:49:48.4209858Z`, the coordinator confirmed the private result
+and execution receipt exist with their reported byte identities, and all 16
+bound files still match the freeze. Result:
+`files/final-evaluation-v5/zscore-production-final-result.json`, 34,607 bytes,
+SHA-256 `c3b7830055ff1ce4dbd76d326e5345706ad31e5930d0553259e5d805964e176c`.
+Receipt: `files/final-evaluation-v5/zscore-production-final-execution-receipt.json`,
+22,748 bytes, SHA-256
+`cd4195725e64c9c80132f1d92575af01c890fcef8f5fb072aa434d64ce594a4c`.
+
+**Still paused:** independent final Model-gate adjudication and the public
+aggregate-safe result/model-card addendum wait for the owner's return. This
+checkpoint confirms preservation, not statistical approval. Do not rerun.
+
+## 2026-09-13 - Owner return: final scoring adjudication and browser fan-out
+
+**Authorization:** the owner said "Fan out and get to work please." The prior
+pause is lifted for independent final adjudication and a bounded read-only
+production-candidates API/UI increment. It does not authorize another statistical
+run, changes to the frozen sixteen files, ADR acceptance, availability fitting,
+commits, pushes, merges, purchases or live-account actions.
+
+**Ground truth:** after fetch, main and origin/main remain
+`cec55862bac78fe7d64de46e8cb3deb90399e61c`; the scoring unit is still local and
+uncommitted. Its result and receipt retain the hashes above, and all sixteen
+bound files remain unchanged. Final Model adjudication is running with the
+existing independent quant, not yet passed. Backend and frontend are preparing
+one shared wire contract before disjoint implementation. The parent remains
+the sole shared handoff/backlog writer; a fresh original-coordinator ownership
+reply is outstanding.
+
+**Boundary:** no persisted blend recipe exists. The proposed view selects one
+admitted source and uses genuine release/identity-blend/scoring producers,
+scoring the whole pool before drafted-player filtering. Historical observations
+are separate from production; missing health never removes a candidate or means
+healthy. The fixture's 60 projections / seven drafted / 53 undrafted, including
+48 undrafted without health observations, must remain honest. The 12-by-13
+league is not resized to manufacture replacement or VOR. This does not complete
+the strategy/budget/roster-aware shortlist. The conditional 0.78-reference FT
+example in the backlog now states the actual rule rather than a false universal
+ordering; no frozen calculation or experimental criterion changed.
+
+**Visible state:** the existing Reliability page rendered at
+`2026-09-14T01:26:57.883Z` (13 September locally), with 596 scorecards, matching
+API counters, 50 first-page players and seven expanded monthly rows. Draft setup
+still has zero leagues. Existing API 8000/PID 18136 and frontend 5174/PID 31788
+were preserved. Isolated read-only browser PID 47424 was stopped, port 9224 is
+closed, and its exact scratch profile was removed. No new candidate-view demo
+is running yet. The preview will use a separate synthetic fixture, not overwrite
+the historical Reliability store.
+
+**Could not verify:** final statistical use disposition or current-vendor
+calibration; no complete strategic shortlist, NBA auction binding, adequate
+preseason news coverage or second-device backup is established. The existing
+`draft-day-shortlist`, `fantrax-auction-capture`, R40 and R70 records retain their
+owners and evidence triggers. The latest scheduled main run `34760709509` failed
+only live smoke; its cause was not investigated. A running original-session
+status does not establish responsiveness or the cause of its apparent lock.
+
+**Resumption record:** supervising session
+`baeb9984-a1e5-4aac-8c95-af634150b9dd` holds
+`files/scoring-unit-supervision.json`, `files/standup-2026-09-13.md` and the
+read-only `files/reliability-browser-2026-09-13.json` observation. The private
+executive summary and owner inbox were refreshed; the repository is public.
+
+### Final scoring adjudication and implementation boundary
+
+Independent adjudication
+`zscore-final-adjudication-20260914T020704993399Z-e3f9ff9de3ce`
+accepts the frozen experiment's protocol and limited scientific evidence.
+The result supports descriptive, projection-relative production ranking, not
+calibration of current BBM or other vendor forecasts. The independent
+reconstruction agrees with the frozen metrics, denominators, bins and
+sensitivities. Missing next-year box scores remain missing outcomes, not zero
+production; the observed-player conditioning is a substantive limitation.
+
+**The unit is not gate-complete.** The Model gate awaits an independently
+reviewed adjacent final-results addendum. The Code gate is held because Ruff
+0.16.1 would format ten of thirteen frozen Python files. The original result,
+receipt and sixteen live bindings remain unchanged; formatting is not silently
+exempted and the completed experiment is not rerun.
+
+The architect's bounded staging ruling is
+`docs/governance/zscore-formatting-carry-forward.md`: the quant author may
+prepare a private formatting-only delivery successor, retaining original and
+successor identities, exact formatter/configuration, full diff and strict AST
+comparison. Any AST mismatch stops that path. Independent equivalence review
+and a separate promotion instruction are required before live files change.
+This is not a new pre-registration or a relabelling of changed bytes as frozen.
+The author is also preparing the aggregate-safe final-results addendum and
+index; the immutable base card remains untouched.
+
+**Backend and frontend implementation is now authorized and running** against
+`docs/production-candidates.md`. The contract fixes a draft/source-keyed
+read-only endpoint, required explicit supported source, full-pool scoring
+before resolved-holding exclusion, original ordinals, nullable structural
+replacement, separate published-window observations and explicit unknowns.
+Unresolved live holdings refuse eligibility; budget drift does not block this
+production-only score. Import time is not vendor freshness, and read consistency
+means a coherent older payload or a typed conflict, not detection of every
+write. The existing recorded board remains isolated from candidate failures.
+
+The backend owns the real seeded HTTP response for the frontend's recorded
+fixture and the generated OpenAPI update. No convenience ORM lineage or
+hand-authored scores may stand in for those producers. The existing 8000/5174
+services remain intact; no new preview or production activation is claimed.
+
+**Could not verify:** the pending implementation's whole-path behavior, the
+unwritten final-results addendum's public-data boundary, or a formatter
+successor's equivalence/Code-gate closure. These are assigned to their current
+authors and independent review, not waived. No commit, push, merge, ADR
+acceptance, availability fit, new source access or live-account action occurred.
+
+The custodian's previously history-only zero-count validator detour is now
+preserved as a separate private note with exact commands, timestamps and outputs
+recovered from event history, not rerun. The final adjudication and that note are
+bound in the supervising session's `files/scoring-unit-supervision.json`.
+
+## 2026-09-14 UTC - Scoring delivery closure (Architect)
+
+**Changed:** The previously authorized formatter-only promotion is complete.
+All thirteen explicit Python targets were copied from the independently reviewed
+staging directory; ten differ from the original source bytes. The other three
+bound files remain byte-identical. The author recorded passing Ruff format/lint,
+strict mypy and the existing six-file, 187-test scoring group. The parent checked
+the sealed receipt, exact target sets, all sixteen current live/staged hashes
+against the resealed successor manifest, unchanged non-Python files, and the
+original result/execution-receipt identities. This did not rerun the held-out
+experiment or read a source/outcome database.
+
+The promotion receipt file SHA-256 is
+`1ec911a078c92820540b72f467316f694893a119f4dfd8b7b3901946c5ffa7d0`;
+the parent's independent byte/record confirmation file SHA-256 is
+`3a151fa905e82cad6e9440207379a08e363649d633a44eb2fc88a259a9732e09`.
+The original staging manifest with the incorrect internal digest remains
+preserved; its cause is still unknown. The reviewed reseal, not that original
+manifest, is the successor authority. The one-time promotion permission is
+consumed; further scoring changes require a new bounded authorization. Future
+live-byte comparisons must use the reviewed successor map, not pretend the
+formatted tree still equals the original generation receipt.
+
+The final model addendum and backlog now distinguish the locally gate-complete
+scoring delivery from the original experiment, pending Git delivery, and the
+unfinished candidate integration. Frozen numerical evidence and base cards are
+unchanged. The model's accepted use remains limited descriptive
+projection-relative production ranking, not validated current-vendor forecasts.
+
+**Could not verify:** Full-repository integration/CI and real-data production
+activation are not established by this targeted Code evidence. The normal-seed
+API recording, final recorded frontend coverage and isolated browser demonstration
+are still in progress. This is not the complete strategy/budget/roster-aware
+shortlist. Availability fitting, ADR acceptance, Git delivery and live-account
+actions remain outside the authorization.
+
+## 2026-09-14 UTC - Recorded-draft production candidates delivered locally (Architect)
+
+**Changed:** Backend and frontend completed the owner's bounded read-only
+candidate increment. `GET /api/v1/drafts/{draft_id}/production-candidates` resolves
+the recorded draft's actual league, releases genuine current projection/profile
+inputs, uses an ephemeral one-source identity blend, scores the full reference,
+then excludes resolved live holdings. Historical observations remain separate;
+missing evidence does not remove candidates. The page is
+`/draft/:draftId/production-candidates`, linked out of DraftPage so candidate
+failures cannot blank the recorded board.
+
+The first attempted fixture exposed a real seed mismatch: standalone projections
+declared `h2h_categories` while the composed auction profile was
+`h2h_each_category`. The final fix derives the first composed import's declaration
+from the same recorded scoring context used for its profile. It does not weaken
+the scorer, rewrite immutable metadata or manufacture a second CSV identity.
+Standalone defaults and genuine incompatibility refusal remain. Composed
+seeding remains intentionally fresh-database-only under the existing safety
+guards. The private V1 recording with its explicit second import is preserved,
+but is not the final frontend fixture.
+
+The final genuine V2 HTTP recording is 143,706 bytes, SHA-256
+`678a56b101c8742d03e3f79f4d048e3449a9eb8bdd742a4a1505f15d6cbf08ec`;
+its closed backing DB is 1,359,872 bytes, SHA-256
+`eb55245593b3515468cad917a5650289a4f0251c4e53155290295c4bb0f999dd`.
+Actual IDs are draft 1, league 2, import 1, with one import. It carries 60
+reference players, seven exclusions and 53 candidates; five have two credited
+appearances each, 48 have no observations, and none have unknown health context.
+The required replacement ordinal is 157, with structural/ordinal shortfalls
+96/97 and all replacement/VOR values unavailable. Source labels explicitly say
+`Basketball Monster (synthetic demo cohort)` and
+`synthetic-projections-demo.csv`; these invented rates are not real BBM forecasts.
+The exact atomic-new-target capture method is preserved privately; it does not
+unlink or overwrite earlier recordings.
+
+**Review and gates:** Backend reported 137 related tests plus owned lint/type
+checks and clean recorded OpenAPI drift. Frontend's main correction group
+reported 111 tests plus type/lint/build. Independent integration review found
+contradictory lineage/invalid wire discriminators and malformed route coercion.
+The corrected client binds all three score-input hashes, closes the interpreted
+model/publication/enum values, and checks raw canonical decimal/safe-integer
+route IDs before mounting a loader.
+
+The focused reviewer independently closed the route finding and verified those
+hash/discriminator fixes, then identified one remaining valid-but-incompatible
+import/profile scoring pair. Its literal null-or-equal predicate was added with
+focused regressions, including the genuine V2 mutation. The final API-guard and
+recorded-fixture group reported 33 passing tests, typecheck and lint. Parent
+inspected the final predicate and regression cases and confirmed only the guard
+and its test changed among the six bound correction files. This last change is
+not described as another independent full review. A further whole-review or
+browser-polishing loop was not warranted for the exact prescribed predicate;
+no mandatory gate was waived.
+
+Actual browser observations on the isolated API/Vite services covered desktop
+1440x900 and mobile390x844, all 53 ordered rows/nine components, expanded evidence,
+explicit limitations, source-switch cold scope and last-good retention. One
+browser-only refresh refusal was held past the six-second stale threshold. The
+single confirmation round then rejected an HTTP200 response with only one score
+input hash contradicted, retaining all observed data/evidence text. Hex,
+exponential and unsafe-integer URL controls showed client refusals and zero
+candidate resource requests during their bounded observations. These are
+simulations and observations, not a real vendor/network outage.
+
+The initial browser manifest SHA-256 is
+`68667fde2496aa9b22761d75563178c85e7e25606512b6c39661d60551b7b0b6`;
+post-review browser/source bindings are
+`f5a689e2f91fa9a53233e93f265d75092f4423c23186528e671143f5f56e872b`.
+The latter predates only the final two-file scoring-declaration predicate;
+its earlier observations are preserved rather than relabelled as later bytes.
+The concrete contract and backlog execution note now record local delivery,
+while both the broader shortlist and committed-scoring-delivery markers remain
+pending. Main is still `cec55862bac78fe7d64de46e8cb3deb90399e61c`; no Git
+commit, push, branch change, merge, ADR acceptance or live-account action occurred.
+
+**Runtime ownership:** The visible synthetic preview uses an exact working copy,
+not the recorded V2 DB or the non-disposable Reliability store. Attached API
+port8011/PID28232 and Vite port5181/PID50560 are owned by this coordinator
+(`production-candidates-api-v2` / `production-candidates-ui-v2`). The API disables
+dotenv, clears inherited bridge/Fantrax credentials and uses a private preview
+secret path; Vite has an explicit own-origin API base and proxy8011. Both owned
+headless browser sessions were stopped, port9224 closed, and only their two named
+new profiles removed. Existing API8000/PID18136 was not stopped. The old
+frontend5174/PID31788 was later observed absent; cause is unknown and this
+coordinator did not stop or replace it.
+
+**Could not verify:** Full-repository/CI and a separate Postgres run were not
+performed for this local increment. Browser evidence uses synthetic data and has
+no unknown-health example; it is not a pixel or full accessibility audit. Current
+vendor calibration, actual source freshness, live NBA auction bindings, physical
+backup separation and opportunity coverage for availability fitting remain
+unestablished. No availability model, expected-games fusion, price, strategy or
+budget/roster-aware 3-5-player recommendation was delivered. The owner still
+needs to supply untouched source workbooks and real NBA nomination/sale evidence;
+the existing ADR/news/second-device-backup decisions remain separate.
+
+---
+
+## 2026-09-16 - architect - Candidate runtime custody restored and merged children archived
+
+**Changed:** Recorded the original coordinator's completed creator cleanup and
+bounded runtime restoration. Before this append, it re-derived main/origin at
+`cec55862bac78fe7d64de46e8cb3deb90399e61c` and confirmed all 49 local delivery
+file hashes unchanged through restoration. Merged #168/#170 and #171 sessions
+were archived after completed debriefs, consumer closure and current clean-tree
+checks; both disappeared from the app and worktree registry. Shared stash
+objects, the unmerged A5 session and all five trial refs were preserved. Today's
+executive entry continues the existing private September history, not a copy
+of the original coordinator's older summary.
+
+**Now true:** Production scoring and the read-only candidates increment are
+locally delivered, not plan-only. Their accepted scope remains limited
+descriptive, projection-relative production scoring, not current-vendor
+calibration or the strategy/budget-aware shortlist. Scientific custody remains
+with coordinator `baeb9984-a1e5-4aac-8c95-af634150b9dd`.
+
+All four former listeners (8000, 5174, 8011 and 5181) were absent at resumption;
+the shutdown cause is unknown. Only candidate API8011 and Vite5181 were restored.
+Their runtime custodian is now the original coordinator,
+`4c911ec3-0f35-4bf6-a8b4-767b662eba82`, not the scientific coordinator. Its
+session-attached shells are `candidate-api-20260916-json` and
+`candidate-ui-20260916`; reported listener PIDs are 25112 and 21928.
+
+The runtime uses a new exclusive private working copy made at 11:29:49Z from the
+closed synthetic V2 recording, with both source and initial copy matching
+`eb55245593b3515468cad917a5650289a4f0251c4e53155290295c4bb0f999dd`.
+The API pins the absolute backend source path, disables dotenv, clears inherited
+bridge/Fantrax credentials and uses the new private DB/secret targets. The
+initial bare-URL `CORS_ORIGINS` invocation failed settings preflight before
+app/DB startup; only that failed launch was corrected to the existing JSON-list
+representation `["http://127.0.0.1:5181"]`. No code or environment-wide repair
+was required.
+
+At 11:32:17Z the API and Vite proxy both returned 200 and reproduced the complete
+recorded V2 JSON after removing only `generated_at`, using canonical JSON rather
+than coercing Boolean/integer equality. The normalized SHA-256 is
+`44241941516323dafedfbdddccd2235f01fa320da6a18589783e0422f2e14146`.
+The response preserves the explicit synthetic labels, import 1, reference 60,
+seven exclusions and 53 candidates. Original DB/JSON hashes were unchanged.
+No real, frozen or prior-preview store was modified; no reseed, migration,
+source acquisition, experiment rerun or source/HEAD edit occurred.
+
+Exact commands, process ancestry, copy/HTTP receipts and failed-invocation
+details are preserved privately with the runtime custodian in
+`candidate-preview-runtime-2026-09-16.md`,
+`production-candidates-preview-20260916-v1-copy.json` and
+`production-candidates-preview-20260916-v1-http.json`. Creator archival evidence
+is in its `cleanup-2026-09-16.md`; the consolidated operational report is
+`continuation-2026-09-16.md`.
+
+**Could not verify:** Fresh rendered React (the canvas supplied no usable page
+ID), full integration/CI for the uncommitted delivery, off-machine recovery of
+the full evidence scope, current-vendor calibration, or the full strategic
+shortlist. HTTP payload equality is not a new rendered-browser observation.
+
+**Next:** Existing tasks and R70 retain their owners and closure triggers.
+Next product work needs explicit Git-delivery authority and untouched named
+BBM inputs; no further experiment or feature unit is authorized by this
+restoration. ADR-021 remains Proposed and the news/backup decisions remain
+separate. The original coordinator owns the restored runtime; shared
+handoff/backlog and scientific evidence/history custody stay with `baeb9984`.
+
+## 2026-09-17 - backend / architect - production-candidate local delivery closure
+
+**Scope.** The owner approved a test-only repair in
+`backend/tests/test_config.py` and completion of the existing delivery gates.
+The test now clears `DISABLE_DOTENV_ENV_VAR` only inside its monkeypatch
+context, after installing a synthetic temporary dotenv file. The validation
+process still has `HOOPS_GM_DISABLE_DOTENV=1`; production settings, scoring,
+source data, fixtures and dependencies were not changed by this repair.
+The preceding OpenAPI disposable-pairing-storage and enum-coverage repairs
+also remain delivery-only changes, not a new scientific successor.
+
+**Measured result.** The config module went from 12 passed / 1 failed to
+13 passed under the safety flag; Ruff and format checks passed. The completed
+default backend selection collected 2,919 tests, deselected the existing
+44 live-smoke cases, and finished with 2,873 passed, two existing skips and
+zero failures/errors; no cases were omitted by an early stop. The skips remain the known
+variable-sourced refresh site and Windows signal-handler behaviour. The
+unchanged frontend's 549-test result, type-checks, builds and other applicable
+gates retain their prior execution identities; they were not relabelled as
+new runs.
+
+**One invocation failure, not a production repair.** The first full attempt
+stopped after 1,479 passes while creating a temporary raw capture at a
+261-character Windows path; its 217-character parent directory existed.
+Using short, new session-private pytest/TEMP roots made the exact failing
+test plus all 13 config tests pass, then the complete default selection
+passed. No raw-store/backfill code, assertion, test selection or operating
+system setting was changed. The failed run and exact corrected commands
+are preserved separately.
+
+**Binding and review.** At Code closure, all prior 52 delivery-file raw hashes
+were unchanged; `test_config.py` was the sole new repository edit. Existing
+narrow secret rules inspected all 53 proposed UTF-8 delivery files with zero
+findings. A different, read-only publication reviewer inspected the integrated
+package and returned no significant issues; its before/after checks each
+matched all 53 files to the same frozen inventory, including untracked files.
+No statistical experiment was rerun or independently re-adjudicated by that
+code review. Existing limited, projection-relative production claims remain
+limited; this does not establish current-vendor calibration or availability.
+
+**Evidence.** Private `day-20260917-backend-closure` retains JUnit, logs, exact
+command events and the attribution receipt; `publication-preflight-20260917`
+and `day-20260917-publication-review` retain the publication inventory and
+actual independent verification events. None contains an authorization to
+merge. This handoff append is a subsequent documentation-only change and
+must be checked separately before publication.
+
+**Could not verify.** CI's Python/Node and PostgreSQL environments have not
+yet run against a published delivery branch. The two documented skipped
+properties remain unverified locally. Private projection-file admission is a
+separate ongoing unit: no real import, new score, study, live-account action
+or ADR acceptance occurred in this closure.

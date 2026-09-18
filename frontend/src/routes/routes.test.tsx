@@ -6,6 +6,7 @@ import { App } from '../App'
 import { ApiError } from '../api/client'
 import { AppLayout, BackendStatus } from '../components/AppLayout'
 import { mockFetch, renderWithRouter } from '../test/helpers'
+import { syntheticProductionCandidates } from '../test/productionCandidatesStub'
 
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
 const READY = { status: 'ok', database: 'ok', detail: null }
@@ -240,11 +241,17 @@ describe('the dashboard shell', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Request req-bad-drafts-route')
   })
 
-  it('navigates to the draft board from the shell', async () => {
+  it('navigates from the draft board to its production-only evidence route', async () => {
     // Same reason as the projections case above: `DraftPage.recorded.test.tsx`
     // renders the page directly, so without this the board could work
     // perfectly and still be unreachable from the nav, with nothing saying so.
     mockFetch({
+      '/api/v1/drafts/1/production-candidates': {
+        body: syntheticProductionCandidates({
+          draftId: 1,
+          source: 'basketball_monster',
+        }),
+      },
       '/api/v1/drafts/1/events': {
         body: { draft_id: 1, events: [], since_sequence: 0, last_sequence: 0 },
       },
@@ -315,6 +322,17 @@ describe('the dashboard shell', () => {
     await userEvent.click(await screen.findByRole('link', { name: '[demo] Auction' }))
     expect(await screen.findByRole('heading', { name: '[demo] Auction' })).toBeInTheDocument()
     expect(await screen.findByTestId('log-empty')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('draft-production-candidates-link'))
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Production-only rankings · Draft 1',
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('production-candidates-table')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Source projections scored by the production engine, relative to the selected source pool/),
+    ).toBeInTheDocument()
   })
 
   it('renders a not-found page for an unknown route', async () => {

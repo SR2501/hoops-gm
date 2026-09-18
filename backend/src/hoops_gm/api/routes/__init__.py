@@ -15,6 +15,7 @@ from hoops_gm.api.routes import (
     health,
     lineage,
     meta,
+    production_candidates,
     projections,
     reliability,
     schedule_grid,
@@ -35,6 +36,7 @@ api_v1_router.include_router(deadline_calendar.router)
 api_v1_router.include_router(schedule_grid.router)
 api_v1_router.include_router(projections.router)
 api_v1_router.include_router(reliability.router)
+api_v1_router.include_router(production_candidates.router)
 api_v1_router.include_router(drafts.router)
 api_v1_router.include_router(draft_feed.router)
 

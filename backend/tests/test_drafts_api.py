@@ -1052,8 +1052,10 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     reconciliation, the Fantrax-league resolver returns that same status only
     after finding exactly one local draft, ``GET /source-board`` reports rendered
     source evidence, and ``POST /feed/ingest`` appends only independently
-    attributed RPC claims through ``draft_service``. None offers edit or delete,
-    so the property this test defends still holds over the wider surface.
+    attributed RPC claims through ``draft_service``. ``GET
+    /production-candidates`` is the separate read-only production-ranking
+    surface. None offers edit or delete, so the property this test defends
+    still holds over the wider surface.
     """
     document = cast("FastAPI", client.app).openapi()
     draft_routes = {
@@ -1072,6 +1074,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         "/api/v1/drafts/{draft_id}/events",
         "/api/v1/drafts/{draft_id}/feed",
         "/api/v1/drafts/{draft_id}/feed/ingest",
+        "/api/v1/drafts/{draft_id}/production-candidates",
         "/api/v1/drafts/{draft_id}/source-board",
     }
 
@@ -1088,6 +1091,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         ("/api/v1/drafts/{draft_id}/events", "POST"),
         ("/api/v1/drafts/{draft_id}/feed", "GET"),
         ("/api/v1/drafts/{draft_id}/feed/ingest", "POST"),
+        ("/api/v1/drafts/{draft_id}/production-candidates", "GET"),
         ("/api/v1/drafts/{draft_id}/source-board", "GET"),
     }
 
@@ -1121,14 +1125,21 @@ def test_recording_how_the_draft_was_run_is_not_optional(
     assert accepted.json()["tool_usage"] == "instrumented"
 
 
-def test_the_surface_publishes_no_decision_numbers(client: TestClient, session: Session) -> None:
-    """Scope guard. Valuation, prices and p(play) are quant's and are blocked upstream.
+def test_the_descriptive_surface_publishes_no_decision_numbers(
+    client: TestClient, session: Session
+) -> None:
+    """Scope guard for the established descriptive draft and feed contracts.
 
     Read from the **schema**, not from one populated payload. The first version
     of this test walked a live auction response and did not catch a ``max_bid``
     added to ``NextPickOut``, because an auction publishes ``next_pick: null``
     and that model never appeared in the body at all. A guard that only sees
     the fields some fixture happened to populate is a guard over the fixture.
+
+    ``/production-candidates`` is a separate, explicitly production-only
+    ranking contract with its own refusal and forbidden-field tests. Keeping
+    this guard scoped to the descriptive routes preserves its original
+    guarantee instead of deleting it when that bounded surface arrives.
 
     The mutation harness found that, not review.
     """
@@ -1182,7 +1193,7 @@ def test_the_surface_publishes_no_decision_numbers(client: TestClient, session: 
                 collect(item)
 
     for path, operations in document["paths"].items():
-        if path.startswith("/api/v1/drafts"):
+        if path.startswith("/api/v1/drafts") and "/production-candidates" not in path:
             collect(operations)
 
     assert "NextPickOut" in seen, (

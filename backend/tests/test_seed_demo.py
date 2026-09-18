@@ -33,12 +33,13 @@ from hoops_gm.db.models.enums import (
     DraftType,
     GameStatus,
     ParticipationOutcome,
+    ScoringType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player
 from hoops_gm.db.models.injury_report import InjuryReportEntry
 from hoops_gm.db.models.league import League, LeagueScoringCategory, LeagueScoringProfile
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
-from hoops_gm.db.models.projections import Projection
+from hoops_gm.db.models.projections import Projection, ProjectionImport
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_demo import (
@@ -194,6 +195,7 @@ def test_composed_shortlist_inputs_share_five_undrafted_players_and_nine_categor
                 )
             )
         )
+        projection_imports = list(session.scalars(select(ProjectionImport)))
         assert len(profiles) == 1
         categories = list(
             session.scalars(
@@ -216,6 +218,13 @@ def test_composed_shortlist_inputs_share_five_undrafted_players_and_nine_categor
         assert all(game_id.startswith("synthetic-reliability-demo-") for _, game_id in health_logs)
         assert auction_league is not None
         assert auction_league.fantrax_league_id == AUCTION_DEMO_LEAGUE_ID
+        assert len(projection_imports) == 1
+        assert projection_imports[0].id == result.projections.projection_import_id
+        assert (
+            projection_imports[0].assumed_scoring_type
+            == profiles[0].scoring_type
+            == ScoringType.H2H_EACH_CATEGORY
+        )
         assert len(snapshots) == 1
         document = LeagueSettingsDocument.model_validate(snapshots[0].settings)
         assert document.source_league_id == AUCTION_DEMO_LEAGUE_ID

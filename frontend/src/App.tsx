@@ -5,6 +5,7 @@ import { DashboardPage } from './routes/DashboardPage'
 import { DraftPage } from './routes/DraftPage'
 import { DraftsPage } from './routes/DraftsPage'
 import { NotFoundPage } from './routes/NotFoundPage'
+import { ProductionCandidatesPage } from './routes/ProductionCandidatesPage'
 import { ProjectionsPage } from './routes/ProjectionsPage'
 import { ReliabilityPage } from './routes/ReliabilityPage'
 import { SchedulePage } from './routes/SchedulePage'
@@ -27,6 +28,10 @@ export function App() {
         <Route path="draft" element={<DraftsPage />} />
         <Route path="draft/:draftId" element={<DraftPage />} />
         <Route path="draft/:draftId/categories" element={<CategoriesPage />} />
+        <Route
+          path="draft/:draftId/production-candidates"
+          element={<ProductionCandidatesPage />}
+        />
         <Route path="system" element={<SystemPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

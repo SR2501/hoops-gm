@@ -85,6 +85,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings
+from hoops_gm.db.models.enums import ScoringType
 from hoops_gm.db.models.identity import Player
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection
@@ -118,7 +119,11 @@ from hoops_gm.dev.seed_schedule_grid import (
 from hoops_gm.ingest.backfill import derive_scoring_profile
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_league_settings
-from hoops_gm.ingest.league_settings import parse_official_league_settings
+from hoops_gm.ingest.league_settings import (
+    LeagueSettingsDocument,
+    parse_official_league_settings,
+)
+from hoops_gm.scoring.profiles import _scoring_type_from_document
 
 #: The league id both dashboard screens are hardcoded to. Not enforced here —
 #: it is a consequence of insertion order on a fresh database — but printed, so
@@ -148,6 +153,33 @@ class DemoSeedResult:
     drafts: DraftSeedResult
 
 
+@dataclass(frozen=True)
+class _RecordedAuctionScoring:
+    """One read of the fixture that owns both import and profile semantics."""
+
+    document: LeagueSettingsDocument
+    fixture_sha256: str
+    scoring_type: ScoringType
+
+
+def _recorded_auction_scoring(fixtures_dir: Path) -> _RecordedAuctionScoring:
+    fixture_path = fixtures_dir / SCORING_SETTINGS_FIXTURE
+    document = parse_official_league_settings(
+        load_fixture(fixtures_dir, SCORING_SETTINGS_FIXTURE),
+        source_league_id=AUCTION_DEMO_LEAGUE_ID,
+        capture_ref=SCORING_SETTINGS_CAPTURE_REF,
+    )
+    # Use the same fail-closed mapping as the profile builder that consumes this
+    # exact document later. Duplicating the Fantrax discriminator mapping here
+    # would let the projection import and active profile disagree again.
+    scoring_type = _scoring_type_from_document(document)
+    return _RecordedAuctionScoring(
+        document=document,
+        fixture_sha256=sha256(fixture_path.read_bytes()).hexdigest(),
+        scoring_type=scoring_type,
+    )
+
+
 def seed_demo(
     session: Session,
     *,
@@ -164,7 +196,13 @@ def seed_demo(
     for why that ordering is a constraint rather than a habit.
     """
 
-    projections = seed_projections(session, fixtures_dir=fixtures_dir, cohort_size=cohort_size)
+    recorded_scoring = _recorded_auction_scoring(fixtures_dir)
+    projections = seed_projections(
+        session,
+        fixtures_dir=fixtures_dir,
+        cohort_size=cohort_size,
+        assumed_scoring_type=recorded_scoring.scoring_type,
+    )
     auction_players = tuple(
         CanonicalDraftPlayer(player_id=player_id, player_label=player_label)
         for player_id, player_label in session.execute(
@@ -194,11 +232,17 @@ def seed_demo(
     _seed_auction_scoring_profile(
         session,
         auction_league_id=drafts.auction_league_id,
+        recorded_scoring=recorded_scoring,
     )
     return DemoSeedResult(projections=projections, reliability=reliability, drafts=drafts)
 
 
-def _seed_auction_scoring_profile(session: Session, *, auction_league_id: int) -> None:
+def _seed_auction_scoring_profile(
+    session: Session,
+    *,
+    auction_league_id: int,
+    recorded_scoring: _RecordedAuctionScoring,
+) -> None:
     """Give the composed auction its own source-attributed active 9-cat profile."""
 
     league = session.get(League, auction_league_id)
@@ -222,25 +266,16 @@ def _seed_auction_scoring_profile(session: Session, *, auction_league_id: int) -
         capture_ref=AUCTION_PERIODS_CAPTURE_REF,
         source_path="hoops_gm.dev.seed_demo (synthesized, never observed)",
     )
-    scoring_fixture_path = DEFAULT_FIXTURES_DIR / SCORING_SETTINGS_FIXTURE
-    scoring_payload = load_fixture(DEFAULT_FIXTURES_DIR, SCORING_SETTINGS_FIXTURE)
-    recorded_scoring = parse_official_league_settings(
-        scoring_payload,
-        source_league_id=AUCTION_DEMO_LEAGUE_ID,
-        capture_ref=SCORING_SETTINGS_CAPTURE_REF,
-    )
     document = period_document.model_copy(
         update={
-            "scoring_type": recorded_scoring.scoring_type,
-            "scoring_categories": recorded_scoring.scoring_categories,
+            "scoring_type": recorded_scoring.document.scoring_type,
+            "scoring_categories": recorded_scoring.document.scoring_categories,
         }
     )
     source_payload_sha256 = sha256(
         json.dumps(
             {
-                "recorded_scoring_fixture_sha256": sha256(
-                    scoring_fixture_path.read_bytes()
-                ).hexdigest(),
+                "recorded_scoring_fixture_sha256": recorded_scoring.fixture_sha256,
                 "synthetic_period_document_sha256": sha256(
                     period_document.canonical_json().encode()
                 ).hexdigest(),
@@ -256,7 +291,13 @@ def _seed_auction_scoring_profile(session: Session, *, auction_league_id: int) -
         source_payload_sha256=source_payload_sha256,
         observed_at=SEEDED_AT,
     )
-    derive_scoring_profile(session, league=league, activate=True)
+    profile = derive_scoring_profile(session, league=league, activate=True)
+    if profile.scoring_type != recorded_scoring.scoring_type:
+        raise DemoSeedRefused(
+            f"the composed scoring profile derived {profile.scoring_type.value}, while "
+            f"the first synthetic projection import declared "
+            f"{recorded_scoring.scoring_type.value}; refusing incoherent demo provenance"
+        )
 
 
 def looks_like_a_previous_demo_seed(session: Session) -> bool:

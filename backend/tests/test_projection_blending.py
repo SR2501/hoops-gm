@@ -44,6 +44,8 @@ from hoops_gm.projections.blending import (
     define_blend_profile,
     release_projection_import,
 )
+from hoops_gm.scoring.profiles import NINE_CATEGORY_DEFINITIONS
+from hoops_gm.valuation.zscore import score_production_zscores
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
 SEASON = "2026-27"
@@ -222,6 +224,83 @@ def _source_values(
 ) -> dict[str, float | None]:
     return {
         "points_per_game": points,
+        "field_goals_made_per_game": fgm,
+        "field_goals_attempted_per_game": fga,
+        "free_throws_made_per_game": ftm,
+        "free_throws_attempted_per_game": fta,
+    }
+
+
+def _nine_category_scoring_profile(
+    session: Session,
+) -> tuple[League, LeagueScoringProfile]:
+    league = League(
+        name="Nine Category League",
+        season=SEASON,
+        scoring_type=ScoringType.H2H_EACH_CATEGORY,
+        team_count=1,
+        roster_size=1,
+    )
+    session.add(league)
+    session.flush()
+    snapshot = LeagueSettingsSnapshot(
+        league_id=league.id,
+        version=1,
+        schema_version="test-v1",
+        settings={},
+        source_summary={},
+        source_payload_sha256=_sha("nine-category-settings"),
+        observed_at=NOW,
+    )
+    session.add(snapshot)
+    session.flush()
+    profile = LeagueScoringProfile(
+        league_id=league.id,
+        name="default",
+        version=1,
+        scoring_type=ScoringType.H2H_EACH_CATEGORY,
+        settings_snapshot_id=snapshot.id,
+        active_league_id=league.id,
+    )
+    session.add(profile)
+    session.flush()
+    session.add_all(
+        LeagueScoringCategory(
+            profile_id=profile.id,
+            key=definition.key,
+            label=definition.label,
+            kind=definition.kind,
+            direction=definition.direction,
+            display_order=display_order,
+            numerator_stat=definition.numerator_stat,
+            denominator_stat=definition.denominator_stat,
+        )
+        for display_order, definition in enumerate(
+            NINE_CATEGORY_DEFINITIONS.values(),
+            start=1,
+        )
+    )
+    session.flush()
+    return league, profile
+
+
+def _nine_category_values(
+    *,
+    points: float,
+    fgm: float,
+    fga: float,
+    ftm: float,
+    fta: float,
+) -> dict[str, float | None]:
+    return {
+        "points_per_game": points,
+        "rebounds_per_game": 5,
+        "assists_per_game": 4,
+        "steals_per_game": 1,
+        "blocks_per_game": 1,
+        "three_pointers_made_per_game": 2,
+        "three_pointers_attempted_per_game": 3,
+        "turnovers_per_game": 2,
         "field_goals_made_per_game": fgm,
         "field_goals_attempted_per_game": fga,
         "free_throws_made_per_game": ftm,
@@ -718,3 +797,155 @@ def test_scoring_profile_change_makes_existing_blend_stale(session: Session) -> 
 
     with pytest.raises(StaleProjectionInputError, match="not active"):
         activate_blend_profile(session, catalog, profile)
+
+
+def test_real_producer_output_crosses_the_zscore_integrity_boundary(
+    session: Session,
+) -> None:
+    league, scoring = _nine_category_scoring_profile(session)
+    first = _player(session, "First Nine Cat Player")
+    second = _player(session, "Second Nine Cat Player")
+    projection_import = _projection_import(
+        session,
+        source=ExternalSource.MANUAL,
+        players={
+            first.id: _nine_category_values(
+                points=10,
+                fgm=0,
+                fga=0,
+                ftm=0,
+                fta=0,
+            ),
+            second.id: _nine_category_values(
+                points=20,
+                fgm=5,
+                fga=5,
+                ftm=4,
+                fta=4,
+            ),
+        },
+    )
+    release = release_projection_import(
+        session,
+        import_id=projection_import.id,
+        source=ExternalSource.MANUAL,
+    )
+    weights = {key: {ExternalSource.MANUAL: 1} for key in NINE_CATEGORY_DEFINITIONS}
+    _catalog, profile = define_blend_profile(
+        session,
+        BlendCatalog(),
+        league_id=league.id,
+        name="default",
+        scoring_profile_id=scoring.id,
+        sources=(release,),
+        category_weights=weights,
+    )
+    blended = blend_projections(session, profile)
+
+    result = score_production_zscores(
+        league=league,
+        blend_profile=profile,
+        blend_result=blended,
+    )
+
+    assert result.input_kind == "production_blend"
+    assert result.blend_profile_content_sha256 == profile.content_sha256
+    assert result.blend_result_content_sha256 == blended.content_sha256
+    assert result.reference_count == 2
+
+
+@pytest.mark.parametrize(
+    ("made_field", "attempted_field"),
+    [
+        ("field_goals_made_per_game", "field_goals_attempted_per_game"),
+        ("free_throws_made_per_game", "free_throws_attempted_per_game"),
+    ],
+)
+def test_projection_release_refuses_values_below_the_old_tolerance_edge(
+    session: Session,
+    made_field: str,
+    attempted_field: str,
+) -> None:
+    _league, _scoring = _nine_category_scoring_profile(session)
+    player = _player(session, f"Invalid {made_field}")
+    values = _nine_category_values(points=10, fgm=1, fga=1, ftm=1, fta=1)
+    values[made_field] = 1.0005
+    values[attempted_field] = 1
+    projection_import = _projection_import(
+        session,
+        source=ExternalSource.MANUAL,
+        players={player.id: values},
+    )
+
+    with pytest.raises(InvalidBlendProfileError, match="makes greater than attempts"):
+        release_projection_import(
+            session,
+            import_id=projection_import.id,
+            source=ExternalSource.MANUAL,
+        )
+
+
+@pytest.mark.parametrize(
+    ("category_key", "made_field", "attempted_field"),
+    [
+        (
+            "fg_pct",
+            "field_goals_made_per_game",
+            "field_goals_attempted_per_game",
+        ),
+        (
+            "ft_pct",
+            "free_throws_made_per_game",
+            "free_throws_attempted_per_game",
+        ),
+    ],
+)
+def test_manual_override_refuses_values_below_the_old_tolerance_edge(
+    session: Session,
+    category_key: str,
+    made_field: str,
+    attempted_field: str,
+) -> None:
+    league, scoring, player, manual, monster = _setup(session)
+    releases = (
+        release_projection_import(
+            session,
+            import_id=manual.id,
+            source=ExternalSource.MANUAL,
+        ),
+        release_projection_import(
+            session,
+            import_id=monster.id,
+            source=ExternalSource.BASKETBALL_MONSTER,
+        ),
+    )
+    override = ManualProjectionOverride(
+        override_id=f"invalid-{category_key}",
+        league_id=league.id,
+        season=SEASON,
+        player_id=player.id,
+        category_key=category_key,
+        values=tuple(
+            sorted(
+                (
+                    (made_field, Fraction(2001, 2000)),
+                    (attempted_field, Fraction(1)),
+                )
+            )
+        ),
+        actor="owner",
+        reason="physical-boundary regression",
+        created_at=NOW,
+    )
+
+    with pytest.raises(InvalidBlendProfileError, match="makes greater than attempts"):
+        define_blend_profile(
+            session,
+            BlendCatalog(),
+            league_id=league.id,
+            name="default",
+            scoring_profile_id=scoring.id,
+            sources=releases,
+            category_weights=_weights(),
+            manual_overrides=(override,),
+        )

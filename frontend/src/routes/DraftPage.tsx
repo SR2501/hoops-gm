@@ -1,16 +1,13 @@
 /**
  * The draft board — the screen the owner has open during his auction.
  *
- * **It recommends nothing.** No valuation, no suggested price, no inflation
- * figure, no `p(play)`, no ranking, no tiers, no value column. Those are
- * `quant`'s and every one of them is blocked upstream on work that has not
- * happened. The API publishes no decision numbers at all — verified by a
- * reviewer walking all 26 OpenAPI models and 67 fields against a list of 30
- * forbidden terms — so every number on this screen came out of a response
- * field, and this screen is not the layer that reintroduces them. The one piece
- * of arithmetic anywhere near it, `remaining_budget = budget - spent`, is the
- * backend's own identity over recorded facts and is passed through as the
- * string it arrived as.
+ * **It recommends nothing.** The production-only, source-relative ranking now
+ * lives on a linked sibling evidence route; no score, valuation, suggested
+ * price, inflation figure, `p(play)`, tier, or value column is joined into this
+ * recorded board. Every number here remains a recorded fact or a backend
+ * identity over recorded facts. The one piece of arithmetic anywhere near it,
+ * `remaining_budget = budget - spent`, is the backend's own subtraction and is
+ * passed through as the string it arrived as.
  *
  * ## Polling, and why there is no stream
  *
@@ -232,11 +229,11 @@ const DraftBoardView = memo(function DraftBoardView({
         <h1>{state.name}</h1>
         <p className="page__lede">
           A record of what happened, derived from an append-only log on every read.{' '}
-          <strong>This screen recommends nothing.</strong> There is no valuation, no suggested
-          price, no inflation figure and no availability estimate here, because none of them exist
-          yet — see <code>docs/decisions/ADR-002-production-vs-availability.md</code>. Every number
-          below is either something that was recorded or the backend&apos;s own subtraction over
-          things that were recorded.
+          <strong>This screen recommends nothing.</strong> Production-only source-relative scores
+          live on the linked evidence route below; no score, suggested price, inflation figure, or
+          availability estimate is joined into this recorded board. Every number below is either
+          something that was recorded or the backend&apos;s own subtraction over things that were
+          recorded.
         </p>
         <ul className="page__facts">
           <li>
@@ -260,6 +257,16 @@ const DraftBoardView = memo(function DraftBoardView({
               League category table
             </Link>{' '}
             — every seat ranked 1-to-N in each category, on published per-game rates only
+          </li>
+          <li>
+            <Link
+              to={`/draft/${String(state.id)}/production-candidates`}
+              data-testid="draft-production-candidates-link"
+            >
+              Production-only rankings
+            </Link>{' '}
+            — the undrafted source pool scored by the production engine, with full evidence and no
+            availability fusion or draft strategy
           </li>
         </ul>
         {state.notes !== null ? <p className="page__note">{state.notes}</p> : null}
