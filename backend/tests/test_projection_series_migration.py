@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 
 from hoops_gm.db.base import Base
 from hoops_gm.db.session import enable_sqlite_foreign_keys
@@ -245,7 +245,7 @@ def test_populated_upgrade_preserves_every_column_and_constraints(
         original = before["projection_imports"][0]
         with pytest.raises(IntegrityError), connection.begin_nested():
             connection.execute(imports.insert(), {**original, "id": 20})
-        for number, key in enumerate(("josh", "bonus"), start=21):
+        for number, key in enumerate(("josh", "bonus", "x" * 64), start=21):
             connection.execute(
                 imports.insert(),
                 {
@@ -255,11 +255,40 @@ def test_populated_upgrade_preserves_every_column_and_constraints(
                     "series_display_name": key.title(),
                 },
             )
+        for key in ("", "x" * 65):
+            postgres_overlength = engine.dialect.name == "postgresql" and len(key) > 64
+            expected_error = DataError if postgres_overlength else IntegrityError
+            with pytest.raises(expected_error) as rejected, connection.begin_nested():
+                connection.execute(
+                    imports.insert(),
+                    {
+                        **original,
+                        "id": 30,
+                        "series_key": key,
+                        "series_display_name": "Length boundary",
+                    },
+                )
+            if postgres_overlength:
+                assert getattr(rejected.value.orig, "sqlstate", None) == "22001"
+            elif engine.dialect.name == "sqlite":
+                assert (
+                    str(rejected.value.orig)
+                    == "CHECK constraint failed: ck_projection_imports_series_key_length"
+                )
+            else:
+                assert getattr(rejected.value.orig, "sqlstate", None) == "23514"
+                diagnostic = getattr(rejected.value.orig, "diag", None)
+                assert (
+                    getattr(diagnostic, "constraint_name", None)
+                    == "ck_projection_imports_series_key_length"
+                )
         for changes in (
-            {"series_key": ""},
-            {"series_key": "x" * 65},
-            {"series_key": "josh", "series_display_name": None},
-            {"series_key": "legacy", "series_display_name": "Josh"},
+            {"series_key": "missing-label", "series_display_name": None},
+            {
+                "series_key": "legacy",
+                "series_display_name": "Josh",
+                "content_sha256": "c" * 64,
+            },
             {"series_key": "new", "series_display_name": " "},
             {"source_id": 999},
             {"profile_version_id": 999},

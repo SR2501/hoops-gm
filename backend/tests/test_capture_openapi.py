@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import sys
 import tempfile
+from http import HTTPStatus
 from pathlib import Path
 from types import ModuleType
 
@@ -81,14 +83,32 @@ def test_served_document_uses_disposable_pairing_storage(
     assert not reads[0].parent.exists()
 
 
+@pytest.mark.parametrize(
+    "reason_phrase",
+    [
+        pytest.param("Unprocessable Entity", id="historical"),
+        pytest.param("Unprocessable Content", id="current"),
+    ],
+)
 def test_committed_recording_matches_the_served_document(
     monkeypatch: pytest.MonkeyPatch,
+    reason_phrase: str,
 ) -> None:
     module = _load_script()
     monkeypatch.setenv("LOG_LEVEL", "NOT_A_LEVEL")
     monkeypatch.setenv("PORT", "not-a-port")
     monkeypatch.setenv("CORS_ORIGINS", "not-json")
+    monkeypatch.setattr(HTTPStatus(422), "phrase", reason_phrase)
+    # FastAPI reads http.client's cached mapping rather than the enum at schema time.
+    monkeypatch.setitem(http.client.responses, 422, reason_phrase)
 
     recorded = module._read_round_trippable(module.RECORDING)
+    served = module._served_openapi()
+    for path in (
+        "/api/v1/drafts/{draft_id}/projection-series",
+        "/api/v1/leagues/{league_id}/projections/series",
+    ):
+        description = served["paths"][path]["get"]["responses"]["422"]["description"]
+        assert description == "Unprocessable Content"
 
-    assert module._compare(recorded, module._served_openapi()).clean
+    assert module._compare(recorded, served).clean

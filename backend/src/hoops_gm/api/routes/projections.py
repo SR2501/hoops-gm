@@ -908,7 +908,13 @@ def get_current_projections(
 @router.get(
     "/series",
     response_model=ProjectionSeriesCatalog,
-    responses={status: {"model": ErrorResponse} for status in (400, 403, 404, 409, 422)},
+    responses={
+        400: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse, "description": "Unprocessable Content"},
+    },
     summary="Recorded forecast series for this league; inventory is not release approval",
 )
 def get_projection_series(
