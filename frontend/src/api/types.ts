@@ -10,6 +10,12 @@
  * Keep in step with `backend/src/hoops_gm/api/schemas.py`.
  */
 
+import type { ProductionCandidateSource } from './productionCandidatesTypes'
+import type {
+  PROJECTION_RELEASE_SCHEMA_VERSION,
+  ProjectionSeriesDescriptor,
+} from './projectionSeriesTypes'
+
 export interface Health {
   status: 'ok'
   service: string
@@ -344,7 +350,9 @@ export type ProjectionRateField = (typeof PROJECTION_RATE_FIELDS)[number]
  */
 export interface ProjectionImportLineage {
   import_id: number
-  source: string
+  source: ProductionCandidateSource
+  series_key: string
+  release_schema_version: typeof PROJECTION_RELEASE_SCHEMA_VERSION
   season: string
   imported_at: string
   content_sha256: string
@@ -472,7 +480,9 @@ export interface SourceGamesPlayedClaim {
 export interface CurrentProjections {
   league_id: number
   season: string
-  source: string
+  source: ProductionCandidateSource
+  source_display_name: string
+  series: ProjectionSeriesDescriptor
   lineage: ProjectionLineage
   players: ProjectionPlayer[]
   projections: ProjectionRates[]

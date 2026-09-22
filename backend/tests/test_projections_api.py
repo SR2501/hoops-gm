@@ -839,7 +839,7 @@ def test_a_selector_that_disagrees_with_canonical_currency_is_refused(
     monkeypatch.setattr(
         projections_route,
         "_current_import_candidate",
-        lambda session, *, source_id, season: superseded_id,
+        lambda session, *, source_id, season, series_key=None: superseded_id,
     )
     response = client.get(PROJECTIONS_URL.format(league_id=seeded))
 

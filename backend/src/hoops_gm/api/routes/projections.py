@@ -92,6 +92,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
+from hoops_gm.api.projection_series import (
+    ProjectionReleaseSchema,
+    ProjectionSeriesCatalog,
+    ProjectionSeriesDescriptor,
+    SeriesKeyDep,
+    select_current_import,
+    series_catalog,
+    series_descriptor_out,
+)
 from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.db.models.enums import ExternalSource, ScoringType
@@ -103,6 +112,7 @@ from hoops_gm.db.models.projections import (
     ProjectionSource,
     SourceGamesPlayedAssumption,
 )
+from hoops_gm.db.projection_series import InvalidProjectionSeriesError, describe_series
 from hoops_gm.ingest.projections.profiles import CANONICAL_STAT_FIELDS, PROJECTION_IMPORT_SOURCES
 from hoops_gm.projections.blending import (
     MissingProjectionDataError,
@@ -152,6 +162,8 @@ class ProjectionImportLineage(BaseModel):
 
     import_id: int
     source: ExternalSource
+    series_key: str
+    release_schema_version: ProjectionReleaseSchema
     season: str
     imported_at: datetime
     content_sha256: str
@@ -331,6 +343,8 @@ class CurrentProjectionsResponse(BaseModel):
     league_id: int
     season: str
     source: ExternalSource
+    source_display_name: str
+    series: ProjectionSeriesDescriptor
     lineage: ProjectionLineage
     players: list[ProjectionPlayer]
     projections: list[ProjectionRates]
@@ -399,25 +413,24 @@ def _projection_source_id(session: Session, *, source: ExternalSource) -> int | 
     return session.scalar(select(ProjectionSource.id).where(ProjectionSource.source == source))
 
 
-def _current_import_candidate(session: Session, *, source_id: int, season: str) -> int | None:
+def _current_import_candidate(
+    session: Session, *, source_id: int, season: str, series_key: str | None = None
+) -> int | None:
     """Propose the import this response should describe.
 
     Deliberately a *selector*, not a verifier. It proposes the newest import for
-    one source and season; ``release_projection_import`` is the arbiter and
-    rejects the proposal with ``StaleProjectionInputError`` if it disagrees. So
+    one source, season and explicitly resolved series. ``release_projection_import``
+    is the arbiter and rejects the proposal with ``StaleProjectionInputError`` if it disagrees. So
     if the canonical definition of "current" ever changes underneath this
     function, the endpoint fails closed with ``projections_not_current`` rather
     than serving an import the rest of the pipeline considers superseded.
     """
 
-    return session.scalar(
-        select(ProjectionImport.id)
-        .where(
-            ProjectionImport.source_id == source_id,
-            ProjectionImport.season == season,
-        )
-        .order_by(ProjectionImport.imported_at.desc(), ProjectionImport.id.desc())
-        .limit(1)
+    source = session.scalar(select(ProjectionSource.source).where(ProjectionSource.id == source_id))
+    if source is None:
+        return None
+    return select_current_import(
+        session, source=source, season=season, series_key=series_key, surface="projections"
     )
 
 
@@ -732,6 +745,7 @@ def get_current_projections(
     league_id: int,
     session: SessionDep,
     request: Request,
+    series_key: SeriesKeyDep,
     source: ExternalSource = Query(
         default=DEFAULT_PROJECTION_SOURCE,
         description="Registered projection CSV source to read. Defaults to Basketball Monster.",
@@ -764,6 +778,14 @@ def get_current_projections(
     # which observes a cohort that moved rather than assuming one cannot.
     source_id = _projection_source_id(session, source=source)
     if source_id is None:
+        if series_key is not None:
+            select_current_import(
+                session,
+                source=source,
+                season=response_season,
+                series_key=series_key,
+                surface="projections",
+            )
         raise _error(
             409,
             "projections_source_not_imported",
@@ -771,7 +793,9 @@ def get_current_projections(
             f"{source.value} CSV for season {response_season!r} first",
         )
 
-    import_id = _current_import_candidate(session, source_id=source_id, season=response_season)
+    import_id = _current_import_candidate(
+        session, source_id=source_id, season=response_season, series_key=series_key
+    )
     if import_id is None:
         raise _error(
             409,
@@ -805,7 +829,12 @@ def get_current_projections(
             ProjectionImport.needs_review_count,
             ProjectionImport.unmatched_count,
             ProjectionImport.rejected_count,
-        ).where(ProjectionImport.id == import_id)
+            ProjectionImport.series_key,
+            ProjectionImport.series_display_name,
+            ProjectionSource.display_name,
+        )
+        .join(ProjectionSource, ProjectionSource.id == ProjectionImport.source_id)
+        .where(ProjectionImport.id == import_id)
     ).first()
     if audit is None:
         # Same code as a superseded import because the caller's action is
@@ -816,16 +845,43 @@ def get_current_projections(
             f"projection import {import_id} disappeared while it was being read",
         )
     _assert_cohort_is_stable(session, rows=rows, released=released, source=source)
+    if audit.series_key != released.series_key:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            "The displayed forecast series no longer matches its released import.",
+        )
+    try:
+        series = describe_series(audit.series_key, audit.series_display_name)
+    except InvalidProjectionSeriesError as exc:
+        raise _error(409, "projections_incomplete_evidence", str(exc)) from exc
+    current_id = select_current_import(
+        session,
+        source=source,
+        season=response_season,
+        series_key=series_key,
+        surface="projections",
+    )
+    if current_id != released.import_id:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            "The selected series import moved while the response was being assembled.",
+        )
     # --- end of the bracketed region.
 
     return CurrentProjectionsResponse(
         league_id=response_league_id,
         season=response_season,
         source=source,
+        source_display_name=audit.display_name,
+        series=series_descriptor_out(series),
         lineage=ProjectionLineage(
             projection_import=ProjectionImportLineage(
                 import_id=released.import_id,
                 source=released.source,
+                series_key=released.series_key,
+                release_schema_version=released.release_schema_version,
                 season=released.season,
                 imported_at=released.imported_at,
                 content_sha256=released.content_sha256,
@@ -847,3 +903,32 @@ def get_current_projections(
         projections=[_rates(row) for row in rows],
         source_games_played_assumptions=claims,
     )
+
+
+@router.get(
+    "/series",
+    response_model=ProjectionSeriesCatalog,
+    responses={status: {"model": ErrorResponse} for status in (400, 403, 404, 409, 422)},
+    summary="Recorded forecast series for this league; inventory is not release approval",
+)
+def get_projection_series(
+    league_id: int,
+    session: SessionDep,
+    request: Request,
+    source: ExternalSource = Query(default=DEFAULT_PROJECTION_SOURCE),
+) -> ProjectionSeriesCatalog:
+    require_loopback_host(
+        request,
+        error_code="projections_local_only",
+        detail="Imported projections are only served to the local machine.",
+    )
+    if source not in PROJECTION_IMPORT_SOURCES:
+        raise _error(
+            400,
+            "projections_source_unsupported",
+            f"{source.value!r} is an identity-anchor namespace, not a projection CSV source",
+        )
+    league = session.get(League, league_id)
+    if league is None:
+        raise _error(404, "projections_league_not_found", f"no league {league_id}")
+    return series_catalog(session, league=league, source=source)

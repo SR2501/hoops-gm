@@ -47,6 +47,29 @@ headers in transformation lineage.
 
 ## Drift and failure behavior
 
+### Forecast series are not parser profiles
+
+Explicit `--series-key josh` and `--series-key bonus` label separate forecast
+series while retaining `basketball_monster` as the sole publisher/player-ID
+namespace. `--series-display-name` is operator-declared metadata, not vendor
+authentication or parsing evidence. The profile, header/units contract,
+verified season and acquisition rules below are unchanged.
+
+Existing imports without a declaration remain **Unspecified legacy series**;
+their variant cannot be inferred from filename or profile. Import/read omission
+refuses when several series are recorded for the requested provider/season.
+Each selected series releases its newest candidate or refuses it, with no
+older/other-series fallback. Exact-file replay preserves its own import ID,
+time and omitted label, rather than borrowing the newest label. Named imports
+do not change the provider scoring default.
+
+See [explicit series selection](../projection-series.md) for the complete
+import/release/API and migration contract. Synthetic series fixtures exercise
+the existing parser; they do not admit a private export or establish
+Josh/Bonus/current-BBM forecast calibration.
+
+### Existing parsing refusals
+
 Header spelling, header order, a missing required row value, an invalid finite
 number, zero/missing games for a season-total conversion, duplicate source ids,
 or impossible makes/attempts rejects the affected row or the whole contract

@@ -53,7 +53,10 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 | `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
-| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null` — see below. Fails closed with one of eight typed codes, of which **`projections_inconsistent_cohort` is the only retryable one**: retry once and keep the last good payload on screen rather than clearing the view. **A client must not multiply a rate by `assumed_games_played`:** that number is the exact divisor the importer used to produce the rates, so the product recovers the source's published seasonal total to within floating-point rounding, and that fusion is permitted only at `expected-games`. Display it; do not compute with it. |
+| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort within the selected series for the league's season (`?source=` defaults to Basketball Monster; `&series_key=josh` selects a declared series). Omitted multi-series selections refuse. Includes exact import/profile fingerprints and separate source games-played assumptions (ADR-002 — never inside a rate). Descriptive only: no blend, valuation, ranking or availability fusion; `lineage.blend` is always `null`. **`projections_inconsistent_cohort` is the only retryable code**: retry once and retain a whole last-good payload only within the same scope. **Do not multiply a rate by `assumed_games_played`:** that recovers the published total, a fusion permitted only at `expected-games`. |
+| `GET /api/v1/leagues/{league_id}/projections/series` | Loopback-only. Recorded series inventory, with the latest exact import metadata for each key; not release admission or scoring. |
+| `GET /api/v1/drafts/{draft_id}/projection-series` | Loopback-only. Series inventory for the recorded draft's actual league/season and required `source`. |
+| `GET /api/v1/drafts/{draft_id}/production-candidates` | Loopback-only. Production-relative candidates within an optional `series_key`, with required `source`. See [`../docs/production-candidates.md`](../docs/production-candidates.md). |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -346,6 +349,18 @@ database refused, nothing written · **`5` imported, and the cohort is smaller
 than the file**. `5` exists because the alternative is exit `0` on an import
 where a hundred players silently failed to match.
 
+For already-authorized inputs, declare distinct forecasts with
+`--series-key josh --series-display-name Josh` or
+`--series-key bonus --series-display-name Bonus`; both retain the existing
+`basketball_monster` player-ID namespace. Omission works for a single recorded
+series but refuses when the requested provider/season has several. Existing
+unspecified imports remain `legacy`, not inferred Josh/Bonus. Named declarations
+do not update the provider's scoring default. The summary includes exact import
+ID and series lineage; an old identical-file replay retains its own ID/time/label.
+See [`../docs/projection-series.md`](../docs/projection-series.md) for replay,
+migration, currentness, release-domain/hash compatibility and typed errors.
+These flags do not grant paid-file admission or relax units/profile verification.
+
 ## Why the projections endpoint takes no lock
 
 It reads `projection_sources`, `projection_imports`, `projections`, `players`
@@ -405,14 +420,14 @@ is not promised is freshness, and what is not *measured* is how often a
 PostgreSQL deployment answers 409 in regime 3 — no real server was available. A
 caller needing "latest" re-requests and compares `projection_values_sha256`.
 
-**`projections_inconsistent_cohort` is retryable.** It is the only one of the
-eight that is. A client should retry once and **keep the last good payload on
-screen rather than clearing the view** — an empty draft board mid-auction is
+**`projections_inconsistent_cohort` is retryable.** It is the only retryable code.
+A client should retry once and **keep the last good payload on
+screen for the same resource/season/provider/series scope** — an empty draft board mid-auction is
 worse than a slightly stale one. (One member of that code, an orphaned
 `player_id`, is not retryable, but a foreign key makes it unreachable through the
-route; it is driven directly against the helper.) The other seven are terminal
-and need a human: import a CSV, fix the crosswalk, re-import under a verified
-profile.
+route; it is driven directly against the helper.) Other errors are terminal
+and need correction, including an explicit series choice where required.
+A scope switch is cold: never relabel retained Josh rows as Bonus.
 
 ## Why the projections endpoint serves no blend
 

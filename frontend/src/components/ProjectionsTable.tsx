@@ -1,7 +1,7 @@
 /**
  * The imported projection cohort: one row per player, sixteen per-game rates.
  *
- * **Everything on this screen is Basketball Monster's number, not ours.** No
+ * **Everything on this screen is the selected source's number, not ours.** No
  * ranking, no valuation, no z-score or G-score, no availability weighting, no
  * "who should I draft". Those are `quant`'s behind the Model gate, and a number
  * we did not compute must never look like one we did.
@@ -23,6 +23,7 @@
  * backstop.
  */
 
+import { productionSourceLabel } from '../api/productionCandidatesLabels'
 import type {
   AssumptionState,
   ProjectionRow,
@@ -65,7 +66,7 @@ export function ProjectionsTable({
         data-testid="projections-table"
       >
         <caption className="grid__caption">
-          Basketball Monster&apos;s published per-game rates for the {model.season} season,
+          {model.sourceDisplayName} · {model.series.display_name}: per-game rates for the {model.season} season,
           exactly as imported.{' '}
           <strong className="grid__caption-caveat">These are not our numbers.</strong> Nothing
           here is ranked, valued or adjusted for availability, and no shooting percentage is
@@ -114,12 +115,12 @@ export function ProjectionsTable({
             ))}
             <SortableHeader
               label="Source GP"
-              accessibleLabel="Basketball Monster source games played"
+              accessibleLabel={`${productionSourceLabel(model.source)} source games played`}
               sortKey="source_games_played"
               sort={sort}
               onSort={onSort}
               className="projections__assumption-head"
-              title="What Basketball Monster assumed about games played. Displayed, never multiplied by a rate."
+              title="What the selected source assumed about games played. Displayed, never multiplied by a rate."
             />
           </tr>
         </thead>

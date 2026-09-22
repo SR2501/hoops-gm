@@ -40473,3 +40473,267 @@ yet run against a published delivery branch. The two documented skipped
 properties remain unverified locally. Private projection-file admission is a
 separate ongoing unit: no real import, new score, study, live-account action
 or ADR acceptance occurred in this closure.
+
+---
+
+**Historical checkpoint, not current status:** The expandable record below
+is the exact earlier 18 September closure/launch assessment, prepared before
+the separately issued quant agreement and candidate implementation release.
+Its contract-only/blocked statements describe that earlier checkpoint; the
+current entry following it records the later permissions and results. The
+private sealed source remains unchanged.
+
+<details>
+<summary>Earlier closure/launch record, preserved verbatim for chronology</summary>
+
+## 2026-09-18 - architect - merged delivery, narrow backup and bounded follow-on work
+
+**Delivery closed.** The owner authorized merging only the reviewed #182 head.
+It merged at 17:31:22 UTC as `34b98a23`; the merge tree equals the reviewed
+`41f844c1` delivery tree. Shared local `main`, HEAD and `origin/main` were aligned
+and clean. The inactive local main ref was fast-forwarded non-forcibly before
+switching, avoiding a temporary rollback of the retained preview's source.
+Stashes and trial tags were reported unchanged. The completed PR checks were
+24 successful jobs and two existing live-smoke skips, not a new scientific
+adjudication.
+
+**Merged-main CI is separately closed.** The coordinator read the actual
+`34b98a23` job sets: push CI run `35374840360` succeeded at 17:55:51 UTC
+(ten successful jobs and one existing live-smoke skip), and CodeQL run
+`35374839517` succeeded at 17:33:25 UTC (three successful jobs). These are not
+the prior PR rollup or a triggered rerun. This closes delivery-main CI, not
+the proposed successor's scientific gate.
+
+**A narrow backup now exists off-machine.** The scheduled attempt had failed
+before execution because the shared checkout was on the delivery branch.
+After the approved return to main, the existing retry exited zero and produced
+the `20260918-1733` copies. Both local destinations and the personal-Azure
+download were opened and read back with 43,037 participation rows, 26,651 game
+logs and 1,230 games. Workflow completion at 17:33:55.867 UTC is not asserted to
+be the exact script end. The receipt discloses temporary personal-subscription
+selection; the coordinator independently confirmed the original Azure CLI
+default restored at 17:38:33 UTC, without login. This protects the one-season
+ledger, not the full private scientific/intake/history bundle: R70 remains open.
+
+**Private reconciliation completed, still blocked.** The continuation used a
+real NBA-anchored reference and produced detached, unconfirmed name-review
+candidates, not assigned mappings. Zero persisted BBM links in that inspected
+store does not mean zero corresponding players or no mappings elsewhere.
+No normalization, import or score was produced; originals and zero-GP records
+were preserved. The sealed result and the precise inspected-material scope
+remain separately attributable.
+
+The owner subsequently attested that the two hash-bound files are their
+unmodified BBM 2026-27 Josh and Bonus exports respectively. This is later,
+attributable operator evidence, not independent vendor verification or units/
+mapping/import permission. Units and real canonical-link adjudication remain
+admission holds. It neither rewrites the sealed reconciliation nor turns
+unexamined material into a global absence claim. Article resaves still need
+actual receipts; no new identity export is mandated.
+
+**The code lane remains bounded.** One isolated code session was launched
+at `34b98a23` for explicit Josh/Bonus series selection. It is contract-only
+until coordinator review, followed by ordered specialist work. One subsequent
+branch/commit/push/PR is conditional on gates and independent review, not a
+merge. A separate detached prewarm checkout was observed, not dispatched as
+another feature lane, and left untouched.
+
+**The producer boundary is real.** The proposed release/currentness/lineage
+changes touch `projections/blending.py`, a member of the closed sixteen-file
+scientific source map and its exact approved formatting successor. A metadata
+label does not waive that binding. Implementation remains blocked pending a
+distinct non-formatting producer/release-lineage successor disposition,
+quant-owner agreement and the required independent review. Original evidence,
+guards and successor maps remain unchanged; no closed-outcome read or
+experiment rerun is authorized. This is not, by itself, a new owner-only gate.
+The full read-only plan names `projection-import-release-series-v1` and
+intentional new lineage hashes even for legacy releases; old objects are not
+silently retagged. An automatic plan-tool approval/mode response did not override
+the scientific hold: the child performed no edits and the parent restored plan
+mode. A separately scoped read-only quant-owner agreement is still needed before
+the coordinator can release candidate implementation.
+
+**Bookkeeping scope.** The private backlog delta corrects the stale production
+scorer delivery note and proposes closing only that delivered, limited
+production component. The broader strategy/budget/roster-aware draft shortlist
+remains pending. Series-selection planning is not that recommendation and is
+not implementation completion.
+
+**Evidence and custody.** The coordinator retains `merge-and-main-receipt.json`,
+`closure-and-fanout-receipt.json`, `merged-main-ci-receipt.json`, and the backup
+worker's saved stdout receipt.
+The central custodian retains the byte-preserved single executive history,
+`selector-frozen-boundary-20260918.json` and this private integration delta.
+Shared main stays clean for scheduled backup; shared documentation is to be
+integrated serially in the authorized code worktree at the coordinated checkpoint.
+
+**Could not verify.** This closeout did not rerun CI, backup, source admission
+or any study. Current CSV units, independently verified vendor provenance and
+actual identity admission,
+the not-yet-reviewed successor implementation, article completeness, and
+full-bundle off-machine recovery remain unestablished. The detached prewarm
+checkout's custody is not established. No paid acquisition, live-account
+action, availability fitting or ADR acceptance is included.
+
+</details>
+
+## 2026-09-18 - architect - projection-series candidate and qualified central integration
+
+**Changed:** Integrated only `docs\handoff.md` and `docs\backlog.md` in the
+approved `sr2501-projection-series-selection` worktree, with the coordinator's
+explicit two-file release. The earlier closure/launch record above is preserved
+verbatim as historical evidence, not a current implementation hold. The backlog
+now closes only the already-merged limited `zscore-engine` component from #182;
+the broader `draft-day-shortlist` remains pending. No other task marker,
+dependency, task entry, feature source, protected card or shared-main file is
+changed by this integration. Its derived header is recounted from the actual
+finished backlog, not copied from an earlier summary.
+
+**Later authority, separately attributable:** Quant-owner review agreed at PLAN
+level with binding prerequisites. After the 19:01:05 UTC predecessor preflight,
+the coordinator explicitly released bounded candidate implementation in the one
+approved worktree. That release superseded the earlier contract-only hold; it
+was not Model PASS, final evidence carry-forward, real-input admission or
+publication. The later owner choice permits one reviewed draft PR through
+existing CI after local checks and the required reviews/disposition, with
+PostgreSQL pending until actual CI execution. It does not permit a merge, new
+infrastructure or activation. No publication occurs in this documentation unit.
+
+**Now true, as an unpublished author candidate:** Projections and Production
+Candidates distinguish Josh, Bonus and truthful unspecified legacy series
+within the one Basketball Monster publisher/player-ID namespace. Currentness is
+newest within source, season and selected series, with exact selected import
+lineage visible. Ambiguous omission, invalid or unknown explicit selection and
+an invalid newest selected-series import refuse; no older-import or other-series
+fallback is introduced. This is neither historical-version pinning nor
+Josh+Bonus blending.
+
+Single-series omission preserves selection resolution only. Response schemas
+and strict-client compatibility intentionally change, and the
+`projection-import-release-series-v1` domain changes release/downstream lineage
+hashes even for legacy releases. Old releases are not silently retagged or
+rehashed. The paired backend/frontend contract uses the new namespace;
+`docs\projection-series.md` states the predecessor model-card boundary.
+
+The author records populated physical-revision-0023 descendant preservation,
+constraints and rollback on SQLite for migration 0024; PostgreSQL's populated
+path is wired into existing CI but has not executed. Named-import declarations
+do not overwrite publisher defaults; import -> provider -> null precedence,
+provider-wide identity authority and writer-lock scopes remain unchanged.
+Exact replay retains the original import ID, time and label. Pure profile
+integrity remains no-I/O. These are candidate claims with retained evidence,
+not an independent functional or scientific disposition.
+
+**Source and evidence custody:** Before these two document changes, the corrected
+candidate's raw tree identity was
+`10835e6f49598ff321be792e36566a674dc4412bf952674de604aacae8f79d91`,
+on unchanged HEAD `34b98a23806e20d1e0fe3b85b4a8fa8d94cd82fb`.
+The coordinator independently rehashed its complete repository and author-evidence
+inventories before releasing this window. The custodian also checked every bound
+repository member against that pre-central inventory before integration.
+Only `projection_blending` and its bound tests differ among the sixteen protected
+predecessor/successor members; the other fourteen, including model cards, are
+unchanged. No original experiment, accepted evidence or old source map is rewritten.
+This new document-bearing tree needs its own integrated review binding; the
+pre-central tree hash is not relabelled as the final review tree.
+
+**Author gates, with their actual scope:** The earlier backend run covers 621
+targeted SQLite cases; 29 Adapter cases are an overlapping subset, not an
+additional independent total. Its lint, format, strict typing and source-free
+OpenAPI checks retain their original execution identity. All 358 backend files
+and the other relevant producer/API/fixture bytes are unchanged by the later
+three-file frontend correction; that is the explicit carry-forward basis, not
+a new backend execution. Corrected frontend evidence reports 317 cases across
+15 changed test files plus lint, typecheck and build. None is a full-repository
+suite claim.
+
+Five genuine synthetic predecessor/successor importer/producer/API pairs report
+complete numerical agreement under closed scalar-lineage allowlists, including
+nonidentical overlapping cohorts and GP exclusion. The author executed them;
+reading and hashing the report did not independently replay or adjudicate them.
+The 37 original attributable semantic mutations, their exact restorations and
+excluded attempts remain separate from the later containment mutation and
+expanded-lineage correction. Synthetic equality is not current-vendor
+calibration, a new statistical study or successor Model approval.
+
+**Browser observation and correction:** The original 32 installed-Edge/React
+functional observations retain their original source/evidence identities.
+Transport delay, wrong-series substitution and a temporary page-clock control
+are disclosed diagnostics, not ordinary production traffic or elapsed time.
+Failed harness attempts remain retained and excluded.
+
+Inspection found the Projections table expanding the outer grid and clipping
+the new controls; expanded hashes then remained clipped after document
+containment. Only `ProjectionsPage.tsx`, its route test and scoped `styles.css`
+changed for `min-width: 0` and lineage `overflow-wrap: anywhere`. The additional
+source-class mutation belongs to the containment checkpoint, not the final
+wrapping CSS. Six narrow expanded-lineage failures precede the wrapping fix;
+the final 18 actual-browser cases cover both screens, all three series and
+375/390/1440 viewports with lineage open, reachable hashes, hit-testable selectors
+and usable internal scrolling. Response/table fingerprints stay unchanged,
+excluding only Candidates' `generated_at`. The earlier categorical
+"pre-existing" claim was withdrawn: HEAD React was not actually rendered, so
+historical introduction remains unresolved.
+
+**Runtime boundary:** At the release check, the coordinator found the recorded
+child processes absent and no native listeners on 8037/5197/9237; the existing
+parent preview on 8011/5181 remained. The retired child used exclusively owned
+synthetic resources, not the real store or parent preview. The original Edge
+launch requested a fresh owned profile, CWD and log but did not pin or record
+OS scratch/appdata. Its constant `existing_user_profiles_touched:false` is not
+a globally observed invariant. The preserved hardened launcher was not run and
+provides no retrospective containment proof. The coordinator accepted functional
+evidence with that limitation; no extra replay or full-OS-containment gate was
+invented. Application-store protections remain unchanged.
+
+**Later private-input qualification:** The sealed reconciliation's initial
+semantic search omitted two available texts; it was not exhaustive. The
+subsequent named-text and primary-source comparison is a separate addendum,
+not a rewrite of that result. One matched historical Josh forecast row supports
+the registered native-22 core season-total recipe, including minutes divided by
+source GP, using independently labelled per-game quantities. Its 13 target
+agreements share inputs and are not 13 independent examples. Percentages and
+points are derived; unsupported extras retain unknown units.
+
+Matching native headers plus the later operator attestation support conditional
+core-recipe reuse, not all-settings invariance, current-row verification or a
+second primary Bonus observation. The richer spreadsheet representation is not
+silently treated as the same recipe. Owner provenance is not vendor
+certification. Real canonical-link adjudication, explicit zero-GP handling and
+import authority remain separate; no current CSV normalization, mapping
+assignment, import or score occurred. No new export is required merely because
+the UI setting was forgotten, and zero links in one inspected reference is not
+proof that mappings are absent everywhere. Article resaves still need actual
+receipts; the narrow ledger backup does not close full-bundle recovery risk R70.
+
+**Durable bindings:** The coordinator's
+`standup-20260918\selector-central-integration-release.json`
+(`9e54f5dc1868572036ddcfd31968e72304d7d31508f97ca92575e2e5cde576eb`)
+names the exact write scope and independently checked custody.
+The author's `corrected-integration-ready.json`
+(`2064750038688a708badeadbe3af3d0374c5401c49569f8d5e65e63c03e26c4b`)
+maps old and corrected evidence; `evidence-inventory.json`
+(`9b5ea77013d72788925d9e7c9aba53861dd2b475fdeb25a24d742a63558080f9`)
+binds its retained artifacts. New integration receipts live separately with the
+central custodian, not under that sealed author root. The sealed proposal's
+blanket pending-zscore wording is explicitly qualified by the agreed limited
+predecessor closure, and its single-series compatibility claim is limited to
+omission resolution. Neither sealed record is edited.
+
+**Could not verify:** This documentation unit did not replay the candidate's
+author runs or independently adjudicate its functionality or numerical-method
+carry-forward. Exact integrated-candidate code/lineage review, named successor
+Model-impact disposition, actual PostgreSQL execution and publication remain
+pending. Full suites, current-vendor calibration, real-input admission, zero-GP
+recovery, article completeness, historical layout introduction, full browser/OS
+containment, other browser engines/physical devices and full-bundle off-machine
+recovery remain unestablished. No outcomes, study rerun, availability fit/fusion,
+strategy/top-k, pricing, paid acquisition, live-account action or ADR acceptance
+is authorized by this entry.
+
+**Next:** The custodian stops after the two-file integrity/document checks and
+returns the exact delta to the coordinator. The coordinator owns the newly
+integrated freeze, independent reviews, named Model-impact disposition and any
+later conditional draft-PR publication release. Shared main stays clean for the
+existing backup; the executive history, source writers and services are not
+changed by this unit. No commit, push, PR, merge or activation is performed here.

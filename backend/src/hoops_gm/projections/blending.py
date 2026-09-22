@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from fractions import Fraction
+from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,9 +31,17 @@ from sqlalchemy.orm import Session
 from hoops_gm.db.models.enums import CategoryKind, ExternalSource, ScoringType
 from hoops_gm.db.models.league import LeagueScoringCategory, LeagueScoringProfile
 from hoops_gm.db.models.projections import Projection, ProjectionImport
+from hoops_gm.db.projection_series import (
+    LEGACY_SERIES_KEY,
+    InvalidProjectionSeriesError,
+    describe_import_series,
+    validate_series_key,
+)
 from hoops_gm.ingest.projections.profiles import CANONICAL_STAT_FIELDS
 
 type WeightValue = Decimal | Fraction | float | int | str
+# A release-lineage domain, not a parsing-profile or numerical-model version.
+PROJECTION_RELEASE_SCHEMA_VERSION: Final = "projection-import-release-series-v1"
 _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _COUNTING_CATEGORY_FIELDS: Mapping[str, str] = {
     "pts": "points_per_game",
@@ -126,6 +135,9 @@ class ReleasedProjectionImport:
     projection_count: int
     assumed_scoring_type: ScoringType | None
     input_layer: BlendInputLayer = BlendInputLayer.PROJECTION_IMPORT
+    # New Python constructor defaults never authorize upgrading an old profile hash.
+    series_key: str = LEGACY_SERIES_KEY
+    release_schema_version: str = PROJECTION_RELEASE_SCHEMA_VERSION
 
 
 @dataclass(frozen=True)
@@ -267,6 +279,10 @@ def release_projection_import(
             f"{projection_import.source_row.source.value}, "
             f"not explicitly selected source {source.value}"
         )
+    try:
+        series = describe_import_series(projection_import)
+    except InvalidProjectionSeriesError as exc:
+        raise InvalidBlendProfileError(str(exc)) from exc
     _validate_verified_import(projection_import)
     _assert_import_is_current(session, projection_import)
     rows = _load_projection_rows(session, projection_import)
@@ -288,6 +304,8 @@ def release_projection_import(
         projection_values_sha256=values_sha256,
         projection_count=len(rows),
         assumed_scoring_type=effective_scoring_type,
+        series_key=series.key,
+        release_schema_version=PROJECTION_RELEASE_SCHEMA_VERSION,
     )
 
 
@@ -596,6 +614,7 @@ def _assert_import_is_current(session: Session, projection_import: ProjectionImp
         .where(
             ProjectionImport.source_id == projection_import.source_id,
             ProjectionImport.season == projection_import.season,
+            ProjectionImport.series_key == projection_import.series_key,
         )
         .order_by(ProjectionImport.imported_at.desc(), ProjectionImport.id.desc())
         .limit(1)
@@ -663,6 +682,14 @@ def _validate_and_load_release(
         raise LayerPurityError(
             f"blend source {release.import_id} declares forbidden layer {release.input_layer.value}"
         )
+    try:
+        validate_series_key(release.series_key)
+    except InvalidProjectionSeriesError as exc:
+        raise InvalidBlendProfileError(str(exc)) from exc
+    if release.release_schema_version != PROJECTION_RELEASE_SCHEMA_VERSION:
+        raise InvalidBlendProfileError(
+            f"projection import {release.import_id} declares an unsupported release schema version"
+        )
     projection_import = session.get(ProjectionImport, release.import_id)
     if projection_import is None:
         raise UnknownProjectionInputError(
@@ -684,6 +711,7 @@ def _validate_and_load_release(
         projection_import.profile_version,
         projection_import.profile_definition_sha256,
         effective_scoring_type,
+        projection_import.series_key,
     )
     released_identity = (
         release.source,
@@ -694,11 +722,16 @@ def _validate_and_load_release(
         release.profile_version,
         release.profile_definition_sha256,
         release.assumed_scoring_type,
+        release.series_key,
     )
     if identity != released_identity:
         raise StaleProjectionInputError(
             f"projection import {release.import_id} no longer matches its released lineage"
         )
+    try:
+        describe_import_series(projection_import)
+    except InvalidProjectionSeriesError as exc:
+        raise InvalidBlendProfileError(str(exc)) from exc
     rows = _load_projection_rows(session, projection_import)
     if len(rows) != release.projection_count:
         raise StaleProjectionInputError(
@@ -726,6 +759,15 @@ def _validate_source_selection(
     if len(source_ids) != len(set(source_ids)):
         raise InvalidBlendProfileError("a blend profile selects more than one import per source")
     for release in releases:
+        try:
+            validate_series_key(release.series_key)
+        except InvalidProjectionSeriesError as exc:
+            raise InvalidBlendProfileError(str(exc)) from exc
+        if release.release_schema_version != PROJECTION_RELEASE_SCHEMA_VERSION:
+            raise InvalidBlendProfileError(
+                f"projection import {release.import_id} declares an unsupported "
+                "release schema version"
+            )
         if release.input_layer is not BlendInputLayer.PROJECTION_IMPORT:
             raise LayerPurityError(
                 f"blend source {release.import_id} declares forbidden layer "
@@ -1227,6 +1269,8 @@ def _release_payload(release: ReleasedProjectionImport) -> dict[str, object]:
     return {
         "import_id": release.import_id,
         "source": release.source.value,
+        "series_key": release.series_key,
+        "release_schema_version": release.release_schema_version,
         "season": release.season,
         "imported_at": release.imported_at.astimezone(UTC).isoformat(),
         "content_sha256": release.content_sha256,

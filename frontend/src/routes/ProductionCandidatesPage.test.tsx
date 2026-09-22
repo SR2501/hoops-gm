@@ -6,6 +6,7 @@ import { RETRYABLE_PRODUCTION_CANDIDATES_ERROR } from '../api/productionCandidat
 import { PRODUCTION_CANDIDATE_SOURCES } from '../api/productionCandidatesTypes'
 import { requestUrl } from '../test/helpers'
 import { syntheticProductionCandidates } from '../test/productionCandidatesStub'
+import { withSingleSeriesCatalog } from '../test/projectionSeriesStub'
 import {
   ProductionCandidatesPage,
   PRODUCTION_CANDIDATES_POLL_INTERVAL_MS,
@@ -41,7 +42,7 @@ describe('ProductionCandidatesPage', () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL) =>
       Promise.resolve(response(syntheticProductionCandidates())),
     )
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
 
@@ -50,14 +51,14 @@ describe('ProductionCandidatesPage', () => {
     ).toBeInTheDocument()
     expect(await screen.findByTestId('production-candidates-table')).toBeInTheDocument()
     expect(requestUrl(fetchMock.mock.calls[0]![0])).toBe(
-      '/api/v1/drafts/2/production-candidates?source=basketball_monster',
+      '/api/v1/drafts/2/production-candidates?source=basketball_monster&series_key=legacy',
     )
   })
 
   it('labels all five choices as supported sources rather than available imports', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(response(syntheticProductionCandidates()))),
+      withSingleSeriesCatalog(vi.fn(() => Promise.resolve(response(syntheticProductionCandidates())))),
     )
     renderPage()
 
@@ -84,6 +85,7 @@ describe('ProductionCandidatesPage', () => {
     ['rounding unsafe integer', '9007199254740993'],
   ])('makes no request for an invalid %s draft id', async (_label, rawDraftId) => {
     const fetchMock = vi.fn()
+    // Count ALL I/O here: a catalog request for an invalid id is also a bug.
     vi.stubGlobal('fetch', fetchMock)
 
     renderPage(`/draft/${rawDraftId}/production-candidates`)
@@ -102,7 +104,7 @@ describe('ProductionCandidatesPage', () => {
       const fetchMock = vi.fn((_input: RequestInfo | URL) =>
         Promise.resolve(response(syntheticProductionCandidates({ draftId }))),
       )
-      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
       renderPage(`/draft/${rawDraftId}/production-candidates`)
 
@@ -113,7 +115,7 @@ describe('ProductionCandidatesPage', () => {
       ).toBeInTheDocument()
       expect(await screen.findByTestId('production-candidates-table')).toBeInTheDocument()
       expect(requestUrl(fetchMock.mock.calls[0]![0])).toBe(
-        `/api/v1/drafts/${rawDraftId}/production-candidates?source=basketball_monster`,
+        `/api/v1/drafts/${rawDraftId}/production-candidates?source=basketball_monster&series_key=legacy`,
       )
     },
   )
@@ -135,7 +137,7 @@ describe('ProductionCandidatesPage', () => {
           : response(syntheticProductionCandidates()),
       )
     })
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
 
@@ -156,7 +158,7 @@ describe('ProductionCandidatesPage', () => {
         ),
       ),
     )
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
 
@@ -184,7 +186,7 @@ describe('ProductionCandidatesPage', () => {
             ),
       )
     })
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
     expect(await screen.findByText('Zulu Player')).toBeInTheDocument()
@@ -233,7 +235,7 @@ describe('ProductionCandidatesPage', () => {
         ? Promise.resolve(response(basketballMonster))
         : lateBasketballMonster
     })
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
     expect(await screen.findByText('Initial BBM Player')).toBeInTheDocument()
@@ -268,7 +270,7 @@ describe('ProductionCandidatesPage', () => {
       const source = url.includes('source=darko') ? 'darko' : 'basketball_monster'
       return Promise.resolve(response(syntheticProductionCandidates({ source })))
     })
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
     renderPage()
     await screen.findByTestId('production-candidates-table')
@@ -281,7 +283,7 @@ describe('ProductionCandidatesPage', () => {
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(([input]) =>
-          requestUrl(input).endsWith('production-candidates?source=darko'),
+          requestUrl(input).endsWith('production-candidates?source=darko&series_key=legacy'),
         ),
       ).toBe(true)
     })

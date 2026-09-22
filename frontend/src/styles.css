@@ -3146,6 +3146,17 @@ a:focus-visible {
   min-width: 0;
 }
 
+/* Keep the wide rates table inside its scrollport rather than expanding the
+   outer grid item and clipping the Projections controls and import lineage. */
+.shell__main:has(.page--projections) {
+  min-width: 0;
+}
+
+/* Keep exact import digests readable inside the narrow lineage facts panel. */
+.page--projections .lineage__facts dd {
+  overflow-wrap: anywhere;
+}
+
 /* --- Recorded-draft production candidates -------------------------------- */
 
 /* The server publishes nine category components plus identity and evidence
@@ -3156,8 +3167,9 @@ a:focus-visible {
   max-width: 100rem;
 }
 
-.production-candidates__route-controls {
+.projection-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: var(--space-3);
   margin-top: var(--space-4);
@@ -3167,19 +3179,22 @@ a:focus-visible {
   background: var(--bg-raised);
 }
 
-.production-candidates__route-controls label {
+.projection-controls label {
   display: grid;
   flex: none;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-1);
 }
 
-.production-candidates__route-controls label span {
+.projection-controls label span {
   color: var(--text-muted);
   font-size: 0.75rem;
 }
 
-.production-candidates__route-controls select {
+.projection-controls select {
   min-width: 13rem;
+  max-width: min(100%, 28rem);
   padding: var(--space-2) var(--space-3);
   color: var(--text);
   background: var(--bg-sunken);
@@ -3188,20 +3203,52 @@ a:focus-visible {
   font: inherit;
 }
 
-.production-candidates__route-controls select:focus-visible {
+.projection-controls select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.production-candidates__route-controls p {
-  flex: 1;
+.projection-controls p {
+  flex: 1 1 22rem;
   margin: 0;
   color: var(--text-muted);
   font-size: 0.8rem;
 }
 
-.production-candidates__route-controls a {
+.projection-controls a {
   flex: none;
+}
+
+.projection-series__inventory {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.projection-series__inventory p {
+  flex: 1;
+  margin: 0;
+}
+
+.projection-series__inventory button {
+  flex: none;
+}
+
+.projection-release__summary {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow-wrap: anywhere;
+}
+
+.projection-release__summary p {
+  margin: var(--space-1) 0 0;
+  font-size: 0.8rem;
 }
 
 .production-candidates__scope {
@@ -3576,13 +3623,17 @@ a:focus-visible {
 }
 
 @media (max-width: 48rem) {
-  .production-candidates__route-controls {
+  .projection-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .production-candidates__route-controls select {
+  .projection-controls select {
     width: 100%;
+  }
+
+  .projection-controls p {
+    flex-basis: auto;
   }
 
   .production-candidates__context,

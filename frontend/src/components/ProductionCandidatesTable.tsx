@@ -75,6 +75,7 @@ export function ProductionCandidatesTable({
         <div className="production-candidates__scope-heading">
           <h2 id="production-candidates-scope-heading">
             Production-only · relative to the selected {productionSourceLabel(payload.source)} pool
+            {' '}· {payload.series.display_name}
           </h2>
           <dl
             className="production-candidates__source-provenance"
@@ -83,6 +84,13 @@ export function ProductionCandidatesTable({
             <div>
               <dt>Stored source label</dt>
               <dd>{payload.source_display_name}</dd>
+            </div>
+            <div>
+              <dt>Projection series</dt>
+              <dd>
+                {payload.series.display_name} · <code>{payload.series.key}</code>
+                {' '}· <code>{payload.series.provenance}</code>
+              </dd>
             </div>
             <div>
               <dt>Original filename</dt>
@@ -101,6 +109,7 @@ export function ProductionCandidatesTable({
             expected games, market prices, or availability-adjusted rankings. The stored publisher
             label and filename are display metadata, not independently verified publisher identity,
             authenticity proof, a source classifier, or numeric fingerprint inputs.
+            {' '}Series labels are operator declarations, not forecast calibration evidence.
           </p>
         </div>
 
@@ -108,11 +117,11 @@ export function ProductionCandidatesTable({
           <div>
             <dt>Source release</dt>
             <dd>
-              <code>{payload.source}</code> · season {payload.season} · import{' '}
+              <code>{payload.source}</code> · series <code>{payload.series.key}</code> · season {payload.season} · import{' '}
               {payload.lineage.projection_import.import_id}
             </dd>
             <dd>
-              Admitted{' '}
+              Imported{' '}
               <time dateTime={payload.lineage.projection_import.imported_at}>
                 {payload.lineage.projection_import.imported_at}
               </time>
@@ -172,7 +181,7 @@ export function ProductionCandidatesTable({
         <time dateTime={payload.lineage.projection_import.imported_at}>
           {payload.lineage.projection_import.imported_at}
         </time>{' '}
-        says when this application admitted the file; it is not a vendor as-of timestamp or
+        says when this application imported the file; it is not a vendor as-of timestamp or
         freshness validation. Frozen retrospective carry-forward evidence does not calibrate the
         currently selected vendor forecast.
       </div>
@@ -569,6 +578,8 @@ function LineageAndLimitations({ payload }: { payload: ProductionCandidatesRespo
         <section>
           <h3>Source and blend</h3>
           <dl className="facts">
+            <Fact label="Release contract" value={lineage.projection_import.release_schema_version} />
+            <Fact label="Series key" value={lineage.projection_import.series_key} />
             <Fact label="Import content" value={lineage.projection_import.content_sha256} />
             <Fact
               label="Projection values"

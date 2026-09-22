@@ -110,10 +110,14 @@ function cohort(
     league_id: 1,
     season: '2026-27',
     source: 'basketball_monster',
+    source_display_name: 'Basketball Monster (synthetic)',
+    series: { key: 'legacy', display_name: 'Unspecified legacy series', provenance: 'legacy_unspecified' },
     lineage: {
       projection_import: {
         import_id: 1,
         source: 'basketball_monster',
+        series_key: 'legacy',
+        release_schema_version: 'projection-import-release-series-v1',
         season: '2026-27',
         imported_at: '2026-08-27T00:00:00Z',
         content_sha256: 'a'.repeat(64),

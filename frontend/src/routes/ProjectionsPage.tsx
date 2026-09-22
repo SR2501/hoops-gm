@@ -1,8 +1,8 @@
 /**
- * Projections — the imported Basketball Monster cohort, with its lineage.
+ * Projections — the current import within an explicitly selected series.
  *
  * The draft board's first surface, and deliberately the smallest honest version
- * of one: every player Basketball Monster published, their per-game rates, and
+ * of one: every player in the selected import, their per-game rates, and
  * the fingerprints behind them.
  *
  * **What this screen is not, said out loud rather than left implied.** It is
@@ -16,22 +16,32 @@
  *
  * **The retry policy is the draft-day requirement, not a nicety.**
  * `projections_inconsistent_cohort` means a concurrent import moved the cohort;
- * it is the only retryable code of the eight and the board must not clear
+ * it is the only automatically retryable projections code and the board must not clear
  * itself when it arrives. Two independent things make that true: the retry
  * below, and `AsyncBoundary`'s warm path, which keeps the last good payload on
  * screen for *any* failed refresh. An empty board mid-auction is worse than a
  * slightly stale one.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { getCurrentProjections } from '../api/endpoints'
 import { describeProjectionsError, isRetryableProjectionsError } from '../api/projectionsErrors'
 import type { CurrentProjections } from '../api/types'
+import type { ProductionCandidateSource } from '../api/productionCandidatesTypes'
+import {
+  DEFAULT_PROJECTION_SOURCE,
+  projectionSeriesScopeKey,
+  type ProjectionSelection,
+} from '../api/projectionSeriesTypes'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
 import { ProjectionsBrowser } from '../components/ProjectionsBrowser'
 import { ProjectionLineagePanel } from '../components/ProjectionLineage'
 import { buildProjectionsModel } from '../components/projectionsModel'
+import {
+  ProjectionSeriesScope,
+  ProjectionSourceSelect,
+} from '../components/ProjectionSeriesControls'
 
 /**
  * The single league this build serves (ADR-001: one owner, one local league).
@@ -49,37 +59,71 @@ const LEAGUE_ID = 1
 export const STALE_AFTER_MS = 5 * 60_000
 
 export function ProjectionsPage() {
-  const projections = useAsync(
-    (options) => getCurrentProjections(LEAGUE_ID, options),
-    [],
-    { shouldRetry: isRetryableProjectionsError },
-  )
+  const [source, setSource] = useState<ProductionCandidateSource>(DEFAULT_PROJECTION_SOURCE)
 
   return (
-    <article className="page">
+    <article className="page page--projections">
       <header className="page__header">
         <h1>Projections</h1>
         <p className="page__lede">
-          Basketball Monster&apos;s published per-game rates, exactly as imported, with the
+          The selected source series&apos; per-game rates, exactly as imported, with the
           fingerprints behind them. <strong>These are their numbers, not ours.</strong> We have
           not computed our own projections yet, so there is nothing here to compare against —
           this screen shows one source and says where it came from. No ranking, no valuation, no
           availability adjustment. See{' '}
           <code>docs/decisions/ADR-002-production-vs-availability.md</code>.
         </p>
+        <div className="projection-controls">
+          <ProjectionSourceSelect source={source} onChange={setSource} />
+        </div>
       </header>
 
-      <AsyncBoundary
-        state={projections}
-        label="the imported projections"
-        staleAfterMs={STALE_AFTER_MS}
-        isEmpty={(data) => data.projections.length === 0}
-        emptyMessage="The current Basketball Monster import for this season carries no projection rows, so there is nothing to draw. That is a cohort with no players in it, not a failed request."
+      <ProjectionSeriesScope
+        key={projectionSeriesScopeKey('league', LEAGUE_ID, source)}
+        resource="league"
+        resourceId={LEAGUE_ID}
+        source={source}
         describeError={describeProjectionsError}
       >
-        {(data) => <ProjectionsView payload={data} />}
-      </AsyncBoundary>
+        {(selection) => (
+          <ProjectionsLoader
+            key={projectionSeriesScopeKey('league', LEAGUE_ID, source, selection)}
+            source={source}
+            selection={selection}
+          />
+        )}
+      </ProjectionSeriesScope>
     </article>
+  )
+}
+
+function ProjectionsLoader({
+  source,
+  selection,
+}: {
+  source: ProductionCandidateSource
+  selection: ProjectionSelection
+}) {
+  const projections = useAsync(
+    (options) => getCurrentProjections(selection.leagueId, {
+      ...options,
+      source,
+      seriesKey: selection.seriesKey,
+      expectedSeason: selection.season,
+    }),
+    [selection.leagueId, selection.season, source, selection.seriesKey],
+    { shouldRetry: isRetryableProjectionsError },
+  )
+
+  return (
+    <AsyncBoundary
+      state={projections}
+      label={`the imported projections for ${source} / ${selection.seriesKey}`}
+      staleAfterMs={STALE_AFTER_MS}
+      describeError={describeProjectionsError}
+    >
+      {(data) => <ProjectionsView payload={data} />}
+    </AsyncBoundary>
   )
 }
 
@@ -94,8 +138,17 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
     <>
       <ProjectionLineagePanel
         lineage={model.lineage}
+        series={model.series}
+        sourceDisplayName={model.sourceDisplayName}
         availableRateRowCount={model.rows.length}
       />
+
+      {payload.projections.length === 0 ? (
+        <p className="state state--empty">
+          The current import for this selected series carries no projection rows, so there is
+          nothing to draw. That is a cohort with no players in it, not a failed request.
+        </p>
+      ) : null}
 
       {!integrity.isConsistent ? (
         <p
@@ -157,7 +210,7 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
           <em>we</em> hold no label for this player. That is a different claim, and says nothing
           about what the source published, which is why it gets a different mark.
         </span>
-        <span className="grid__key-item">
+        {payload.source === 'basketball_monster' ? <span className="grid__key-item">
           {/* Scoped to the rate columns and to Source GP. An earlier version of
               this sentence said "a `·` should not appear" without qualification,
               and the fixture committed beside it disproved that immediately —
@@ -169,9 +222,9 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
           every rate shown here and a games-played figure, and a row missing any of them is
           rejected rather than stored. If one appears, something upstream has changed. This is
           about the rate columns and Source GP, not the Team and Pos labels.
-        </span>
+        </span> : null}
         <span className="grid__key-item">
-          <strong>Source GP</strong> is what Basketball Monster assumed about games played. It is
+          <strong>Source GP</strong> is what the selected source assumed about games played. It is
           shown so you can see the assumption our availability model will replace. It is{' '}
           <strong>not</strong> a rate, and multiplying a rate by it reconstructs the source&apos;s
           own season total: the fusion ADR-002 permits only at the expected-games seam, which is
@@ -189,7 +242,7 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
         </span>
       </p>
 
-      <ProjectionsBrowser model={model} />
+      {payload.projections.length > 0 ? <ProjectionsBrowser model={model} /> : null}
     </>
   )
 }

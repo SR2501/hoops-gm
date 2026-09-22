@@ -60,6 +60,10 @@ import {
   type ProductionScaleStatus,
 } from '../api/productionCandidatesTypes'
 import openapi from './fixtures/openapi.recorded.json'
+import {
+  PROJECTION_RELEASE_SCHEMA_VERSION,
+  PROJECTION_SERIES_PROVENANCES,
+} from '../api/projectionSeriesTypes'
 
 /** Ten seconds. Pure JSON comparison, no DOM, no network, no timers. */
 const TIMEOUT_MS = 10_000
@@ -71,6 +75,7 @@ interface OpenApiDocument {
       string,
       {
         enum?: unknown[]
+        const?: unknown
         properties?: Record<string, unknown>
         required?: string[]
         additionalProperties?: boolean
@@ -109,6 +114,7 @@ const MIRRORED: Record<string, readonly string[]> = {
   ScaleStatus: Object.keys(SCALE_STATUSES),
   ScoringType: PRODUCTION_SCORING_TYPES,
   SeasonType: PRODUCTION_SEASON_TYPES,
+  SeriesProvenance: PROJECTION_SERIES_PROVENANCES,
 }
 
 /**
@@ -120,7 +126,7 @@ const MIRRORED: Record<string, readonly string[]> = {
  */
 const NOT_MODELLED: Record<string, string> = {
   ExternalSource:
-    'The generic `CurrentProjections.source` remains a bare string. Production candidates declare a deliberately narrower supported-input vocabulary, not a mirror of every registered ExternalSource; it excludes NBA and Fantrax acquisition namespaces.',
+    'Projection screens use a deliberately narrower supported-input vocabulary, not every registered ExternalSource; NBA and Fantrax acquisition namespaces are not supported projection publishers.',
   RefreshArtifactType:
     'Belongs to the lineage endpoints, which no screen consumes yet. Unmodelled because unused, not because it was considered and rejected.',
 }
@@ -141,6 +147,20 @@ function everyEnumInDocument(): string[] {
 }
 
 describe('the recorded OpenAPI document', () => {
+  it('binds both numerical releases to the named release-schema const and required series', () => {
+    const schemas = document.components.schemas
+    expect(schemas.ProjectionReleaseSchema?.const).toBe(PROJECTION_RELEASE_SCHEMA_VERSION)
+    for (const name of ['ProjectionImportLineage', 'ProjectionImportLineageOut']) {
+      expect(schemas[name]?.properties?.release_schema_version).toEqual({
+        $ref: '#/components/schemas/ProjectionReleaseSchema',
+      })
+      expect(schemas[name]?.required).toEqual(expect.arrayContaining(['series_key', 'release_schema_version']))
+    }
+    for (const name of ['CurrentProjectionsResponse', 'ProductionCandidatesResponse']) {
+      expect(schemas[name]?.required).toContain('series')
+    }
+    expect(schemas.DraftProjectionSeriesCatalog?.required).toContain('draft_id')
+  })
   it(
     'is the document this backend serves, not an empty object that would pass everything',
     () => {

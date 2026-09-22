@@ -183,7 +183,9 @@ export interface ProjectionsModel {
    */
   lineage: ProjectionLineage
   season: string
-  source: string
+  source: CurrentProjections['source']
+  sourceDisplayName: string
+  series: CurrentProjections['series']
   rows: ProjectionRow[]
   /**
    * Rate rows the response *carried*, before duplicates were dropped.
@@ -478,6 +480,8 @@ export function buildProjectionsModel(payload: CurrentProjections): ProjectionsM
     lineage: payload.lineage,
     season: payload.season,
     source: payload.source,
+    sourceDisplayName: payload.source_display_name,
+    series: payload.series,
     rows,
     carriedRowCount: payload.projections.length,
     integrity,

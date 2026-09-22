@@ -18,6 +18,8 @@ import type {
   ProductionCategoryScale,
   ProductionRateField,
 } from '../api/productionCandidatesTypes'
+import { PROJECTION_RELEASE_SCHEMA_VERSION } from '../api/projectionSeriesTypes'
+import { syntheticSeriesDescriptor } from './projectionSeriesStub'
 
 export const SYNTHETIC_CATEGORY_ORDER: readonly ProductionCategoryKey[] = [
   'to',
@@ -154,9 +156,11 @@ function candidate({
 export function syntheticProductionCandidates({
   draftId = 2,
   source = 'basketball_monster',
+  seriesKey = 'legacy',
 }: {
   draftId?: number
   source?: ProductionCandidateSource
+  seriesKey?: string
 } = {}): ProductionCandidatesResponse {
   const categoryScales = scales()
   return {
@@ -165,6 +169,7 @@ export function syntheticProductionCandidates({
     season: '2026-27',
     source,
     source_display_name: `Synthetic ${source} contract stub`,
+    series: syntheticSeriesDescriptor(seriesKey),
     source_original_filename: 'synthetic-production-candidates.csv',
     draft_status: 'in_progress',
     draft_last_sequence: 7,
@@ -186,6 +191,8 @@ export function syntheticProductionCandidates({
       projection_import: {
         import_id: 11,
         source,
+        series_key: seriesKey,
+        release_schema_version: PROJECTION_RELEASE_SCHEMA_VERSION,
         season: '2026-27',
         imported_at: '2026-09-13T18:00:00Z',
         content_sha256: hash('a'),

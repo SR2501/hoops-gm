@@ -94,6 +94,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from hoops_gm.core.config import get_settings
 from hoops_gm.db.models.enums import ExternalSource, ScoringType
+from hoops_gm.db.projection_series import (
+    LEGACY_SERIES_KEY,
+    InvalidProjectionSeriesError,
+    ProjectionSeries,
+    ProjectionSeriesRequiredError,
+    describe_import_series,
+)
 from hoops_gm.db.session import Database
 from hoops_gm.identity import report as identity_report
 from hoops_gm.ingest.projections.importer import (
@@ -188,8 +195,8 @@ def nba_season(value: str) -> str:
 class ProjectionImportSummary:
     """What one run parsed and, unless it was a dry run, wrote.
 
-    Deliberately carries no value from the file. Every field is a count, an
-    identifier, a digest or a flag.
+    Deliberately carries no cell value from the file. Labels are operator
+    metadata; all other fields are counts, identifiers, digests or flags.
     """
 
     season: str
@@ -216,6 +223,9 @@ class ProjectionImportSummary:
     #: exit code 5 turns on.
     rows_not_in_cohort: int
     report_path: str | None
+    import_id: int
+    series: ProjectionSeries
+    profile_definition_sha256: str
 
     def as_json(self) -> str:
         return json.dumps(
@@ -223,10 +233,17 @@ class ProjectionImportSummary:
                 "season": self.season,
                 "source": self.source,
                 "display_name": self.display_name,
+                "import_id": self.import_id,
+                "series": {
+                    "key": self.series.key,
+                    "display_name": self.series.display_name,
+                    "provenance": self.series.provenance,
+                },
                 "dry_run": self.dry_run,
                 "profile_id": self.profile_id,
                 "profile_version": self.profile_version,
                 "content_sha256": self.content_sha256,
+                "profile_definition_sha256": self.profile_definition_sha256,
                 "original_filename": self.original_filename,
                 "import_created": self.import_created,
                 "total_rows": self.total_rows,
@@ -282,6 +299,9 @@ def summarise(
         # measuring cannot measure it — see R57.
         rows_not_in_cohort=parsed.total_rows - (outcome.counts.created + outcome.counts.updated),
         report_path=str(report_path) if report_path is not None else None,
+        import_id=outcome.projection_import.id,
+        series=describe_import_series(outcome.projection_import),
+        profile_definition_sha256=outcome.projection_import.profile_definition_sha256,
     )
 
 
@@ -306,8 +326,12 @@ def write_unresolved_report(
     if not unresolved:
         return None
 
+    series = describe_import_series(outcome.projection_import)
+    basename = f"{source.value}-{season}"
+    if series.key != LEGACY_SERIES_KEY:
+        basename += f"-{series.key}-{outcome.projection_import.id}"
     report_dir.mkdir(parents=True, exist_ok=True)
-    path = report_dir / f"{source.value}-{season}-unresolved.csv"
+    path = report_dir / f"{basename}-unresolved.csv"
     path.write_text(identity_report.to_csv(unresolved), encoding="utf-8")
     return path
 
@@ -323,6 +347,8 @@ def run_import(
     assumed_scoring_type: ScoringType | None,
     report_dir: Path,
     dry_run: bool,
+    series_key: str | None = None,
+    series_display_name: str | None = None,
 ) -> ProjectionImportSummary:
     """Import inside one transaction, rolling back when this is a dry run.
 
@@ -343,6 +369,8 @@ def run_import(
             csv_bytes=csv_bytes,
             original_filename=original_filename,
             assumed_scoring_type=assumed_scoring_type,
+            series_key=series_key,
+            series_display_name=series_display_name,
         )
         # The report is written from the in-memory outcome before either
         # branch, so a dry run still hands over the adjudication list it just
@@ -400,6 +428,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--display-name",
         default=None,
         help="human label for the source row; defaults to the built-in profile's name",
+    )
+    parser.add_argument(
+        "--series-key",
+        default=None,
+        help=(
+            "canonical forecast-series key under this publisher (not a player-ID namespace). "
+            "Omission uses legacy if none is recorded, the sole recorded series if there is "
+            "one, and refuses if there are multiple series for this source and season."
+        ),
+    )
+    parser.add_argument(
+        "--series-display-name",
+        default=None,
+        help=(
+            "operator-declared forecast-series label, separate from the publisher display name. "
+            "Legacy has no recorded label. Exact replays retain their label; a new named "
+            "version inherits the series label, or uses its literal key on first declaration."
+        ),
     )
     parser.add_argument(
         "--scoring-type",
@@ -467,8 +513,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             assumed_scoring_type=scoring_type,
             report_dir=args.report_dir,
             dry_run=args.dry_run,
+            series_key=args.series_key,
+            series_display_name=args.series_display_name,
         )
-    except (ProjectionProfileError, ProjectionEncodingError) as exc:
+    except (
+        ProjectionProfileError,
+        ProjectionEncodingError,
+        InvalidProjectionSeriesError,
+        ProjectionSeriesRequiredError,
+    ) as exc:
         # Covers an unverified or mismatched profile, a header the profile does
         # not recognise, non-UTF-8 bytes, and a parse that found no usable
         # production row. Nothing was written in any of them: each raises

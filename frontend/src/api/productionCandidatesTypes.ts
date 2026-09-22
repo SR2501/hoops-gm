@@ -1,4 +1,8 @@
 import type { DraftStatus } from './draftTypes'
+import type {
+  PROJECTION_RELEASE_SCHEMA_VERSION,
+  ProjectionSeriesDescriptor,
+} from './projectionSeriesTypes'
 
 /**
  * Projection namespaces the endpoint accepts.
@@ -89,6 +93,8 @@ export interface ProductionCandidateLimitations {
 export interface ProductionProjectionImportLineage {
   import_id: number
   source: ProductionCandidateSource
+  series_key: string
+  release_schema_version: typeof PROJECTION_RELEASE_SCHEMA_VERSION
   season: string
   imported_at: string
   content_sha256: string
@@ -292,6 +298,7 @@ export interface ProductionCandidatesResponse {
   season: string
   source: ProductionCandidateSource
   source_display_name: string
+  series: ProjectionSeriesDescriptor
   source_original_filename: string | null
   draft_status: DraftStatus
   draft_last_sequence: number

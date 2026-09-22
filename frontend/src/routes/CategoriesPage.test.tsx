@@ -18,7 +18,7 @@ import type { DraftState, FeedStatusResponse } from '../api/draftTypes'
 import { mockFetch, requestUrl } from '../test/helpers'
 import recordedDraft from '../test/fixtures/draft-auction-resolved-state.recorded.json'
 import recordedFeed from '../test/fixtures/draft-feed-status.recorded.json'
-import recordedProjections from '../test/fixtures/projections-current.recorded.json'
+import seriesProjectionsRecording from '../test/fixtures/projections-current.series-release.recorded.json'
 
 /**
  * Ten seconds. Every wait below is a `waitFor` against a stubbed `fetch` that
@@ -31,6 +31,9 @@ const TIMEOUT_MS = 10_000
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
 
 const draft = recordedDraft as unknown as DraftState
+// Route-test response, NOT a new recording: the genuine seed rates with the
+// test draft's league context. The strict client now rejects wrong-league 200s.
+const recordedProjections = { ...seriesProjectionsRecording, league_id: draft.league_id }
 
 function feedFor(
   state: DraftState,
@@ -102,8 +105,8 @@ describe('the league category route', () => {
 
       expect(draft.league_id).toBe(2)
       const requested = fetchMock.mock.calls.map(([input]) => requestUrl(input))
-      expect(requested).toContain('/api/v1/leagues/2/projections/current')
-      expect(requested).not.toContain('/api/v1/leagues/1/projections/current')
+      expect(requested).toContain('/api/v1/leagues/2/projections/current?source=basketball_monster')
+      expect(requested).not.toContain('/api/v1/leagues/1/projections/current?source=basketball_monster')
     },
     TIMEOUT_MS,
   )

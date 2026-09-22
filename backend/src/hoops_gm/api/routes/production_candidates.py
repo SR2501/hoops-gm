@@ -57,6 +57,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
+from hoops_gm.api.projection_series import (
+    DraftProjectionSeriesCatalog,
+    ProjectionReleaseSchema,
+    ProjectionSeriesDescriptor,
+    SeriesKeyDep,
+    select_current_import,
+    series_catalog,
+    series_descriptor_out,
+)
 from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.availability.reliability import RELIABILITY_SOURCE_KEY
@@ -75,6 +84,11 @@ from hoops_gm.db.models.identity import NbaTeam, Player
 from hoops_gm.db.models.league import League, LeagueScoringProfile
 from hoops_gm.db.models.projections import ProjectionImport, ProjectionSource
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
+from hoops_gm.db.projection_series import (
+    InvalidProjectionSeriesError,
+    ProjectionSeries,
+    describe_series,
+)
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.formats import DraftFormatError
 from hoops_gm.draft.state import DraftLogError, DraftStateView
@@ -161,6 +175,8 @@ class LimitationsOut(_ContractModel):
 class ProjectionImportLineageOut(_ContractModel):
     import_id: PositiveInt
     source: ProjectionSourceValue
+    series_key: str
+    release_schema_version: ProjectionReleaseSchema
     season: str
     imported_at: datetime
     content_sha256: Sha256
@@ -364,6 +380,7 @@ class ProductionCandidatesResponse(_ContractModel):
     source: ProjectionSourceValue
     source_display_name: str
     source_original_filename: str | None
+    series: ProjectionSeriesDescriptor
     draft_status: DraftStatus
     draft_last_sequence: NonNegativeInt
     generated_at: datetime
@@ -415,6 +432,7 @@ class _ProjectionDisplayMetadata:
     source: ExternalSource
     display_name: str
     original_filename: str | None
+    series: ProjectionSeries
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,16 +526,15 @@ def _league_snapshot(league: League) -> _LeagueSnapshot | None:
     )
 
 
-def _current_import_id(session: Session, *, source: ExternalSource, season: str) -> int | None:
-    return session.scalar(
-        select(ProjectionImport.id)
-        .join(ProjectionSource, ProjectionSource.id == ProjectionImport.source_id)
-        .where(
-            ProjectionSource.source == source,
-            ProjectionImport.season == season,
-        )
-        .order_by(ProjectionImport.imported_at.desc(), ProjectionImport.id.desc())
-        .limit(1)
+def _current_import_id(
+    session: Session, *, source: ExternalSource, season: str, series_key: str | None = None
+) -> int | None:
+    return select_current_import(
+        session,
+        source=source,
+        season=season,
+        series_key=series_key,
+        surface="production_candidates",
     )
 
 
@@ -561,6 +578,8 @@ def _projection_display_metadata(
             ProjectionSource.source,
             ProjectionSource.display_name,
             ProjectionImport.original_filename,
+            ProjectionImport.series_key,
+            ProjectionImport.series_display_name,
         )
         .join(ProjectionSource, ProjectionSource.id == ProjectionImport.source_id)
         .where(ProjectionImport.id == release.import_id)
@@ -569,16 +588,25 @@ def _projection_display_metadata(
         raise _ResponseAssemblyError(
             f"released projection import {release.import_id} has no stored display provenance"
         )
-    if row.import_id != release.import_id or row.source != release.source:
+    if (
+        row.import_id != release.import_id
+        or row.source != release.source
+        or row.series_key != release.series_key
+    ):
         raise _ResponseAssemblyError(
             f"stored display provenance for projection import {release.import_id} "
             "does not match its released source identity"
         )
+    try:
+        series = describe_series(row.series_key, row.series_display_name)
+    except InvalidProjectionSeriesError as exc:
+        raise _ResponseAssemblyError(str(exc)) from exc
     return _ProjectionDisplayMetadata(
         import_id=row.import_id,
         source=row.source,
         display_name=row.display_name,
         original_filename=row.original_filename,
+        series=series,
     )
 
 
@@ -989,6 +1017,7 @@ def _assert_snapshot_stable(
     initial_blend_profile: BlendProfile,
     initial_health: _HealthObservationSnapshot,
     candidate_player_ids: Sequence[int],
+    requested_series_key: str | None = None,
 ) -> None:
     """Best-effort second observation; it never supplies response values."""
 
@@ -1052,6 +1081,17 @@ def _assert_snapshot_stable(
             f"projection, source-display, scoring, or observation evidence moved while "
             f"draft {draft_id} candidates were assembled"
         )
+    current_id = select_current_import(
+        session,
+        source=source,
+        season=initial_league.season,
+        series_key=requested_series_key,
+        surface="production_candidates",
+    )
+    if current_id != initial_release.import_id:
+        raise _snapshot_conflict(
+            "The selected series import moved while candidates were assembled."
+        )
 
 
 @router.get(
@@ -1074,27 +1114,14 @@ def get_production_candidates(
     ],
     session: SessionDep,
     request: Request,
+    series_key: SeriesKeyDep,
 ) -> ProductionCandidatesResponse:
     require_loopback_host(
         request,
         error_code="production_candidates_local_only",
         detail="Production candidates are only served to the local machine.",
     )
-    try:
-        selected_source = ExternalSource(source)
-    except ValueError as exc:
-        raise _error(
-            400,
-            "production_candidates_source_unsupported",
-            f"{source!r} is not a supported isolated projection-import namespace",
-        ) from exc
-    if selected_source not in PROJECTION_IMPORT_SOURCES:
-        raise _error(
-            400,
-            "production_candidates_source_unsupported",
-            f"{source!r} is not a supported isolated projection-import namespace",
-        )
-
+    selected_source = _selected_projection_source(source)
     try:
         draft_read = _load_draft_snapshot(session, draft_id)
     except (DraftLogError, DraftFormatError) as exc:
@@ -1150,6 +1177,7 @@ def get_production_candidates(
         session,
         source=selected_source,
         season=league_snapshot.season,
+        series_key=series_key,
     )
     if import_id is None:
         raise _error(
@@ -1253,6 +1281,7 @@ def get_production_candidates(
         initial_blend_profile=blend_profile,
         initial_health=health,
         candidate_player_ids=candidate_ids,
+        requested_series_key=series_key,
     )
 
     scoring_metadata = _scoring_metadata(scoring_profile, blend_profile)
@@ -1267,6 +1296,7 @@ def get_production_candidates(
         source=selected_source.value,
         source_display_name=source_metadata.display_name,
         source_original_filename=source_metadata.original_filename,
+        series=series_descriptor_out(source_metadata.series),
         draft_status=draft_snapshot.status,
         draft_last_sequence=draft_snapshot.last_sequence,
         generated_at=datetime.now(UTC),
@@ -1287,6 +1317,8 @@ def get_production_candidates(
             projection_import=ProjectionImportLineageOut(
                 import_id=release.import_id,
                 source=release.source.value,
+                series_key=release.series_key,
+                release_schema_version=release.release_schema_version,
                 season=release.season,
                 imported_at=release.imported_at,
                 content_sha256=release.content_sha256,
@@ -1380,3 +1412,53 @@ def get_production_candidates(
         health_context=_health_context_out(health),
         candidates=candidates,
     )
+
+
+@router.get(
+    "/{draft_id}/projection-series",
+    response_model=DraftProjectionSeriesCatalog,
+    responses={status: {"model": ErrorResponse} for status in (400, 403, 404, 409, 422)},
+    summary="Recorded forecast series in the actual draft league and season",
+)
+def get_draft_projection_series(
+    draft_id: Annotated[int, Path(gt=0)],
+    source: Annotated[str, Query(json_schema_extra={"enum": list(SUPPORTED_SOURCE_VALUES)})],
+    session: SessionDep,
+    request: Request,
+) -> DraftProjectionSeriesCatalog:
+    require_loopback_host(
+        request,
+        error_code="production_candidates_local_only",
+        detail="Projection-series choices are only served to the local machine.",
+    )
+    selected_source = _selected_projection_source(source)
+    draft = draft_service.load_draft(session, draft_id)
+    if draft is None:
+        raise _error(404, "production_candidates_draft_not_found", f"no recorded draft {draft_id}")
+    league = session.get(League, draft.league_id)
+    if league is None:
+        raise _error(
+            409,
+            "production_candidates_draft_state_refused",
+            f"recorded draft {draft_id} names missing league {draft.league_id}",
+        )
+    catalog = series_catalog(session, league=league, source=selected_source)
+    return DraftProjectionSeriesCatalog(draft_id=draft_id, **catalog.model_dump())
+
+
+def _selected_projection_source(source: str) -> ExternalSource:
+    try:
+        selected_source = ExternalSource(source)
+    except ValueError as exc:
+        raise _error(
+            400,
+            "production_candidates_source_unsupported",
+            f"{source!r} is not a supported isolated projection-import namespace",
+        ) from exc
+    if selected_source not in PROJECTION_IMPORT_SOURCES:
+        raise _error(
+            400,
+            "production_candidates_source_unsupported",
+            f"{source!r} is not a supported isolated projection-import namespace",
+        )
+    return selected_source

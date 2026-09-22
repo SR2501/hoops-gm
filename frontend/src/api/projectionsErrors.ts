@@ -1,11 +1,11 @@
 /**
  * What each projections refusal means, and what to do about it.
  *
- * Eight typed codes, and collapsing them into "something went wrong" would
+ * Typed codes, and collapsing them into "something went wrong" would
  * throw away the distinction that matters most here: **exactly one of them is
  * retryable.** `projections_inconsistent_cohort` means a concurrent import
  * moved the cohort while it was being read, and the correct response is to ask
- * again. The other seven need a human — import a CSV, fix the crosswalk,
+ * again. The other codes need a human — choose a series, import a CSV, fix the crosswalk,
  * re-import under a verified profile — and retrying them only delays the
  * message.
  *
@@ -73,7 +73,7 @@ export const PROJECTIONS_ERRORS: Record<string, ProjectionsErrorCopy> = {
     summary:
       'The source asked for is an identity-anchor namespace rather than a projection CSV publisher, so there is no cohort of that kind to serve.',
     action:
-      'Ask for a registered projection source. This screen always asks for Basketball Monster, so seeing this means something other than the screen made the request.',
+      'Choose a supported projection source. A supported publisher is not a promise that any series has been imported.',
   },
   projections_source_not_imported: {
     // Two raisers, and they are genuinely different states that happen to
@@ -82,16 +82,32 @@ export const PROJECTIONS_ERRORS: Record<string, ProjectionsErrorCopy> = {
     // Both are answered by importing a CSV, so one code and one action is
     // honest here in a way it would not be if the remedies diverged.
     summary:
-      "No Basketball Monster projections have been imported for this league's season. This is the expected state of a database nobody has imported a CSV into — it is not a fault, and nothing is broken.",
+      "No projections from the selected source have been imported for this league's season. This is the expected state of a database nobody has imported a CSV into — it is not a fault, and nothing is broken.",
     action:
-      "Import a Basketball Monster CSV for this league's season. The backend's wording below says whether the source has never been registered at all, or is registered with no import for this season.",
+      "Import the intended source series for this league's season. The backend's wording below says whether the source has never been registered at all, or is registered with no import for this season.",
+  },
+  projections_series_required: {
+    summary: 'More than one projection series is recorded for this source and season. An explicit choice is required.',
+    action: 'Reload the series inventory and choose a series. No first, latest, or legacy series is substituted automatically.',
+  },
+  projections_series_not_imported: {
+    summary: 'The selected projection series is not imported for this source and season.',
+    action: 'Reload the series inventory and choose a recorded series, or import the intended series. There is no fallback to another series.',
+  },
+  projection_series_incomplete_evidence: {
+    summary: 'The recorded series inventory has invalid or incomplete evidence, so it cannot be used as a chooser.',
+    action: 'Repair the inventory evidence named below, then reload series. Invalid entries are not hidden or treated as an empty inventory.',
+  },
+  validation_error: {
+    summary: 'The backend rejected the request shape, including any blank, malformed, or repeated series key.',
+    action: 'Choose a canonical recorded series and retry after correcting the request. An invalid explicit key is never treated as an omitted choice.',
   },
   projections_not_current: {
     // Two raisers: a superseded import, and the import row disappearing
     // mid-read. The second is reachable rather than defensive because the
     // route takes no lock. Phrased open for that reason.
     summary:
-      "The cohort this request asked for is no longer the current one for its source and season, so the backend served none rather than serving a superseded set of rates. The backend's wording below names which; the common case is that a newer import replaced it while this screen was open.",
+      "The cohort this request asked for is no longer the current one for its source, season, and series, so the backend served none rather than serving a superseded set of rates. The backend's wording below names which; the common case is that a newer import replaced it while this screen was open.",
     action:
       'Reload. If it recurs immediately, an import is running — let it finish. The backend refuses a superseded cohort rather than serving numbers a newer import has already replaced.',
   },
@@ -129,9 +145,9 @@ export const PROJECTIONS_ERRORS: Record<string, ProjectionsErrorCopy> = {
     // free-form and matching on it is the form-over-meaning coupling AGENTS.md
     // warns about; it would break silently on a reword.
     summary:
-      "The backend could not establish that these rates are fit to be read, so it served none. Something about the import, the profile that parsed it, or a stored value failed a check — the backend's wording below names which one. This is not a claim that Basketball Monster's numbers are wrong; it is that nothing on record establishes the cohort this request asked for.",
+      "The backend could not establish that these rates are fit to be read, so it served none. Something about the import, the profile that parsed it, or a stored value failed a check — the backend's wording below names which one. This is not a claim that the selected publisher's numbers are wrong; it is that nothing on record establishes the cohort this request asked for.",
     action:
-      "Re-import the Basketball Monster CSV under a verified profile. That rewrites the whole row cohort, which is why it is the answer whichever check failed — quote the backend's wording below if it recurs afterwards.",
+      "Repair the selected series import under a verified profile — quote the backend's wording below if it recurs afterwards. No older or other-series import is substituted.",
   },
   [RETRYABLE_PROJECTIONS_ERROR]: {
     // The one code this screen retries automatically. If a reader is seeing
@@ -157,7 +173,7 @@ const TRANSPORT_ERRORS: Record<string, ProjectionsErrorCopy> = {
   },
   invalid_response: {
     summary:
-      'The backend answered, but the body did not match the projections contract, so nothing is drawn rather than drawing a table from a shape we do not recognise.',
+      'The backend answered, but the body did not match the projections contract for this league, source, season, series, and release domain. The mismatched body is not rendered.',
     action:
       'Check that the backend and dashboard are from the same revision. The response is unusable, not merely unexpected.',
   },

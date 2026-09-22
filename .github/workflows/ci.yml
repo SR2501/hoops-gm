@@ -272,6 +272,11 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
         run: alembic downgrade base
 
+      - name: Populated series migration preservation and rollback on Postgres
+        run: |
+          python -c "import os; from sqlalchemy.engine import make_url; assert make_url(os.environ['TEST_DATABASE_URL']).get_backend_name() == 'postgresql'"
+          python -m pytest tests/test_projection_series_migration.py -v -rA
+
       - name: Full suite against Postgres
         run: pytest
 

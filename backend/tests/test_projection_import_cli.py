@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.models.identity import PlayerExternalId
-from hoops_gm.db.models.projections import Projection, ProjectionImport
+from hoops_gm.db.models.projections import Projection, ProjectionImport, ProjectionSource
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_projections import (
     PLAYERS_FIXTURE,
@@ -122,6 +122,8 @@ def test_the_command_exposes_no_database_url_option() -> None:
         "--help",
         "--source",
         "--display-name",
+        "--series-key",
+        "--series-display-name",
         "--scoring-type",
         "--report-dir",
         "--dry-run",
@@ -144,13 +146,24 @@ def test_it_imports_a_cohort_and_reports_it(
     assert body["projections_created"] == COHORT
     assert body["rows_not_in_cohort"] == 0
     assert body["unresolved_report"] is None
+    assert body["import_id"] > 0
+    assert body["series"] == {
+        "key": "legacy",
+        "display_name": "Unspecified legacy series",
+        "provenance": "legacy_unspecified",
+    }
+    assert re.fullmatch("[0-9a-f]{64}", body["profile_definition_sha256"])
 
     projections, imports, _ = row_counts(seeded)
     assert (projections, imports) == (COHORT, 1)
 
 
+@pytest.mark.parametrize("series_args", [[], ["--series-key", "josh"]])
 def test_a_dry_run_reports_the_real_match_count_and_writes_nothing(
-    seeded: Database, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    seeded: Database,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    series_args: list[str],
 ) -> None:
     """The rollback is asserted against three tables, not against the context manager.
 
@@ -166,7 +179,7 @@ def test_a_dry_run_reports_the_real_match_count_and_writes_nothing(
     before = row_counts(seeded)
     capsys.readouterr()
 
-    assert main([SEASON, str(path), "--dry-run"]) == EXIT_OK
+    assert main([SEASON, str(path), "--dry-run", *series_args]) == EXIT_OK
 
     body = json.loads(capsys.readouterr().out)
     assert body["dry_run"] is True
@@ -331,8 +344,12 @@ def test_re_running_the_same_file_converges_rather_than_minting_a_version(
     assert row_counts(seeded)[:2] == (COHORT, 1)
 
 
+@pytest.mark.parametrize("series_args", [[], ["--series-key", "josh"]])
 def test_no_value_from_the_file_reaches_stdout(
-    seeded: Database, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    seeded: Database,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    series_args: list[str],
 ) -> None:
     """The export is paid content, and a terminal scrollback is a paste away.
 
@@ -376,7 +393,7 @@ def test_no_value_from_the_file_reaches_stdout(
     path = write_csv(tmp_path, content)
     capsys.readouterr()
 
-    assert main([SEASON, str(path)]) == EXIT_OK
+    assert main([SEASON, str(path), *series_args]) == EXIT_OK
 
     out = capsys.readouterr().out
     lines = content.decode("utf-8").splitlines()
@@ -395,6 +412,150 @@ def test_no_value_from_the_file_reaches_stdout(
     assert any("." in cell for cell in checked), checked
 
     assert [cell for cell in checked if cell in out] == []
+
+
+def test_series_flags_report_exact_identity_without_renaming_the_publisher(
+    seeded: Database, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_csv(tmp_path, demo_csv(seeded))
+    publisher = "Synthetic publisher"
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                SEASON,
+                str(path),
+                "--display-name",
+                publisher,
+                "--series-key",
+                "josh",
+                "--series-display-name",
+                "Josh declaration",
+            ]
+        )
+        == EXIT_OK
+    )
+    josh = json.loads(capsys.readouterr().out)
+    assert josh["display_name"] == publisher
+    assert josh["series"] == {
+        "key": "josh",
+        "display_name": "Josh declaration",
+        "provenance": "operator_declared",
+    }
+    assert main([SEASON, str(path), "--display-name", publisher]) == EXIT_OK
+    replay = json.loads(capsys.readouterr().out)
+    assert replay["series"] == josh["series"]
+    assert replay["import_id"] == josh["import_id"]
+    assert not replay["import_created"]
+
+    assert (
+        main([SEASON, str(path), "--display-name", publisher, "--series-key", "bonus"]) == EXIT_OK
+    )
+    bonus = json.loads(capsys.readouterr().out)
+    assert bonus["import_id"] != josh["import_id"]
+    assert bonus["series"]["key"] == "bonus"
+    assert bonus["content_sha256"] == josh["content_sha256"]
+    assert bonus["profile_definition_sha256"] == josh["profile_definition_sha256"]
+    before = row_counts(seeded)
+    assert main([SEASON, str(path)]) == EXIT_REFUSED
+    refusal = capsys.readouterr()
+    assert refusal.out == ""
+    assert "multiple recorded series" in refusal.err
+    assert row_counts(seeded) == before
+    with seeded.session() as session:
+        sources = session.scalars(select(ProjectionSource)).all()
+        assert len(sources) == 1
+        assert sources[0].display_name == publisher
+        stored = session.get(ProjectionImport, josh["import_id"])
+        assert stored is not None
+        assert stored.content_sha256 == josh["content_sha256"]
+        assert stored.profile_definition_sha256 == josh["profile_definition_sha256"]
+
+
+@pytest.mark.parametrize(
+    "series_args",
+    [
+        ["--series-key", ""],
+        ["--series-key", "Josh"],
+        ["--series-key", "../josh"],
+        ["--series-key", "josh", "--series-display-name", " "],
+        ["--series-key", "legacy", "--series-display-name", "Josh"],
+        ["--series-display-name", "Josh"],
+    ],
+)
+def test_cli_invalid_series_is_refusal_two_not_an_implicit_legacy_import(
+    seeded: Database,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    series_args: list[str],
+) -> None:
+    path = write_csv(tmp_path, demo_csv(seeded))
+    before = row_counts(seeded)
+    capsys.readouterr()
+    assert main([SEASON, str(path), *series_args]) == EXIT_REFUSED
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "refused, nothing written" in captured.err
+    assert row_counts(seeded) == before == (0, 0, 0)
+
+
+def test_cli_conflicting_label_is_refused_without_rewriting_existing_import(
+    seeded: Database, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_csv(tmp_path, demo_csv(seeded))
+    args = [SEASON, str(path), "--series-key", "josh", "--series-display-name"]
+    capsys.readouterr()
+    assert main([*args, "Original label"]) == EXIT_OK
+    first = json.loads(capsys.readouterr().out)
+    before = row_counts(seeded)
+    assert main([*args, "Conflicting label"]) == EXIT_REFUSED
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "immutable projection import" in captured.err
+    assert row_counts(seeded) == before
+    assert main([SEASON, str(path), "--series-key", "josh"]) == EXIT_OK
+    replay = json.loads(capsys.readouterr().out)
+    assert replay["series"] == first["series"]
+    assert replay["import_id"] == first["import_id"]
+
+
+def test_named_unresolved_reports_use_key_and_exact_import_never_display_label(
+    seeded: Database, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw = b"player_name,points_per_game\nNonexistent Synthetic Person,20\n"
+    path = write_csv(tmp_path, raw)
+    reports = tmp_path / "reports"
+    names = []
+    capsys.readouterr()
+    for index, key in enumerate(("josh", "bonus", "josh")):
+        if index == 2:
+            path.write_bytes(raw + b"\n")
+        assert (
+            main(
+                [
+                    SEASON,
+                    str(path),
+                    "--source",
+                    "manual",
+                    "--series-key",
+                    key,
+                    "--series-display-name",
+                    "../../not-a-path/display label",
+                    "--report-dir",
+                    str(reports),
+                ]
+            )
+            == EXIT_IMPORTED_INCOMPLETE
+        )
+        captured = capsys.readouterr()
+        assert "Nonexistent Synthetic Person" not in captured.out + captured.err
+        body = json.loads(captured.out)
+        name = f"manual-{SEASON}-{key}-{body['import_id']}-unresolved.csv"
+        assert Path(body["unresolved_report"]) == reports / name
+        assert (reports / name).is_file()
+        names.append(name)
+    assert len(set(names)) == 3
+    assert {entry.name for entry in reports.iterdir()} == set(names)
 
 
 def test_the_offered_sources_exclude_anchor_namespaces_and_include_one_that_always_refuses(

@@ -1,28 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import {
-  getProductionCandidates,
-  isProductionCandidateSource,
-} from '../api/productionCandidatesEndpoints'
+import { getProductionCandidates } from '../api/productionCandidatesEndpoints'
 import {
   describeProductionCandidatesError,
   isRetryableProductionCandidatesError,
 } from '../api/productionCandidatesErrors'
+import type { ProductionCandidateSource } from '../api/productionCandidatesTypes'
 import {
-  PRODUCTION_CANDIDATE_SOURCES,
-  type ProductionCandidateSource,
-} from '../api/productionCandidatesTypes'
+  DEFAULT_PROJECTION_SOURCE,
+  projectionSeriesScopeKey,
+  type ProjectionSelection,
+} from '../api/projectionSeriesTypes'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
 import {
   ProductionCandidatesTable,
 } from '../components/ProductionCandidatesTable'
 import { productionSourceLabel } from '../api/productionCandidatesLabels'
+import {
+  ProjectionSeriesScope,
+  ProjectionSourceSelect,
+} from '../components/ProjectionSeriesControls'
 
 export const PRODUCTION_CANDIDATES_POLL_INTERVAL_MS = 2000
 export const PRODUCTION_CANDIDATES_STALE_AFTER_MS = 6000
 export const DEFAULT_PRODUCTION_CANDIDATE_SOURCE: ProductionCandidateSource =
-  'basketball_monster'
+  DEFAULT_PROJECTION_SOURCE
 
 const CANONICAL_POSITIVE_DECIMAL_ID = /^[1-9]\d*$/
 
@@ -67,44 +70,33 @@ function ProductionCandidatesRoute({ draftId }: { draftId: number }) {
           availability fusion, <code>p(play)</code>, expected games, punt fit, affordability,
           position fit, or Fantrax roster eligibility.
         </p>
-        <div className="production-candidates__route-controls">
-          <label>
-            <span>Supported sources</span>
-            <select
-              value={source}
-              aria-describedby="production-source-help"
-              onChange={(event) => {
-                if (isProductionCandidateSource(event.target.value)) {
-                  setSource(event.target.value)
-                }
-              }}
-            >
-              {PRODUCTION_CANDIDATE_SOURCES.map((candidateSource) => (
-                <option key={candidateSource} value={candidateSource}>
-                  {productionSourceLabel(candidateSource)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p id="production-source-help">
-            Supported does not mean currently imported. A missing or unadmitted source is shown as
-            a typed refusal rather than removed from this list.
-          </p>
+        <div className="projection-controls">
+          <ProjectionSourceSelect source={source} onChange={setSource} />
           <Link to={`/draft/${String(draftId)}`}>Back to the recorded draft</Link>
         </div>
       </header>
 
       {/*
         `useAsync` deliberately retains a last-good response. Keying the loader
-        by the complete query scope makes that retention correct: a refresh of
-        this draft/source keeps its whole payload, while a source or draft
-        change mounts a cold scope and cannot relabel the old response.
+        by the release domain and complete query scope makes retention correct.
+        Catalogs also mount cold on source/draft changes. No league is guessed.
       */}
-      <ProductionCandidatesLoader
-        key={`${String(draftId)}:${source}`}
-        draftId={draftId}
+      <ProjectionSeriesScope
+        key={projectionSeriesScopeKey('draft', draftId, source)}
+        resource="draft"
+        resourceId={draftId}
         source={source}
-      />
+        describeError={describeProductionCandidatesError}
+      >
+        {(selection) => (
+          <ProductionCandidatesLoader
+            key={projectionSeriesScopeKey('draft', draftId, source, selection)}
+            draftId={draftId}
+            source={source}
+            selection={selection}
+          />
+        )}
+      </ProjectionSeriesScope>
     </article>
   )
 }
@@ -112,9 +104,11 @@ function ProductionCandidatesRoute({ draftId }: { draftId: number }) {
 function ProductionCandidatesLoader({
   draftId,
   source,
+  selection,
 }: {
   draftId: number
   source: ProductionCandidateSource
+  selection: ProjectionSelection
 }) {
   const [tick, setTick] = useState(0)
   const refresh = useCallback(() => {
@@ -122,8 +116,13 @@ function ProductionCandidatesLoader({
   }, [])
 
   const candidates = useAsync(
-    (options) => getProductionCandidates(draftId, source, options),
-    [draftId, source, tick],
+    (options) => getProductionCandidates(draftId, source, {
+      ...options,
+      seriesKey: selection.seriesKey,
+      expectedSeason: selection.season,
+      expectedLeagueId: selection.leagueId,
+    }),
+    [draftId, source, selection.leagueId, selection.season, selection.seriesKey, tick],
     {
       shouldRetry: isRetryableProductionCandidatesError,
       deferInitialRequest: true,
@@ -147,7 +146,7 @@ function ProductionCandidatesLoader({
       state={candidates}
       label={`production-only candidates for Draft ${String(draftId)} from ${productionSourceLabel(
         source,
-      )}`}
+      )} / ${selection.seriesKey}`}
       staleAfterMs={PRODUCTION_CANDIDATES_STALE_AFTER_MS}
       describeError={describeProductionCandidatesError}
     >

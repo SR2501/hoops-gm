@@ -7,6 +7,7 @@ import { ApiError } from '../api/client'
 import { AppLayout, BackendStatus } from '../components/AppLayout'
 import { mockFetch, renderWithRouter } from '../test/helpers'
 import { syntheticProductionCandidates } from '../test/productionCandidatesStub'
+import { syntheticDraftSeriesCatalog, syntheticSeriesCatalog } from '../test/projectionSeriesStub'
 
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
 const READY = { status: 'ok', database: 'ok', detail: null }
@@ -147,6 +148,7 @@ describe('the dashboard shell', () => {
     // a page that works would still be unreachable and nothing would say so.
     mockFetch({
       '/api/v1/drafts': { body: { drafts: [] } },
+      '/api/v1/leagues/1/projections/series': { body: syntheticSeriesCatalog() },
       '/api/v1/leagues/1/projections/current': {
         status: 409,
         body: {
@@ -169,7 +171,7 @@ describe('the dashboard shell', () => {
     // Reached the endpoint and rendered its refusal in the screen's own words,
     // rather than merely mounting a heading.
     expect(await screen.findByTestId('async-error-summary')).toHaveTextContent(
-      /No Basketball Monster projections have been imported/i,
+      /No projections from the selected source have been imported/i,
     )
   })
 
@@ -246,11 +248,11 @@ describe('the dashboard shell', () => {
     // renders the page directly, so without this the board could work
     // perfectly and still be unreachable from the nav, with nothing saying so.
     mockFetch({
+      '/api/v1/drafts/1/projection-series': {
+        body: { ...syntheticDraftSeriesCatalog(1), league_id: 1 },
+      },
       '/api/v1/drafts/1/production-candidates': {
-        body: syntheticProductionCandidates({
-          draftId: 1,
-          source: 'basketball_monster',
-        }),
+        body: { ...syntheticProductionCandidates({ draftId: 1 }), league_id: 1 },
       },
       '/api/v1/drafts/1/events': {
         body: { draft_id: 1, events: [], since_sequence: 0, last_sequence: 0 },

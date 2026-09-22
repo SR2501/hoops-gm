@@ -12,9 +12,10 @@ does not re-implement matching.
 Two properties matter more than the write itself:
 
 * **content-addressed versioning** — a ``projection_imports`` row is keyed by
-  source, season and the SHA-256 of the file's bytes, so re-running the same
-  file converges onto the same import rather than minting a new "version" for
-  identical content, while an updated file or a new season creates a new one.
+  source, series, season, parsing profile and the SHA-256 of the file's bytes,
+  so re-running the same file converges onto the same import rather than minting
+  a new "version" for identical content, while an updated file or a new season
+  creates a new one.
 * **exact-output reconciliation** — reprocessing an import removes every
   projection and games-played assumption it previously owned, retracts stale
   automated crosswalk links through ``import_resolutions``, and rebuilds only
@@ -46,6 +47,15 @@ from hoops_gm.db.models.projections import (
     ProjectionSource,
     SourceGamesPlayedAssumption,
 )
+from hoops_gm.db.projection_series import (
+    LEGACY_SERIES_KEY,
+    InvalidProjectionSeriesError,
+    ProjectionSeriesRequiredError,
+    describe_import_series,
+    describe_series,
+    latest_series_import,
+    resolve_import_series_key,
+)
 from hoops_gm.identity import (
     Candidate,
     IdentityResolver,
@@ -73,8 +83,10 @@ from hoops_gm.ingest.projections.verification import (
 )
 
 __all__ = [
+    "InvalidProjectionSeriesError",
     "ProjectionEncodingError",
     "ProjectionImportOutcome",
+    "ProjectionSeriesRequiredError",
     "ProjectionVerificationError",
     "build_player_targets",
     "get_or_create_projection_source",
@@ -176,12 +188,14 @@ def _get_or_create_projection_import(
     assumed_scoring_type: ScoringType | None = None,
     raw_payload_ref: str | None = None,
     imported_at: datetime | None = None,
+    series_key: str | None = None,
+    series_display_name: str | None = None,
 ) -> tuple[ProjectionImport, bool]:
     """Fetch the import matching this exact file's bytes, or create it.
 
     Returns ``(row, created)``. ``created`` is ``False`` when a
-    byte-identical file was already imported for this source and season — the
-    natural key includes source, season, bytes, profile id and profile version.
+    byte-identical file was already imported for this source, series and season — the
+    natural key includes source, series, season, bytes and profile version identity.
     Reusing bytes under a revised profile therefore preserves both
     interpretations. Reusing a profile id/version with a changed recipe fails
     loudly rather than rewriting the old import's meaning.
@@ -192,16 +206,22 @@ def _get_or_create_projection_import(
         profile_version_row,
         profile_lineage=profile_lineage,
     )
-
-    existing = session.scalar(
-        select(ProjectionImport).where(
-            ProjectionImport.source_id == source.id,
-            ProjectionImport.season == season,
-            ProjectionImport.content_sha256 == content_sha256,
-            ProjectionImport.profile_version_id == profile_version_row.id,
-        )
+    key = resolve_import_series_key(
+        session, source=source.source, season=season, series_key=series_key
     )
+    if series_display_name is not None:
+        describe_series(key, series_display_name)
+
+    query = select(ProjectionImport).where(
+        ProjectionImport.source_id == source.id,
+        ProjectionImport.series_key == key,
+        ProjectionImport.season == season,
+        ProjectionImport.content_sha256 == content_sha256,
+        ProjectionImport.profile_version_id == profile_version_row.id,
+    )
+    existing = session.scalar(query)
     if existing is not None:
+        _assert_import_series_label(existing, series_display_name=series_display_name)
         _assert_profile_lineage(
             existing,
             profile_version_row=profile_version_row,
@@ -209,8 +229,17 @@ def _get_or_create_projection_import(
         )
         return existing, False
 
+    # Omission on an exact replay means its own original label, not the label
+    # of a newer import. Only a genuinely new version inherits the latest label.
+    label = series_display_name
+    if key != LEGACY_SERIES_KEY and label is None:
+        latest = latest_series_import(session, source_id=source.id, season=season, series_key=key)
+        label = describe_import_series(latest).display_name if latest is not None else key
+    describe_series(key, label)
     candidate = ProjectionImport(
         source_id=source.id,
+        series_key=key,
+        series_display_name=label,
         profile_version_id=profile_version_row.id,
         season=season,
         imported_at=imported_at or datetime.now(UTC),
@@ -230,22 +259,31 @@ def _get_or_create_projection_import(
             session.flush()
         return candidate, True
     except IntegrityError:
-        existing = session.scalar(
-            select(ProjectionImport).where(
-                ProjectionImport.source_id == source.id,
-                ProjectionImport.season == season,
-                ProjectionImport.content_sha256 == content_sha256,
-                ProjectionImport.profile_version_id == profile_version_row.id,
-            )
-        )
+        existing = session.scalar(query)
         if existing is None:
             raise
+        # Use the caller's original declaration, not the candidate's inherited
+        # label: a concurrent exact version has immutable metadata of its own.
+        _assert_import_series_label(existing, series_display_name=series_display_name)
         _assert_profile_lineage(
             existing,
             profile_version_row=profile_version_row,
             profile_lineage=profile_lineage,
         )
         return existing, False
+
+
+def _assert_import_series_label(
+    projection_import: ProjectionImport, *, series_display_name: str | None
+) -> None:
+    describe_import_series(projection_import)
+    if (
+        series_display_name is not None
+        and series_display_name != projection_import.series_display_name
+    ):
+        raise InvalidProjectionSeriesError(
+            f"series_display_name conflicts with immutable projection import {projection_import.id}"
+        )
 
 
 def _hold_import_lock_until_transaction_end(
@@ -1046,6 +1084,8 @@ def import_projection_csv(
     assumed_scoring_type: ScoringType | None = None,
     profile: ColumnProfile | None = None,
     raw_payload_ref: str | None = None,
+    series_key: str | None = None,
+    series_display_name: str | None = None,
 ) -> ProjectionImportOutcome:
     """Parse, version and write one projection CSV — the single entry point.
 
@@ -1057,6 +1097,15 @@ def import_projection_csv(
     the private reconciliation boundary). A caller with a CSV file and nothing
     else needs only this function; parsed rows cannot bypass profile
     verification and byte/lineage binding through a second public writer.
+
+    Under the existing provider locks, an omitted series uses the sole recorded
+    key for this source/season, or ``legacy`` when none exists; multiple keys
+    raise ``ProjectionSeriesRequiredError`` before content mutation. Invalid
+    declarations and conflicting immutable labels raise
+    ``InvalidProjectionSeriesError``. Exact replays keep their original label;
+    only new versions inherit the series' latest label. A named import's scoring
+    declaration never updates the shared provider default; legacy keeps that
+    existing registration behavior. The caller owns commit/rollback as before.
     """
     content_sha256 = _content_checksum(csv_bytes)
     csv_text = _decode_csv(csv_bytes)
@@ -1134,11 +1183,19 @@ def import_projection_csv(
     # it opened.
     _lock_projection_source_scope(session, source, season)
 
+    resolved_series_key = resolve_import_series_key(
+        session, source=source, season=season, series_key=series_key
+    )
+    if series_display_name is not None:
+        describe_series(resolved_series_key, series_display_name)
+
     source_row = get_or_create_projection_source(
         session,
         source=source,
         display_name=display_name,
-        assumed_scoring_type=assumed_scoring_type,
+        assumed_scoring_type=(
+            assumed_scoring_type if resolved_series_key == LEGACY_SERIES_KEY else None
+        ),
     )
     profile_version_row = _get_or_create_profile_version(
         session,
@@ -1157,6 +1214,8 @@ def import_projection_csv(
         original_filename=original_filename,
         assumed_scoring_type=assumed_scoring_type,
         raw_payload_ref=raw_payload_ref,
+        series_key=resolved_series_key,
+        series_display_name=series_display_name,
     )
 
     counts, identity_report = _import_projection_rows(

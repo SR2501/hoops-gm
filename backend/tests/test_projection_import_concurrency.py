@@ -259,3 +259,50 @@ def test_the_lock_scope_is_taken_even_for_an_unregistered_source(database: Datab
 
     with database.session() as check:
         assert check.scalar(select(func.count()).select_from(ProjectionSource)) == 0
+
+
+@pytest.mark.parametrize("key", [None, "josh"])
+def test_series_resolution_uses_existing_provider_locks_before_source_registration(
+    database: Database, monkeypatch: pytest.MonkeyPatch, key: str | None
+) -> None:
+    from hoops_gm.db.projection_series import resolve_import_series_key
+    from hoops_gm.db.session import acquire_transaction_lock as real_lock
+    from hoops_gm.ingest.projections.importer import import_projection_csv
+
+    taken: list[str] = []
+    resolved: list[str | None] = []
+    source = ExternalSource.MANUAL
+    expected_scope = f"projection\x00projection-source:{source.value}\x00{SEASON}"
+
+    def record_lock(session: Session, *, scope_key: str, write_reservation: Executable) -> None:
+        taken.append(scope_key)
+        real_lock(session, scope_key=scope_key, write_reservation=write_reservation)
+
+    def record_resolution(
+        session: Session, *, source: ExternalSource, season: str, series_key: str | None
+    ) -> str:
+        resolved.append(series_key)
+        assert set(session.info["projection_import_locks"]) == {source.value}
+        assert taken == [expected_scope]
+        if len(resolved) == 1:
+            assert session.scalar(select(func.count()).select_from(ProjectionSource)) == 0
+        return resolve_import_series_key(
+            session, source=source, season=season, series_key=series_key
+        )
+
+    monkeypatch.setattr("hoops_gm.db.lineage.acquire_transaction_lock", record_lock)
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.resolve_import_series_key", record_resolution
+    )
+    with database.session() as session:
+        outcome = import_projection_csv(
+            session,
+            source=source,
+            display_name="Synthetic lock fixture",
+            season=SEASON,
+            csv_bytes=b"player_name,points_per_game\nSynthetic Lock Player,20\n",
+            series_key=key,
+        )
+        assert outcome.projection_import.series_key == (key or "legacy")
+    assert taken == [expected_scope]
+    assert resolved[0] == key
