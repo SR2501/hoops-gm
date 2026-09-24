@@ -13,6 +13,16 @@ import {
   type ResponseContract,
 } from './client'
 import { DATE_ABSENCE_REASONS, PROJECTION_RATE_FIELDS, type DateAbsenceReason } from './types'
+import {
+  isProjectionSeriesDescriptor,
+  isProjectionSeriesKey,
+  isProjectionSource,
+} from './projectionSeriesEndpoints'
+import {
+  DEFAULT_PROJECTION_SOURCE,
+  PROJECTION_RELEASE_SCHEMA_VERSION,
+  type CurrentProjectionsOptions,
+} from './projectionSeriesTypes'
 import type {
   CurrentProjections,
   Health,
@@ -347,7 +357,9 @@ function isProjectionImportLineage(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.import_id === 'number' &&
-    typeof value.source === 'string' &&
+    isProjectionSource(value.source) &&
+    isProjectionSeriesKey(value.series_key) &&
+    value.release_schema_version === PROJECTION_RELEASE_SCHEMA_VERSION &&
     typeof value.season === 'string' &&
     typeof value.imported_at === 'string' &&
     typeof value.content_sha256 === 'string' &&
@@ -490,11 +502,14 @@ function isSourceGamesPlayedClaim(value: unknown): value is SourceGamesPlayedCla
  * a player without rates can be shown as exactly that.
  */
 export function isCurrentProjections(value: unknown): value is CurrentProjections {
-  return (
+  if (!(
     isRecord(value) &&
-    typeof value.league_id === 'number' &&
-    typeof value.season === 'string' &&
-    typeof value.source === 'string' &&
+    Number.isSafeInteger(value.league_id) &&
+    typeof value.league_id === 'number' && value.league_id > 0 &&
+    typeof value.season === 'string' && value.season.trim().length > 0 &&
+    isProjectionSource(value.source) &&
+    typeof value.source_display_name === 'string' && value.source_display_name.trim().length > 0 &&
+    isProjectionSeriesDescriptor(value.series) &&
     isProjectionLineage(value.lineage) &&
     Array.isArray(value.players) &&
     value.players.every(isProjectionPlayer) &&
@@ -502,30 +517,40 @@ export function isCurrentProjections(value: unknown): value is CurrentProjection
     value.projections.every(isProjectionRates) &&
     Array.isArray(value.source_games_played_assumptions) &&
     value.source_games_played_assumptions.every(isSourceGamesPlayedClaim)
-  )
+  )) return false
+
+  const response = value as unknown as CurrentProjections
+  const imported = response.lineage.projection_import
+  return imported.source === response.source &&
+    imported.season === response.season &&
+    imported.series_key === response.series.key
 }
 
-const CURRENT_PROJECTIONS_CONTRACT = {
-  isSuccess: isCurrentProjections,
-  invalidResponseDetail:
-    'The projections response did not match the expected backend contract.',
-} satisfies ResponseContract<CurrentProjections>
-
 /**
- * The current imported cohort for one league.
- *
- * `source` is deliberately not a parameter yet. The endpoint accepts `?source=`
- * and defaults to Basketball Monster, which is the only source the owner
- * actually buys; a picker belongs with the surface that has more than one
- * source to pick between.
+ * Current within a selected series; omission remains compatible with sole-series callers.
+ * Expected season is a response guard from catalog context, never a historical query.
  */
 export function getCurrentProjections(
   leagueId: number,
-  options?: RequestOptions,
+  options: CurrentProjectionsOptions = {},
 ): Promise<CurrentProjections> {
+  const source = options.source ?? DEFAULT_PROJECTION_SOURCE
+  const contract = {
+    isSuccess: (value: unknown): value is CurrentProjections =>
+      isCurrentProjections(value) &&
+      value.league_id === leagueId &&
+      value.source === source &&
+      (options.expectedSeason === undefined || value.season === options.expectedSeason) &&
+      (options.seriesKey === undefined || value.series.key === options.seriesKey),
+    invalidResponseDetail:
+      'The projections response did not match the requested league/source/season/series release contract.',
+  } satisfies ResponseContract<CurrentProjections>
+  const query = new URLSearchParams({ source })
+  // Empty/malformed explicit values go to validation, never to the omitted-key fallback.
+  if (options.seriesKey !== undefined) query.set('series_key', options.seriesKey)
   return apiFetch(
-    `/api/v1/leagues/${String(leagueId)}/projections/current`,
-    CURRENT_PROJECTIONS_CONTRACT,
+    `/api/v1/leagues/${String(leagueId)}/projections/current?${query.toString()}`,
+    contract,
     options,
   )
 }

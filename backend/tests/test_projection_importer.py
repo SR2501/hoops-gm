@@ -2186,8 +2186,10 @@ def test_profile_source_must_match_declared_source(session: Session) -> None:
     assert session.query(ProjectionSource).count() == 0
 
 
+@pytest.mark.parametrize("series_keys", [(None, None), ("josh", "josh"), ("josh", "bonus")])
 def test_concurrent_identical_imports_converge_without_duplicate_outputs(
     database: Database,
+    series_keys: tuple[str | None, str | None],
 ) -> None:
     setup = database.session_factory()
     seed_player(setup, nba_id=50, name="Concurrent Player", team_abbreviation="BOS")
@@ -2197,7 +2199,7 @@ def test_concurrent_identical_imports_converge_without_duplicate_outputs(
     barrier = Barrier(2)
     csv_bytes = b"player_name,team,points_per_game\nConcurrent Player,BOS,20.0\n"
 
-    def run_import() -> tuple[int, int]:
+    def run_import(series_key: str | None) -> tuple[int, int]:
         worker_session = database.session_factory()
         try:
             barrier.wait()
@@ -2207,6 +2209,7 @@ def test_concurrent_identical_imports_converge_without_duplicate_outputs(
                 display_name="Manual test source",
                 season="2026-27",
                 csv_bytes=csv_bytes,
+                series_key=series_key,
             )
             worker_session.commit()
             return outcome.projection_import.id, outcome.counts.created
@@ -2215,14 +2218,17 @@ def test_concurrent_identical_imports_converge_without_duplicate_outputs(
             worker_session.close()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: run_import(), range(2)))
+        results = list(executor.map(run_import, series_keys))
 
     verification = database.session_factory()
     try:
-        assert len({import_id for import_id, _ in results}) == 1
-        assert sorted(created for _, created in results) == [0, 1]
-        assert verification.query(ProjectionImport).count() == 1
-        assert verification.query(Projection).count() == 1
+        expected_imports = len(set(series_keys))
+        assert len({import_id for import_id, _ in results}) == expected_imports
+        assert sorted(created for _, created in results) == (
+            [0, 1] if expected_imports == 1 else [1, 1]
+        )
+        assert verification.query(ProjectionImport).count() == expected_imports
+        assert verification.query(Projection).count() == expected_imports
         assert verification.query(ProjectionProfileVersion).count() == 1
     finally:
         verification.close()

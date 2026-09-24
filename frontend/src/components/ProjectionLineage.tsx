@@ -1,9 +1,8 @@
 /**
  * Which import produced the numbers on screen, and how well pinned each part is.
  *
- * Collapsed by default so it does not compete with the table, but on the page
- * rather than in devtools: a number whose provenance can only be recovered by
- * opening a network tab is not checkable.
+ * Publisher, series and exact import are always visible beside the cohort.
+ * Full hashes and audit details can be expanded without opening devtools.
  *
  * **Three digests, because they answer different questions.**
  * `content_sha256` is the CSV bytes; `profile_definition_sha256` is the parsing
@@ -27,9 +26,12 @@
  */
 
 import type { ProjectionLineage } from '../api/types'
+import type { ProjectionSeriesDescriptor } from '../api/projectionSeriesTypes'
 
 interface ProjectionLineagePanelProps {
   lineage: ProjectionLineage
+  series: ProjectionSeriesDescriptor
+  sourceDisplayName: string
   /**
    * Rate rows available to the browser after the response is joined.
    *
@@ -42,6 +44,8 @@ interface ProjectionLineagePanelProps {
 
 export function ProjectionLineagePanel({
   lineage,
+  series,
+  sourceDisplayName,
   availableRateRowCount,
 }: ProjectionLineagePanelProps) {
   const { projection_import: imported } = lineage
@@ -52,10 +56,29 @@ export function ProjectionLineagePanel({
     imported.rejected_count
 
   return (
-    <details className="lineage" data-testid="projections-lineage">
+    <section className="projection-release" data-testid="projections-lineage">
+      <div className="projection-release__summary" data-testid="projection-import-summary">
+        <strong>{sourceDisplayName} · {series.display_name}</strong>
+        <p>
+          Publisher <code>{imported.source}</code> · series <code>{series.key}</code> ·{' '}
+          <code>{series.provenance}</code> · season {imported.season}
+        </p>
+        <p>
+          Import {imported.import_id} ·{' '}
+          <time dateTime={imported.imported_at} data-testid="projections-imported-at">
+            {imported.imported_at}
+          </time>{' '}
+          · file <code>{imported.original_filename ?? 'not recorded'}</code>
+        </p>
+        <p>
+          Parsing profile <code>{imported.profile_id}</code> v{imported.profile_version}.
+          {' '}Stored labels are not authenticity or calibration evidence.
+        </p>
+      </div>
+      <details className="lineage">
       <summary className="lineage__summary">
         <span>
-          Basketball Monster import <code>{imported.projection_values_sha256.slice(0, 12)}</code>
+          Full import lineage · rates <code>{imported.projection_values_sha256.slice(0, 12)}</code>
         </span>
         <span className="lineage__age" data-testid="projections-blend-state">
           {/* Rendered from `blend === null`, a fact the backend publishes, and
@@ -67,6 +90,10 @@ export function ProjectionLineagePanel({
 
       <dl className="facts lineage__facts">
         <div className="facts__row">
+          <dt>Release contract</dt>
+          <dd><code>{imported.release_schema_version}</code></dd>
+        </div>
+        <div className="facts__row">
           <dt>Import</dt>
           <dd>
             id {imported.import_id} · <code>{imported.source}</code> · season{' '}
@@ -76,7 +103,7 @@ export function ProjectionLineagePanel({
         <div className="facts__row">
           <dt>Imported at</dt>
           <dd>
-            <code data-testid="projections-imported-at">{imported.imported_at}</code>
+            <code>{imported.imported_at}</code>
             {imported.original_filename ? (
               <>
                 {' '}
@@ -167,6 +194,7 @@ export function ProjectionLineagePanel({
           </dd>
         </div>
       </dl>
-    </details>
+      </details>
+    </section>
   )
 }

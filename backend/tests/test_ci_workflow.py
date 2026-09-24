@@ -139,6 +139,24 @@ def test_the_postgres_job_uses_a_password_that_needs_url_encoding(
     assert "%25" in url, "no percent-encoded '%' in the CI database URL"
 
 
+def test_postgres_populated_series_migrations_execute_with_attributable_results(
+    jobs: dict[str, Any],
+) -> None:
+    steps = [
+        step
+        for step in jobs["postgres"]["steps"]
+        if step.get("name") == "Populated series migration preservation and rollback on Postgres"
+    ]
+    assert len(steps) == 1
+    step = steps[0]
+    assert "if" not in step and "continue-on-error" not in step
+    assert _commands(step) == [
+        'python -c "import os; from sqlalchemy.engine import make_url; '
+        "assert make_url(os.environ['TEST_DATABASE_URL']).get_backend_name() == 'postgresql'\"",
+        "python -m pytest tests/test_projection_series_migration.py -v -rA",
+    ]
+
+
 # --- The backlog dependency graph job ------------------------------------
 
 

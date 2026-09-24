@@ -9,14 +9,24 @@ availability fit, dollar value or budget policy is introduced.
 
 ## Request and composition
 
-`GET /api/v1/drafts/{draft_id}/production-candidates?source=basketball_monster`
+`GET /api/v1/drafts/{draft_id}/production-candidates?source=basketball_monster&series_key=josh`
 
 `source` is required. Supported projection namespaces are `basketball_monster`,
 `fantasypros`, `hashtag`, `darko` and `manual`, matching
 `PROJECTION_IMPORT_SOURCES`. A supported namespace does not mean an admitted
 import exists. The browser initially selects BBM and labels the selector as
-supported sources, not available data. There is no source-catalog endpoint in
-this increment.
+supported sources, not available data.
+
+The 18 September series successor adds an optional `series_key` and a
+draft-scoped recorded inventory at
+`GET /api/v1/drafts/{draft_id}/projection-series?source=basketball_monster`.
+One recorded series preserves omitted-key compatibility; multiple series,
+including unspecified `legacy`, require a choice. The selected key follows its
+newest exact import, never an older valid fallback or another series.
+See [the series contract](projection-series.md) for catalog fields, importer
+semantics, migration and release-domain compatibility. The catalog is not a
+release-admission claim, and neither Josh nor Bonus is a separate player-ID
+namespace.
 
 Use the recorded draft's actual league, season and structure. Refuse an
 unresolved live holding: eligibility cannot be asserted by guessing an identity.
@@ -45,6 +55,7 @@ Top-level fields:
 | `season`, `source` | Actual league season and requested projection namespace |
 | `source_display_name` | Verbatim local publisher label from the released import's source |
 | `source_original_filename` | Nullable original filename on that exact import |
+| `series` | Selected `key`, `display_name`, and `operator_declared` or `legacy_unspecified` provenance |
 | `draft_status` | Existing `setup`, `in_progress`, `closed` vocabulary |
 | `draft_last_sequence` | Recorded revision; not an external feed freshness claim |
 | `generated_at` | Actual UTC response-generation timestamp, not a source timestamp |
@@ -65,7 +76,8 @@ There is no separate `budget_context`.
 
 `lineage` carries:
 
-- `projection_import`: the released `import_id`, `source`, `season`,
+- `projection_import`: the released `import_id`, `source`, `season`, `series_key`,
+  `release_schema_version: projection-import-release-series-v1`,
   `imported_at`, `content_sha256`, string `profile_id` / `profile_version`,
   `profile_definition_sha256`, `projection_values_sha256`, `projection_count`,
   and nullable `assumed_scoring_type`.
@@ -180,6 +192,8 @@ All refusals use `{error, detail, request_id}`:
 | 404 | `production_candidates_draft_not_found` |
 | 400 | `production_candidates_source_unsupported` |
 | 409 | `production_candidates_source_not_imported` |
+| 409 | `production_candidates_series_required` |
+| 404 | `production_candidates_series_not_imported` |
 | 409 | `production_candidates_draft_state_refused` |
 | 409 | `production_candidates_draft_identity_incomplete` |
 | 409 | `production_candidates_league_structure_mismatch` |
@@ -190,14 +204,17 @@ All refusals use `{error, detail, request_id}`:
 | 422 | `validation_error` |
 
 Retry only `production_candidates_inconsistent_snapshot`, exactly once. Keep a
-whole last-good response for the same draft/source, visibly stale on failure.
-A changed draft/source is a cold scope; late old responses cannot replace it.
+whole last-good response for the same release-domain/draft/season/source/series
+scope, visibly stale on failure. A changed scope is cold; late old responses
+cannot replace it. Catalog corruption separately refuses with
+`projection_series_incomplete_evidence`; malformed or repeated selection keys
+use `validation_error`. None of these selection errors triggers fallback.
 
 ## Browser and delivery boundary
 
 Route: `/draft/:draftId/production-candidates`, linked from DraftPage without
 fetching candidates in that page. Use the supplied draft ID in the header; no
-unprovided draft-name field is assumed. Keep source/import identity and time,
+unprovided draft-name field is assumed. Keep source/series/import identity and time,
 profile/reference/model identity and the replacement state adjacent to scores.
 Say that import time is not vendor as-of/freshness validation and that historical
 carry-forward evidence does not calibrate the selected vendor.
@@ -223,7 +240,16 @@ fixture says "synthetic demo cohort"; its identifier-derived rates must not look
 like the owner's actual BBM forecasts. Regeneration uses new named outputs and
 refuses existing targets rather than deleting an earlier recording.
 
-## Local delivery evidence
+## Predecessor local delivery evidence
+
+This section records the earlier unversioned response and its observation, not
+the series successor. The old recording and protected model cards are retained
+unchanged. New versioned clients must reject that old JSON rather than inserting
+series/domain fields into it. New synthetic recordings come from fresh genuine
+HTTP production, not rehashing these earlier artifacts. Request compatibility
+does not preserve old strict-client JSON or aggregate lineage hashes; any
+numerical-method evidence carry-forward needs its own exact-tree review and
+named Model-impact disposition.
 
 The genuine V2 response in
 `frontend/src/test/fixtures/draft-production-candidates.recorded.json` comes from

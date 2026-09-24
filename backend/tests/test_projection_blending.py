@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
+from pathlib import Path
+from typing import cast
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.models.enums import CategoryKind, ExternalSource, ScoringType
-from hoops_gm.db.models.identity import Player
+from hoops_gm.db.models.enums import (
+    CategoryKind,
+    ExternalSource,
+    FieldEvidence,
+    MatchMethod,
+    ScoringType,
+)
+from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.league import (
     League,
     LeagueScoringCategory,
@@ -26,23 +34,35 @@ from hoops_gm.db.models.projections import (
     ProjectionSource,
     SourceGamesPlayedAssumption,
 )
+from hoops_gm.db.projection_series import current_projection_import_id
+from hoops_gm.dev.seed_projections import PLAYERS_FIXTURE
+from hoops_gm.dev.seed_schedule_grid import DEFAULT_FIXTURES_DIR, load_fixture
+from hoops_gm.ingest.importers import import_nba_players
+from hoops_gm.ingest.nba.parsers import parse_common_all_players
+from hoops_gm.ingest.projections import get_or_create_projection_source, import_projection_csv
+from hoops_gm.projections import blending
 from hoops_gm.projections.blending import (
+    PROJECTION_RELEASE_SCHEMA_VERSION,
     BlendCatalog,
     BlendedCategoryValue,
     BlendInputLayer,
+    BlendProfile,
     InvalidBlendProfileError,
     LayerPurityError,
     ManualProjectionOverride,
     MissingProjectionDataError,
+    ReleasedProjectionImport,
     StaleProjectionInputError,
     UnknownProjectionInputError,
     WeightBasis,
     activate_blend_profile,
     blend_active_projections,
+    blend_profile_content_sha256,
     blend_projections,
     current_blend_profile,
     define_blend_profile,
     release_projection_import,
+    validate_blend_profile_integrity,
 )
 from hoops_gm.scoring.profiles import NINE_CATEGORY_DEFINITIONS
 from hoops_gm.valuation.zscore import score_production_zscores
@@ -142,6 +162,8 @@ def _projection_import(
     scoring_type: ScoringType | None = ScoringType.H2H_EACH_CATEGORY,
     suffix: str = "a",
     assumed_games: float | None = None,
+    series_key: str = "legacy",
+    series_display_name: str | None = None,
 ) -> ProjectionImport:
     source_row = session.scalar(select(ProjectionSource).where(ProjectionSource.source == source))
     if source_row is None:
@@ -175,6 +197,10 @@ def _projection_import(
         session.flush()
     projection_import = ProjectionImport(
         source_id=source_row.id,
+        series_key=series_key,
+        series_display_name=(
+            series_display_name or (None if series_key == "legacy" else series_key)
+        ),
         profile_version_id=profile.id,
         season=season,
         imported_at=imported_at,
@@ -949,3 +975,509 @@ def test_manual_override_refuses_values_below_the_old_tolerance_edge(
             category_weights=_weights(),
             manual_overrides=(override,),
         )
+
+
+def _single_series_profile(
+    session: Session, *, series_key: str = "josh"
+) -> tuple[ProjectionImport, ReleasedProjectionImport, BlendProfile]:
+    league, scoring = _scoring_profile(session)
+    player = _player(session, "Series Plumbing Player")
+    stored = _projection_import(
+        session,
+        source=ExternalSource.BASKETBALL_MONSTER,
+        players={player.id: _source_values()},
+        series_key=series_key,
+    )
+    release = release_projection_import(
+        session, import_id=stored.id, source=ExternalSource.BASKETBALL_MONSTER
+    )
+    _catalog, profile = define_blend_profile(
+        session,
+        BlendCatalog(),
+        league_id=league.id,
+        name="series-contract",
+        scoring_profile_id=scoring.id,
+        sources=(release,),
+        category_weights={
+            key: {ExternalSource.BASKETBALL_MONSTER: 1} for key in ("pts", "fg_pct", "ft_pct")
+        },
+    )
+    return stored, release, profile
+
+
+@pytest.mark.parametrize("tie", [False, True])
+def test_currentness_is_within_series_with_existing_time_then_id_order(
+    session: Session, tie: bool
+) -> None:
+    source = ExternalSource.BASKETBALL_MONSTER
+    player = _player(session)
+    values = {player.id: _source_values()}
+    josh = _projection_import(session, source=source, players=values, series_key="josh")
+    first = release_projection_import(session, import_id=josh.id, source=source)
+    bonus = _projection_import(
+        session,
+        source=source,
+        players=values,
+        series_key="bonus",
+        imported_at=NOW + timedelta(days=1),
+    )
+    assert release_projection_import(session, import_id=josh.id, source=source) == first
+    bonus_release = release_projection_import(session, import_id=bonus.id, source=source)
+    josh_v2 = _projection_import(
+        session,
+        source=source,
+        players=values,
+        series_key="josh",
+        suffix="new",
+        imported_at=NOW if tie else NOW + timedelta(days=2),
+    )
+    # Higher IDs do not make backdated files current.
+    _projection_import(
+        session,
+        source=source,
+        players=values,
+        series_key="josh",
+        suffix="backdated",
+        imported_at=NOW - timedelta(days=1),
+    )
+    with pytest.raises(StaleProjectionInputError, match=f"current import is {josh_v2.id}"):
+        release_projection_import(session, import_id=josh.id, source=source)
+    assert (
+        release_projection_import(session, import_id=josh_v2.id, source=source).series_key == "josh"
+    )
+    assert release_projection_import(session, import_id=bonus.id, source=source) == bonus_release
+    assert first.content_sha256 == bonus_release.content_sha256
+    assert first.profile_definition_sha256 == bonus_release.profile_definition_sha256
+    assert first.projection_values_sha256 == bonus_release.projection_values_sha256
+
+
+def test_invalid_latest_series_refuses_without_older_or_other_series_fallback(
+    session: Session,
+) -> None:
+    source = ExternalSource.BASKETBALL_MONSTER
+    player = _player(session)
+    values = {player.id: _source_values()}
+    josh = _projection_import(session, source=source, players=values, series_key="josh")
+    bonus = _projection_import(session, source=source, players=values, series_key="bonus")
+    invalid = _projection_import(
+        session,
+        source=source,
+        players=values,
+        series_key="josh",
+        suffix="invalid",
+        imported_at=NOW + timedelta(days=1),
+    )
+    invalid.profile_verified = False
+    session.flush()
+    selected_id = current_projection_import_id(
+        session, source=source, season=SEASON, series_key="josh"
+    )
+    assert selected_id == invalid.id
+    with pytest.raises(InvalidBlendProfileError, match="verified profile"):
+        release_projection_import(session, import_id=selected_id, source=source)
+    with pytest.raises(StaleProjectionInputError, match="stale"):
+        release_projection_import(session, import_id=josh.id, source=source)
+    assert (
+        release_projection_import(session, import_id=bonus.id, source=source).series_key == "bonus"
+    )
+
+
+def test_two_current_series_still_cannot_be_blended_as_two_publishers(session: Session) -> None:
+    league, scoring = _scoring_profile(session)
+    player = _player(session)
+    source = ExternalSource.BASKETBALL_MONSTER
+    releases = []
+    for key in ("josh", "bonus"):
+        stored = _projection_import(
+            session, source=source, players={player.id: _source_values()}, series_key=key
+        )
+        releases.append(release_projection_import(session, import_id=stored.id, source=source))
+    assert releases[0].import_id != releases[1].import_id
+    assert releases[0].series_key != releases[1].series_key
+    with pytest.raises(InvalidBlendProfileError, match="more than one import per source"):
+        define_blend_profile(
+            session,
+            BlendCatalog(),
+            league_id=league.id,
+            name="not-a-two-source-blend",
+            scoring_profile_id=scoring.id,
+            sources=releases,
+            category_weights={key: {source: 1} for key in ("pts", "fg_pct", "ft_pct")},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("series_key", "", "series_key"),
+        ("series_key", "Josh", "series_key"),
+        ("series_key", "josh\n", "series_key"),
+        ("series_key", None, "series_key"),
+        ("release_schema_version", None, "release schema version"),
+        ("release_schema_version", "", "release schema version"),
+        ("release_schema_version", "projection-import-release-v0", "release schema version"),
+    ],
+)
+def test_release_domain_validation_and_profile_integrity_remain_pure(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    _stored, release, profile = _single_series_profile(session)
+    forged = (
+        replace(release, series_key=cast(str, value))
+        if field == "series_key"
+        else replace(release, release_schema_version=cast(str, value))
+    )
+
+    def unexpected_io(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("release-domain/profile-integrity validation performed database I/O")
+
+    for method in ("execute", "scalar", "scalars", "get"):
+        monkeypatch.setattr(Session, method, unexpected_io)
+    validate_blend_profile_integrity(profile)
+    assert blend_profile_content_sha256(profile) == profile.content_sha256
+    with pytest.raises(InvalidBlendProfileError, match=message):
+        validate_blend_profile_integrity(replace(profile, sources=(forged,)))
+    # Revalidation also rejects the unsupported domain before loading an ID.
+    with pytest.raises(InvalidBlendProfileError, match=message):
+        blending._validate_and_load_release(session, forged)
+
+
+def test_valid_but_forged_series_cannot_release_another_series_import(session: Session) -> None:
+    _stored, release, profile = _single_series_profile(session)
+    forged = replace(release, series_key="bonus")
+    with pytest.raises(StaleProjectionInputError, match="released lineage"):
+        define_blend_profile(
+            session,
+            BlendCatalog(),
+            league_id=profile.league_id,
+            name=profile.name,
+            scoring_profile_id=profile.scoring_profile_id,
+            sources=(forged,),
+            category_weights={key: {release.source: 1} for key in ("pts", "fg_pct", "ft_pct")},
+        )
+
+
+def test_reclassified_stored_series_invalidates_a_previously_valid_release(
+    session: Session,
+) -> None:
+    stored, _release, profile = _single_series_profile(session)
+    stored.series_key = "other"
+    stored.series_display_name = "Other operator declaration"
+    session.flush()
+    with pytest.raises(StaleProjectionInputError, match="released lineage"):
+        blend_projections(session, profile)
+
+
+@pytest.mark.parametrize(
+    ("key", "label", "message"),
+    [("Josh", "Operator label", "series_key"), ("josh", "\t", "series_display_name")],
+)
+def test_canonical_release_refuses_malformed_persisted_series(
+    session: Session, key: str, label: str, message: str
+) -> None:
+    stored, release, _profile = _single_series_profile(session)
+    stored.series_key = key
+    stored.series_display_name = label
+    session.flush()
+    with pytest.raises(InvalidBlendProfileError, match=message):
+        release_projection_import(session, import_id=stored.id, source=release.source)
+    if key == release.series_key:
+        with pytest.raises(InvalidBlendProfileError, match=message):
+            blending._validate_and_load_release(session, release)
+
+
+def test_release_defaults_append_to_positional_constructor_and_tag_legacy_payloads(
+    session: Session,
+) -> None:
+    _stored, release, _profile = _single_series_profile(session, series_key="legacy")
+    constructed = ReleasedProjectionImport(
+        release.import_id,
+        release.source,
+        release.season,
+        release.imported_at,
+        release.content_sha256,
+        release.profile_id,
+        release.profile_version,
+        release.profile_definition_sha256,
+        release.projection_values_sha256,
+        release.projection_count,
+        release.assumed_scoring_type,
+        BlendInputLayer.PROJECTION_IMPORT,
+    )
+    assert constructed == release
+    assert PROJECTION_RELEASE_SCHEMA_VERSION == "projection-import-release-series-v1"
+    payload = blending._release_payload(release)
+    assert payload["series_key"] == "legacy"
+    assert payload["release_schema_version"] == PROJECTION_RELEASE_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("series_key", "bonus"), ("release_schema_version", "unsupported-hash-domain-control")],
+)
+def test_hash_payload_binds_series_and_domain_independently_of_import_id(
+    session: Session, field: str, value: str
+) -> None:
+    _stored, release, profile = _single_series_profile(session, series_key="legacy")
+    changed = (
+        replace(release, series_key=value)
+        if field == "series_key"
+        else replace(release, release_schema_version=value)
+    )
+    before, after = blending._release_payload(release), blending._release_payload(changed)
+    assert set(before) == set(after)
+    assert {key for key in before if before[key] != after[key]} == {field}
+    assert release.import_id == changed.import_id
+    assert release.content_sha256 == changed.content_sha256
+    assert release.profile_definition_sha256 == changed.profile_definition_sha256
+    assert release.projection_values_sha256 == changed.projection_values_sha256
+    assert (
+        blend_profile_content_sha256(replace(profile, sources=(changed,))) != profile.content_sha256
+    )
+
+
+def test_old_content_bound_profile_is_refused_not_rehashed_or_upgraded(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stored, _release, profile = _single_series_profile(session, series_key="legacy")
+    successor_payload = blending._release_payload
+
+    def predecessor_payload(release: ReleasedProjectionImport) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in successor_payload(release).items()
+            if key not in {"series_key", "release_schema_version"}
+        }
+
+    # Construct only a synthetic old-domain content hash. No archived object,
+    # scientific artifact, stored recipe or old receipt is rewritten.
+    with monkeypatch.context() as patch:
+        patch.setattr(blending, "_release_payload", predecessor_payload)
+        old_hash = blend_profile_content_sha256(profile)
+    assert old_hash != profile.content_sha256
+    old = replace(
+        profile,
+        content_sha256=old_hash,
+        profile_id=f"{profile.name}:v{profile.version}:{old_hash[:12]}",
+    )
+    with pytest.raises(InvalidBlendProfileError, match="content hash"):
+        validate_blend_profile_integrity(old)
+    with pytest.raises(InvalidBlendProfileError, match="content hash"):
+        blend_projections(session, old)
+    assert old.content_sha256 == old_hash
+    validate_blend_profile_integrity(profile)
+
+
+def _writer_import(
+    session: Session, *, key: str, declaration: ScoringType | None
+) -> ProjectionImport:
+    """Drive the real admitted writer, never stamp the declaration into an ORM fixture."""
+    name = "Synthetic Declaration Player"
+    player = session.scalar(select(Player).where(Player.full_name == name))
+    if player is None:
+        player = _player(session, name)
+        session.add(
+            PlayerExternalId(
+                player_id=player.id,
+                source=ExternalSource.NBA,
+                current_for_source=ExternalSource.NBA.value,
+                external_id="synthetic-declaration-anchor",
+                external_name=name,
+                normalized_name=player.normalized_name,
+                confidence=1.0,
+                match_method=MatchMethod.ANCHOR_ID,
+                name_evidence=FieldEvidence.AGREE,
+            )
+        )
+        session.flush()
+    result = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Synthetic publisher",
+        season=SEASON,
+        csv_bytes=(
+            b"player_name,points_per_game,field_goals_made_per_game,"
+            b"field_goals_attempted_per_game,free_throws_made_per_game,"
+            b"free_throws_attempted_per_game\nSynthetic Declaration Player,20,8,16,4,5\n"
+        ),
+        series_key=key,
+        assumed_scoring_type=declaration,
+    )
+    assert result.counts.created + result.counts.updated == 1
+    return result.projection_import
+
+
+@pytest.mark.parametrize("provider_default", [None, ScoringType.H2H_EACH_CATEGORY])
+def test_real_named_writer_isolates_declarations_and_keeps_null_fallback_semantics(
+    session: Session, provider_default: ScoringType | None
+) -> None:
+    league, scoring = _scoring_profile(session)
+    source = get_or_create_projection_source(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Synthetic publisher",
+        assumed_scoring_type=provider_default,
+    )
+    josh = _writer_import(session, key="josh", declaration=None)
+    before = release_projection_import(session, import_id=josh.id, source=ExternalSource.MANUAL)
+    bonus = _writer_import(session, key="bonus", declaration=ScoringType.POINTS)
+    session.expire_all()
+    assert source.assumed_scoring_type is provider_default
+    assert josh.assumed_scoring_type is None
+    assert bonus.assumed_scoring_type is ScoringType.POINTS
+    josh_release = release_projection_import(
+        session, import_id=josh.id, source=ExternalSource.MANUAL
+    )
+    bonus_release = release_projection_import(
+        session, import_id=bonus.id, source=ExternalSource.MANUAL
+    )
+    assert josh_release == before
+    assert josh_release.assumed_scoring_type is provider_default
+    assert bonus_release.assumed_scoring_type is ScoringType.POINTS
+    weights = {key: {ExternalSource.MANUAL: 1} for key in ("pts", "fg_pct", "ft_pct")}
+    # Null is still accepted by the existing boundary; no new scoring admission rule.
+    define_blend_profile(
+        session,
+        BlendCatalog(),
+        league_id=league.id,
+        name="josh",
+        scoring_profile_id=scoring.id,
+        sources=(josh_release,),
+        category_weights=weights,
+    )
+    with pytest.raises(InvalidBlendProfileError, match="not target"):
+        define_blend_profile(
+            session,
+            BlendCatalog(),
+            league_id=league.id,
+            name="bonus",
+            scoring_profile_id=scoring.id,
+            sources=(bonus_release,),
+            category_weights=weights,
+        )
+
+
+@pytest.mark.parametrize("update_default", ["legacy-new", "legacy-replay", "registration"])
+def test_real_writer_preserves_explicit_precedence_and_intentional_provider_updates(
+    session: Session, update_default: str
+) -> None:
+    if update_default == "legacy-replay":
+        _writer_import(session, key="legacy", declaration=None)
+    null_import = _writer_import(session, key="josh", declaration=None)
+    explicit_import = _writer_import(
+        session, key="bonus", declaration=ScoringType.H2H_EACH_CATEGORY
+    )
+    null_release = release_projection_import(
+        session, import_id=null_import.id, source=ExternalSource.MANUAL
+    )
+    explicit_release = release_projection_import(
+        session, import_id=explicit_import.id, source=ExternalSource.MANUAL
+    )
+    assert null_import.assumed_scoring_type is None
+    assert null_import.source_row.assumed_scoring_type is None
+    assert null_release.assumed_scoring_type is None
+    if update_default == "registration":
+        get_or_create_projection_source(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Synthetic publisher",
+            assumed_scoring_type=ScoringType.POINTS,
+        )
+    else:
+        _writer_import(session, key="legacy", declaration=ScoringType.POINTS)
+    session.expire_all()
+    assert null_import.assumed_scoring_type is None
+    stored_source = session.get(ProjectionSource, null_import.source_id)
+    assert stored_source is not None
+    assert stored_source.assumed_scoring_type is ScoringType.POINTS
+    current_null = release_projection_import(
+        session, import_id=null_import.id, source=ExternalSource.MANUAL
+    )
+    assert current_null.assumed_scoring_type is ScoringType.POINTS
+    assert (
+        release_projection_import(
+            session, import_id=explicit_import.id, source=ExternalSource.MANUAL
+        )
+        == explicit_release
+    )
+    assert explicit_release.assumed_scoring_type is ScoringType.H2H_EACH_CATEGORY
+    with pytest.raises(StaleProjectionInputError, match="released lineage"):
+        blending._validate_and_load_release(session, null_release)
+
+
+def test_real_writer_gp_only_revision_changes_lineage_not_complete_producer_numbers(
+    session: Session,
+) -> None:
+    import_nba_players(
+        session, parse_common_all_players(load_fixture(DEFAULT_FIXTURES_DIR, PLAYERS_FIXTURE))
+    )
+    league, scoring = _nine_category_scoring_profile(session)
+    fixtures = Path(__file__).parent / "fixtures" / "projections"
+    releases = []
+    blends = []
+    scores = []
+    games = []
+    for filename in ("series_josh.csv", "series_josh_gp_only.csv"):
+        result = import_projection_csv(
+            session,
+            source=ExternalSource.BASKETBALL_MONSTER,
+            display_name="Synthetic publisher",
+            season=SEASON,
+            csv_bytes=(fixtures / filename).read_bytes(),
+            series_key="josh",
+        )
+        assert result.counts.created == 55
+        release = release_projection_import(
+            session,
+            import_id=result.projection_import.id,
+            source=ExternalSource.BASKETBALL_MONSTER,
+        )
+        _catalog, profile = define_blend_profile(
+            session,
+            BlendCatalog(),
+            league_id=league.id,
+            name="gp-control",
+            scoring_profile_id=scoring.id,
+            sources=(release,),
+            category_weights={
+                key: {ExternalSource.BASKETBALL_MONSTER: 1} for key in NINE_CATEGORY_DEFINITIONS
+            },
+        )
+        blend = blend_projections(session, profile)
+        scores.append(
+            score_production_zscores(league=league, blend_profile=profile, blend_result=blend)
+        )
+        blends.append(blend)
+        releases.append(release)
+        games.append(
+            tuple(
+                session.scalars(
+                    select(SourceGamesPlayedAssumption.assumed_games_played)
+                    .join(Projection)
+                    .where(Projection.projection_import_id == release.import_id)
+                    .order_by(Projection.player_id)
+                )
+            )
+        )
+    assert len(games[0]) == len(games[1]) == 55
+    assert games[0] != games[1]
+    assert releases[0].content_sha256 != releases[1].content_sha256
+    assert releases[0].profile_definition_sha256 == releases[1].profile_definition_sha256
+    assert releases[0].projection_values_sha256 == releases[1].projection_values_sha256
+    assert blends[0].projections == blends[1].projections
+    assert blends[0].content_sha256 != blends[1].content_sha256
+    before, after = asdict(scores[0]), asdict(scores[1])
+    assert set(before) == set(after)
+    # Enumerate only the four changed lineage identities. Every numeric field,
+    # reference member/fingerprint, component, scale, ordinal and replacement
+    # value must compare equal, rather than stripping broad result subtrees.
+    assert {key for key in before if before[key] != after[key]} == {
+        "blend_profile_id",
+        "blend_profile_content_sha256",
+        "blend_result_content_sha256",
+        "content_sha256",
+    }

@@ -33,6 +33,18 @@ const PRODUCTION_CANDIDATES_ERRORS: Record<string, Required<ErrorDescription>> =
     action:
       'Choose another supported source or admit the intended source import. The selector lists supported namespaces, not available imports.',
   },
+  production_candidates_series_required: {
+    summary: 'More than one projection series is recorded for this source and draft season. An explicit choice is required.',
+    action: 'Reload the series inventory and choose a series. No first, latest, or legacy series is substituted automatically.',
+  },
+  production_candidates_series_not_imported: {
+    summary: 'The selected projection series is not imported for this source and recorded draft’s season.',
+    action: 'Reload the series inventory and choose a recorded series, or import the intended series. There is no fallback to another series.',
+  },
+  projection_series_incomplete_evidence: {
+    summary: 'The recorded series inventory has invalid or incomplete evidence, so it cannot be used as a chooser.',
+    action: 'Repair the inventory evidence named below, then reload series. Invalid entries are not hidden or treated as an empty inventory.',
+  },
   production_candidates_draft_state_refused: {
     summary:
       'The recorded draft cannot currently form a coherent read-only candidate scope.',
@@ -73,13 +85,13 @@ const PRODUCTION_CANDIDATES_ERRORS: Record<string, Required<ErrorDescription>> =
     summary:
       'The draft, projection release, scoring profile, or historical snapshot moved while this response was being composed, so the backend refused a mixed snapshot.',
     action:
-      'This screen retried once automatically. If it still failed, let the concurrent update finish and refresh; any retained rows are the last whole response for this exact draft and source.',
+      'This screen retried once automatically. If it still failed, let the concurrent update finish and refresh; any retained rows are the last whole response for this exact draft, source, season, and series.',
   },
   validation_error: {
     summary:
-      'The backend rejected the request shape before attempting to produce candidates.',
+      'The backend rejected the request shape, including any blank, malformed, or repeated series key, before attempting to produce candidates.',
     action:
-      'Return to the draft page and reopen this view. If it recurs, report the code and request id below.',
+      'Choose a canonical recorded series and retry after correcting the request. An invalid explicit key is never treated as an omitted choice.',
   },
   unreachable: {
     summary: 'The backend did not answer, so no production-candidate response arrived.',
@@ -92,7 +104,7 @@ const PRODUCTION_CANDIDATES_ERRORS: Record<string, Required<ErrorDescription>> =
   },
   invalid_response: {
     summary:
-      'The backend answered, but the body did not match the production-candidates contract for this draft and selected source.',
+      'The backend answered, but the body did not match the production-candidates contract for this draft, league, source, season, series, and release domain.',
     action:
       'Check that the backend and frontend are running the same revision. The mismatched body is not rendered.',
   },

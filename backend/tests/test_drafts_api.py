@@ -1054,7 +1054,8 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     source evidence, and ``POST /feed/ingest`` appends only independently
     attributed RPC claims through ``draft_service``. ``GET
     /production-candidates`` is the separate read-only production-ranking
-    surface. None offers edit or delete, so the property this test defends
+    surface, and ``GET /projection-series`` lists its recorded series choices.
+    None offers edit or delete, so the property this test defends
     still holds over the wider surface.
     """
     document = cast("FastAPI", client.app).openapi()
@@ -1075,6 +1076,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         "/api/v1/drafts/{draft_id}/feed",
         "/api/v1/drafts/{draft_id}/feed/ingest",
         "/api/v1/drafts/{draft_id}/production-candidates",
+        "/api/v1/drafts/{draft_id}/projection-series",
         "/api/v1/drafts/{draft_id}/source-board",
     }
 
@@ -1092,6 +1094,7 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         ("/api/v1/drafts/{draft_id}/feed", "GET"),
         ("/api/v1/drafts/{draft_id}/feed/ingest", "POST"),
         ("/api/v1/drafts/{draft_id}/production-candidates", "GET"),
+        ("/api/v1/drafts/{draft_id}/projection-series", "GET"),
         ("/api/v1/drafts/{draft_id}/source-board", "GET"),
     }
 

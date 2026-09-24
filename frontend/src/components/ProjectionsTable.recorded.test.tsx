@@ -3,11 +3,18 @@
  *
  * `ProjectionsPage.test.tsx` and `projectionsModel.test.ts` build their
  * payloads by hand from the TypeScript interfaces, so they can only ever prove
- * the code agrees with itself. `projections-current.recorded.json` is a real
- * 200 captured over HTTP from the running FastAPI service on 2026-08-21,
- * against the database `hoops_gm.dev.seed_projections` builds — so this file is
- * the only place the frontend's assumptions meet something the backend actually
- * produced.
+ * the code agrees with itself. `projections-current.series-release.recorded.json`
+ * is a real HTTP 200 from the 2026-09-18 candidate capture: a fresh Alembic-0024
+ * SQLite store, real writers/producers and normal seed_demo before any named
+ * import. Route: /api/v1/leagues/1/projections/current (BBM, sole legacy series).
+ * Native byte copy of frontend-http/normal-seed-projections.json under session
+ * d46e1efa-c5df-4003-a999-0f94f6b61d73/files/projection-series-candidate.
+ * Capture manifest time: 2026-09-18T20:55:48.663058+00:00.
+ * Bytes: 54418, SHA-256:
+ * 33f032830a6f24d290c4e2916e3f092c79ce21e96486e352368124512d86ea04.
+ * Exact response bytes + LF, no serialization, tag injection or score edits.
+ * The old unversioned recording remains unchanged. No old-card promotion,
+ * calibration, scientific carry-forward or actual-browser evidence is claimed.
  *
  * **Captured as raw bytes, and that mattered.** The first capture went through
  * PowerShell's `ConvertFrom-Json`/`ConvertTo-Json`, which parsed `imported_at`
@@ -48,7 +55,7 @@
 
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import recorded from '../test/fixtures/projections-current.recorded.json'
+import recorded from '../test/fixtures/projections-current.series-release.recorded.json'
 import { isCurrentProjections } from '../api/endpoints'
 import { PROJECTION_RATE_FIELDS } from '../api/types'
 import type { CurrentProjections } from '../api/types'

@@ -43,6 +43,11 @@
  *   none. Both are real; only one is recorded here.
  * - **Not a full board.** 48 of 156 slots. Nothing here says the table is
  *   readable at 156.
+ *
+ * Historical pair retained unchanged after the series-release successor. Its
+ * projection HTTP200 is deliberately refused by the new client; the pure join
+ * tests below continue exercising only the original fields used by that model.
+ * This is not an upgraded recording or evidence for a new paired HTTP release.
  */
 
 import { render, screen, within } from '@testing-library/react'
@@ -80,14 +85,15 @@ function ratesById(): Map<number, ProjectionRates> {
 
 describe('the recorded pair', () => {
   it(
-    'is accepted by the validators that guard the real requests',
+    'retains the old projection recording without upgrading it to a successor HTTP200',
     () => {
       // The assertion both fixtures exist for: the predicates production runs,
       // not hand-picked fields. A renamed or retyped field fails here even if
       // nothing below happens to touch it.
       expect(isDraftState(currentDraftContract)).toBe(true)
       expect(isDraftState(recordedDraft)).toBe(true)
-      expect(isCurrentProjections(recordedProjections)).toBe(true)
+      expect(isCurrentProjections(recordedProjections)).toBe(false)
+      expect(recordedProjections).not.toHaveProperty('series')
     },
     TIMEOUT_MS,
   )

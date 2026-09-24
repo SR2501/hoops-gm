@@ -140,11 +140,12 @@ class ProjectionProfileVersion(IntPk, TimestampMixin, Base):
 class ProjectionImport(IntPk, TimestampMixin, Base):
     """One versioned snapshot of a source's CSV, imported at a point in time.
 
-    Deliberately never overwritten in place. ``(source_id, season,
-    content_sha256, profile_id, profile_version)`` is the natural key a re-run
-    converges on. The same bytes under a new profile version create a new
-    import rather than rewriting what an older mapping meant. Season is part
-    of the key because many CSVs do not embed it in their bytes.
+    ``(source_id, series_key, season, content_sha256, profile_version_id)``
+    identifies an exact import. A forecast series is an operator declaration,
+    not another publisher/player-ID namespace or a parsing-profile version.
+    Historical imports remain in the unspecified ``legacy`` series; their
+    variant is never inferred from filenames or labels. The same bytes under
+    a new series or profile version create a separate import.
 
     Row counts are the import's own audit trail: ``row_count`` is every data
     row the file contained, and ``matched_count`` / ``needs_review_count`` /
@@ -160,12 +161,22 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint(
             "source_id",
+            "series_key",
             "season",
             "content_sha256",
             "profile_version_id",
             name="uq_projection_imports_identity",
         ),
         Index("ix_projection_imports_source_season", "source_id", "season"),
+        Index("ix_projection_imports_source_series_season", "source_id", "series_key", "season"),
+        CheckConstraint("length(series_key) BETWEEN 1 AND 64", name="series_key_length"),
+        CheckConstraint(
+            "(series_key = 'legacy' AND series_display_name IS NULL) OR "
+            "(series_key <> 'legacy' AND series_display_name IS NOT NULL "
+            "AND length(trim(series_display_name)) > 0 "
+            "AND length(series_display_name) <= 128)",
+            name="series_declaration",
+        ),
         CheckConstraint("row_count >= 0", name="row_count_non_negative"),
         CheckConstraint("matched_count >= 0", name="matched_count_non_negative"),
         CheckConstraint("needs_review_count >= 0", name="needs_review_count_non_negative"),
@@ -176,6 +187,8 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     source_id: Mapped[int] = mapped_column(
         ForeignKey("projection_sources.id", ondelete="CASCADE"), index=True
     )
+    series_key: Mapped[str] = mapped_column(String(64), default="legacy", server_default="legacy")
+    series_display_name: Mapped[str | None] = mapped_column(String(128))
     profile_version_id: Mapped[int] = mapped_column(
         ForeignKey(
             "projection_profile_versions.id",

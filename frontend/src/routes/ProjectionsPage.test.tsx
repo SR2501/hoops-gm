@@ -14,10 +14,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROJECTIONS_ERRORS, RETRYABLE_PROJECTIONS_ERROR } from '../api/projectionsErrors'
 import type { CurrentProjections, ProjectionRates } from '../api/types'
 import { PROJECTION_RATE_FIELDS } from '../api/types'
-import { mockFetch, renderWithRouter } from '../test/helpers'
+import { mockFetch as mockNumericalFetch, renderWithRouter } from '../test/helpers'
+import { withSingleSeriesCatalog } from '../test/projectionSeriesStub'
 import { ProjectionsPage, STALE_AFTER_MS } from './ProjectionsPage'
 
 const PATH = '/projections/current'
+
+function mockFetch(...args: Parameters<typeof mockNumericalFetch>) {
+  const numerical = mockNumericalFetch(...args)
+  vi.stubGlobal('fetch', withSingleSeriesCatalog(numerical))
+  return numerical
+}
 
 function rates(playerId: number, overrides: Partial<ProjectionRates> = {}): ProjectionRates {
   const row = { player_id: playerId } as ProjectionRates
@@ -33,11 +40,15 @@ function payload(overrides: Partial<CurrentProjections> = {}): CurrentProjection
     league_id: 1,
     season: '2026-27',
     source: 'basketball_monster',
+    source_display_name: 'Basketball Monster (synthetic)',
+    series: { key: 'legacy', display_name: 'Unspecified legacy series', provenance: 'legacy_unspecified' },
     lineage: {
       blend: null,
       projection_import: {
         import_id: 3,
         source: 'basketball_monster',
+        series_key: 'legacy',
+        release_schema_version: 'projection-import-release-series-v1',
         season: '2026-27',
         imported_at: '2026-08-19T12:00:00.123456Z',
         content_sha256: 'a'.repeat(64),
@@ -85,6 +96,22 @@ describe('ProjectionsPage', () => {
     expect(await screen.findByTestId('projections-table')).toBeInTheDocument()
     expect(screen.getByText('Alpha Player')).toBeInTheDocument()
     expect(screen.getByTestId('projections-lineage')).toBeInTheDocument()
+  })
+
+  it('keeps both selectors and the table under the Projections-only containment hook', async () => {
+    mockFetch({ [PATH]: { body: payload() } })
+    renderWithRouter(<ProjectionsPage />)
+
+    const table = await screen.findByTestId('projections-table')
+    const page = screen.getByRole('article')
+
+    // This pins the route hook, not layout: actual-browser geometry verifies
+    // containment and internal scrolling because jsdom cannot measure either.
+    expect(page).toHaveClass('page', 'page--projections')
+    expect(within(page).getByRole('combobox', { name: 'Supported sources' })).toBeInTheDocument()
+    expect(within(page).getByRole('combobox', { name: 'Projection series' })).toBeInTheDocument()
+    expect(table.closest('.page--projections')).toBe(page)
+    expect(table.parentElement).toHaveClass('grid-scroll')
   })
 
   it('describes the full browser cohort, not progressively mounted or filtered rows, in lineage', async () => {
@@ -214,7 +241,7 @@ describe('ProjectionsPage', () => {
               })
         return Promise.resolve(response)
       })
-      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
       renderWithRouter(<ProjectionsPage />)
 
@@ -237,7 +264,7 @@ describe('ProjectionsPage', () => {
           ),
         ),
       )
-      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
       renderWithRouter(<ProjectionsPage />)
 
@@ -258,7 +285,7 @@ describe('ProjectionsPage', () => {
           ),
         ),
       )
-      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
       renderWithRouter(<ProjectionsPage />)
 
@@ -298,7 +325,7 @@ describe('ProjectionsPage', () => {
                 )
           return Promise.resolve(response)
         })
-        vi.stubGlobal('fetch', fetchMock)
+        vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
         renderWithRouter(<ProjectionsPage />)
         await screen.findByTestId('projections-table')
@@ -348,7 +375,7 @@ describe('ProjectionsPage', () => {
                 ),
           )
         })
-        vi.stubGlobal('fetch', fetchMock)
+        vi.stubGlobal('fetch', withSingleSeriesCatalog(fetchMock))
 
         renderWithRouter(<ProjectionsPage />)
         await screen.findByTestId('projections-table')

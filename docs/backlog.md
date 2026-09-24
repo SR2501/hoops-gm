@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**92 done - 0 blocked - 131 pending - 223 total**
+**93 done - 0 blocked - 130 pending - 223 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -4035,21 +4035,38 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 
 ### `zscore-engine` - Implementing the 9-cat z-score engine
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `projection-blending`, `scoring-profiles`
 
-**Execution note (updated 2026-09-14 UTC):** The owner authorized one supervised
-production-only unit. Its single final evaluation completed on 12 September.
-Independent adjudication passed the Model gate for limited descriptive,
-projection-relative production scoring; current-vendor calibration is not
-established. The exact reviewed formatting-only delivery successor subsequently
-passed its targeted local Code gate, with all sixteen live delivery hashes
-confirmed separately from the preserved original experiment bytes. The item
-remains pending: its committed-regression/delivery criteria are not met, and no
-commit or production activation is authorized.
-The owner's separate 13 September fan-out authorizes a bounded read-only
-production-candidates API/UI increment against that unchanged producer; it does
-not reopen the experiment, permit availability fitting/fusion, or accept ADR-021.
+**Execution note (updated 2026-09-18 UTC):** The supervised production-only
+engine, committed regression tests and delivery landed in #182, merged as
+`34b98a23` with the exact reviewed delivery tree. Local and hosted Code closure,
+independent publication review and actual index/commit-byte checks are complete.
+The single final evaluation remains the 12 September experiment; its independent
+Model disposition accepts only limited descriptive, projection-relative
+production scoring. The original experiment and reviewed formatting-only
+successor remain separately attributable.
+
+Only this already-merged component's implementation/regression/delivery criteria
+are closed. Current-vendor calibration, real-store activation, availability
+fitting/fusion, expected-games valuation and the broader draft shortlist are
+not. No experiment rerun or ADR acceptance is implied.
+
+The separate series-selection semantic successor subsequently received explicit
+quant-owner PLAN agreement and coordinator release for bounded candidate
+implementation. Its author now reports a completed local candidate; the earlier
+contract-only implementation hold is historical, not the current state.
+Independent exact-candidate code/lineage review, named Model-impact/carry-forward
+disposition, actual PostgreSQL execution and publication remain pending.
+Five synthetic predecessor/successor comparisons are author evidence, not a new
+calibration study or Model PASS. The accepted formatting-only permission did not
+authorize this semantic change.
+
+`projection-import-release-series-v1` intentionally changes release and downstream
+lineage identities, including legacy releases; old objects are not retagged.
+Single-series omission preserves selection resolution only, not old response
+schemas, strict-client compatibility or lineage hashes. See
+`docs\projection-series.md` for the candidate contract and predecessor boundary.
 
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
 **Dependency edge on `expected-games` removed 2026-09-06, because it contradicts
@@ -5929,17 +5946,42 @@ id on a machine that did not produce it. Gate: Code + Adapter.
 - [ ] **pending**
 - **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `projection-blending`, `scoring-profiles`
 
-**Execution note (updated 2026-09-14 UTC):** The owner's fan-out produced the
-local read-only production-candidates API and page. It scores one explicitly
+**Execution note (updated 2026-09-18 UTC):** The read-only production-candidates
+API/page increment is delivered in merged #182. It scores the explicitly
 selected source's full pool before excluding recorded holdings and retains
-players without historical observations. Normal composed seeding now supplies
-its first compatible import; the genuine recorded synthetic response drives
-53 candidates from a 60-player reference after seven exclusions. Desktop/mobile
-workflow evidence and the lineage/route-ID review corrections are preserved.
-See `docs/production-candidates.md` for exact scope and artifact identity.
-This remains a partial increment, not the strategy/budget/roster-aware 3-5-player
-recommendation below. No availability adjustment, auction price, live-account
-action or Git delivery is implied; the task marker remains pending.
+players without historical observations. The recorded synthetic response still
+has 53 candidates from a 60-player reference after seven exclusions; it is not
+the owner's new vendor files. See `docs\production-candidates.md` for the exact
+delivered scope and provenance.
+
+The strategy/budget/roster-aware 3-5-player recommendation below remains
+unfinished, so this task stays pending. No availability adjustment, auction
+price, current-vendor calibration or live-account action is implied.
+
+The separately approved explicit Josh/Bonus/legacy series-selection unit has
+progressed from contract-only planning through quant-owner PLAN agreement and
+bounded implementation release to an author-completed, unpublished candidate.
+It distinguishes current-within-selected-series imports on both React screens;
+it is not historical-version pinning, Josh+Bonus blending or the strategic
+shortlist. The scoped viewport/expanded-lineage correction has separately bound
+author evidence. Independent exact-candidate review, named successor Model-impact
+disposition, actual PostgreSQL execution and publication remain pending.
+The owner's existing-CI route permits one reviewed draft PR after local checks
+and the required review/disposition, with PostgreSQL explicitly pending until
+that CI runs; this note does not release publication, merge or activation.
+Single-series omission compatibility is selection resolution only: strict
+response schemas and release/downstream lineage identities intentionally change.
+
+Private-input evidence is separate. The initial semantic search was not
+exhaustive; later named primary material was examined. One historical Josh row
+supports conditional use of the registered native-22 core season-total recipe,
+including minutes divided by source GP, alongside matching native headers and
+later operator provenance. Its 13 labelled agreements are not 13 independent
+examples. This does not establish every extra field, display setting, current
+row or Bonus independently, and source GP is not an availability estimate.
+Real canonical-link adjudication, explicit zero-GP handling and import authority
+remain separate holds. No current CSV normalization, import or score occurred;
+forgotten UI settings alone do not require another owner export.
 
 **Owner requirement, 2026-09-06, in his words:** *"What I want working on draft
 day is live suggestions on my pick that fit my current strategy. With health
@@ -6075,11 +6117,18 @@ the five populated players would satisfy its fixture test while never exercising
 the refusal branch - passing for precisely the reason the test exists to exclude.
 Rank over all 53 and require the 48 to say so.
 
-**So this item's blocker moved rather than cleared.** It was a data gap; it is now
-an ordering gap. The owner's requirement excludes sorting on a single category,
-and the Gate boundary below excludes an invented fused score, which leaves
-`zscore-engine` - Model-gated, and awaiting the owner's authorisation for a
-supervised run. That one is not an agent's to close.
+**Ordering boundary (updated 2026-09-18 UTC).** The historical need for an
+authorized production-only orderer is no longer the blocker: the supervised
+`zscore-engine` delivery landed in #182. What it supplies is limited
+projection-relative production ordering, not the owner's strategic 3-5-player
+narrowing. Compensatory category weighting was chosen as an objective, not an
+implemented selector or study; exact weights, k and the evidence needed for that
+next unit remain unresolved. Current-file admission and the reviewed release of
+explicit series choice are separate prerequisites for using the newer exports.
+The series-selection candidate is now implemented but still awaits its own
+review/Model-impact, PostgreSQL and publication boundaries. Do not treat that
+candidate, the delivered orderer or separate historical health observations as
+completion of this task.
 
 **Do not reach for `source_games_played_assumptions` to fill the health slot.** It
 is populated 1:1 with projections and reads like a ready-made durability figure.

@@ -1,4 +1,12 @@
-import { apiFetch, type RequestOptions, type ResponseContract } from './client'
+import { apiFetch, type ResponseContract } from './client'
+import {
+  isProjectionSeriesDescriptor,
+  isProjectionSeriesKey,
+} from './projectionSeriesEndpoints'
+import {
+  PROJECTION_RELEASE_SCHEMA_VERSION,
+  type ProductionCandidatesOptions,
+} from './projectionSeriesTypes'
 import { DRAFT_STATUSES } from './draftTypes'
 import {
   PRODUCTION_CANDIDATE_SOURCES,
@@ -168,6 +176,8 @@ function sameStringSet(actual: readonly string[], expected: readonly string[]): 
 const PROJECTION_IMPORT_KEYS = [
   'import_id',
   'source',
+  'series_key',
+  'release_schema_version',
   'season',
   'imported_at',
   'content_sha256',
@@ -187,6 +197,8 @@ function isProjectionImportLineage(
     hasExactKeys(value, PROJECTION_IMPORT_KEYS) &&
     isPositiveInteger(value.import_id) &&
     isProductionCandidateSource(value.source) &&
+    isProjectionSeriesKey(value.series_key) &&
+    value.release_schema_version === PROJECTION_RELEASE_SCHEMA_VERSION &&
     isNonEmptyString(value.season) &&
     isTimestamp(value.imported_at) &&
     isSha256(value.content_sha256) &&
@@ -658,6 +670,7 @@ const RESPONSE_KEYS = [
   'season',
   'source',
   'source_display_name',
+  'series',
   'source_original_filename',
   'draft_status',
   'draft_last_sequence',
@@ -687,6 +700,7 @@ export function isProductionCandidatesResponse(
     !isNonEmptyString(value.season) ||
     !isProductionCandidateSource(value.source) ||
     !isNonEmptyString(value.source_display_name) ||
+    !isProjectionSeriesDescriptor(value.series) ||
     !isNullableNonEmptyString(value.source_original_filename) ||
     !(DRAFT_STATUSES as readonly unknown[]).includes(value.draft_status) ||
     !isNonNegativeInteger(value.draft_last_sequence) ||
@@ -736,6 +750,7 @@ export function isProductionCandidatesResponse(
     new Set(scaleKeys).size === PRODUCTION_CATEGORY_KEYS.length &&
     PRODUCTION_CATEGORY_KEYS.every((key) => scaleKeys.includes(key)) &&
     projectionImport.source === response.source &&
+    projectionImport.series_key === response.series.key &&
     projectionImport.season === response.season &&
     projectionImport.projection_count === response.reference.count &&
     (projectionImport.assumed_scoring_type === null ||
@@ -781,18 +796,22 @@ export function isProductionCandidatesResponse(
 export function getProductionCandidates(
   draftId: number,
   source: ProductionCandidateSource,
-  options?: RequestOptions,
+  options: ProductionCandidatesOptions = {},
 ): Promise<ProductionCandidatesResponse> {
   const contract = {
     isSuccess: (value: unknown): value is ProductionCandidatesResponse =>
       isProductionCandidatesResponse(value) &&
       value.draft_id === draftId &&
-      value.source === source,
+      value.source === source &&
+      (options.expectedLeagueId === undefined || value.league_id === options.expectedLeagueId) &&
+      (options.expectedSeason === undefined || value.season === options.expectedSeason) &&
+      (options.seriesKey === undefined || value.series.key === options.seriesKey),
     invalidResponseDetail:
-      'The production-candidates response did not match the requested draft/source contract.',
+      'The production-candidates response did not match the requested draft/league/source/season/series release contract.',
   } satisfies ResponseContract<ProductionCandidatesResponse>
 
   const query = new URLSearchParams({ source })
+  if (options.seriesKey !== undefined) query.set('series_key', options.seriesKey)
   return apiFetch(
     `/api/v1/drafts/${String(draftId)}/production-candidates?${query.toString()}`,
     contract,

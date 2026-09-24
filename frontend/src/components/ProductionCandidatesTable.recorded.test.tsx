@@ -1,29 +1,24 @@
 /**
- * Contract and rendering coverage against the final normal-seed V2 response.
+ * Contract and rendering coverage against the genuine normal-seed series release.
  *
  * Copied byte-for-byte from:
- * C:\Users\steverones\.copilot\session-state\baeb9984-a1e5-4aac-8c95-af634150b9dd\files\production-candidates-recorded-v2.json
+ * C:\Users\steverones\.copilot\session-state\d46e1efa-c5df-4003-a999-0f94f6b61d73\files\projection-series-candidate\frontend-http\normal-seed-candidates.json
  *
- * Response SHA-256: 678a56b101c8742d03e3f79f4d048e3449a9eb8bdd742a4a1505f15d6cbf08ec
- * Response size: 143706 bytes
+ * Response SHA-256: 68b91a609c1d285e9fa6758080345101c2d47fd4620d517c2d352d94bacb6907
+ * Response size: 143894 bytes (exact HTTP response bytes plus one LF).
  *
- * Backing database:
- * production-candidates-recorded-v2.db
- * SHA-256: eb55245593b3515468cad917a5650289a4f0251c4e53155290295c4bb0f999dd
- * Size: 1359872 bytes
+ * Manifest recorded_at: 2026-09-18T20:55:48.663058+00:00.
+ * Fresh disposable SQLite store migrated through Alembic 0024, real writers /
+ * producers and normal seed_demo only, captured BEFORE any named-series import.
+ * Draft 1 belongs to league 2, import 1, full reference 60 / candidates 53.
  *
- * Backend-reported capture method: atomically reserved fresh DB and JSON paths
- * with open("xb"), stamped the safe schema through
- * create_schema_only_on_a_fresh_database, ran the normal seed_demo fixture
- * alone, issued an actual TestClient GET of
- * /api/v1/drafts/1/production-candidates?source=basketball_monster, and wrote
- * exactly response.content plus one LF through open("xb"). The seed creates
- * exactly one h2h_each_category projection import (recorded import id 1);
- * there is no second import, nonce, metadata rewrite, ORM-fabricated lineage,
- * or hand-authored score value.
+ * The actual HTTP GET was /api/v1/drafts/1/production-candidates with the BBM
+ * source and sole-series omission. No service/live source, hand-written scores
+ * or metadata retagging was used. Native Copy-Item verified the manifest hash.
  *
- * The superseded V1 second-import recording is not retained under the
- * frontend's generic recorded-fixture name.
+ * draft-production-candidates.recorded.json remains the OLD unversioned
+ * recording, unchanged and rejected by the successor client. This is synthetic
+ * transport/render evidence, not Model PASS or promotion of an old model card.
  */
 
 import { render, screen, within } from '@testing-library/react'
@@ -31,7 +26,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { isProductionCandidatesResponse } from '../api/productionCandidatesEndpoints'
 import type { ProductionCandidatesResponse } from '../api/productionCandidatesTypes'
-import recordedResponse from '../test/fixtures/draft-production-candidates.recorded.json'
+import recordedResponse from '../test/fixtures/draft-production-candidates.series-release.recorded.json'
 import { ProductionCandidatesTable } from './ProductionCandidatesTable'
 
 const RECORDED_CATEGORY_ORDER = [
@@ -49,13 +44,13 @@ const RECORDED_CATEGORY_ORDER = [
 function payload(): ProductionCandidatesResponse {
   if (!isProductionCandidatesResponse(recordedResponse)) {
     throw new Error(
-      'The recorded V2 production-candidates response no longer matches the client contract.',
+      'The recorded series-release production-candidates response no longer matches the client contract.',
     )
   }
   return structuredClone(recordedResponse)
 }
 
-describe('ProductionCandidatesTable with the final V2 HTTP response', () => {
+describe('ProductionCandidatesTable with the normal-seed series-release HTTP response', () => {
   it('accepts and reconciles the normal-seed response', () => {
     const recorded = payload()
     const healthStates = recorded.candidates.reduce<Record<string, number>>(
@@ -76,6 +71,12 @@ describe('ProductionCandidatesTable with the final V2 HTTP response', () => {
       source_original_filename: 'synthetic-projections-demo.csv',
     })
     expect(recorded.lineage.projection_import.import_id).toBe(1)
+    expect(recorded.series).toEqual({
+      key: 'legacy', display_name: 'Unspecified legacy series', provenance: 'legacy_unspecified',
+    })
+    expect(recorded.lineage.projection_import.release_schema_version).toBe(
+      'projection-import-release-series-v1',
+    )
     expect(recorded.lineage.score).toMatchObject({
       input_kind: 'production_blend',
       output_layer: 'terminal',

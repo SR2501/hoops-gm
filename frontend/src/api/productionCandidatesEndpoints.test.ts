@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import recordedResponse from '../test/fixtures/draft-production-candidates.recorded.json'
+import recordedResponse from '../test/fixtures/draft-production-candidates.series-release.recorded.json'
+import oldUnversionedResponse from '../test/fixtures/draft-production-candidates.recorded.json'
 import { syntheticProductionCandidates } from '../test/productionCandidatesStub'
 import { mockFetch, requestUrl } from '../test/helpers'
 import { ApiError } from './client'
@@ -184,12 +185,25 @@ describe('production-candidates endpoint contract', () => {
     },
   )
 
-  it('rejects the genuine V2 payload when only its import declaration is changed', () => {
+  it('rejects the genuine series release when only its import declaration is changed', () => {
     expect(isProductionCandidatesResponse(recordedResponse)).toBe(true)
     const payload = structuredClone(recordedResponse)
     payload.lineage.projection_import.assumed_scoring_type = 'h2h_categories'
 
     expect(isProductionCandidatesResponse(payload)).toBe(false)
+  })
+
+  it('rejects the preserved old unversioned recording as HTTP200, without upgrading it', async () => {
+    mockFetch({
+      '/api/v1/drafts/1/production-candidates': { body: oldUnversionedResponse },
+    })
+    expect(isProductionCandidatesResponse(oldUnversionedResponse)).toBe(false)
+    await expect(getProductionCandidates(1, 'basketball_monster')).rejects.toMatchObject({
+      status: 200,
+      code: 'invalid_response',
+    })
+    expect(oldUnversionedResponse).not.toHaveProperty('series')
+    expect(oldUnversionedResponse.lineage.projection_import).not.toHaveProperty('release_schema_version')
   })
 
   it('keeps the projection import scoring declaration nullable', () => {

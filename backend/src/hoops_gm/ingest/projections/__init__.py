@@ -15,8 +15,10 @@ tables, never one.
 """
 
 from hoops_gm.ingest.projections.importer import (
+    InvalidProjectionSeriesError,
     ProjectionEncodingError,
     ProjectionImportOutcome,
+    ProjectionSeriesRequiredError,
     ProjectionVerificationError,
     build_player_targets,
     get_or_create_projection_source,
@@ -71,10 +73,12 @@ __all__ = [
     "ColumnProfile",
     "CompositeShootingColumn",
     "DerivedStatColumn",
+    "InvalidProjectionSeriesError",
     "ProjectionEncodingError",
     "ProjectionImportOutcome",
     "ProjectionParseResult",
     "ProjectionProfileError",
+    "ProjectionSeriesRequiredError",
     "ProjectionSourceRow",
     "ProjectionVerificationError",
     "RowIssue",
